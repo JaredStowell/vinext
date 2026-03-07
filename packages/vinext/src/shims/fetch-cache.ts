@@ -37,12 +37,18 @@ import { AsyncLocalStorage } from "node:async_hooks";
 const HEADER_BLOCKLIST = ["traceparent", "tracestate"];
 
 // Cache key version — bump when changing the key format to bust stale entries
-const CACHE_KEY_PREFIX = "v2";
+const CACHE_KEY_PREFIX = "v3";
 const MAX_CACHE_KEY_BODY_BYTES = 1024 * 1024; // 1 MiB
 
 class BodyTooLargeForCacheKeyError extends Error {
   constructor() {
     super("Fetch body too large for cache key generation");
+  }
+}
+
+class SkipCacheKeyGenerationError extends Error {
+  constructor() {
+    super("Fetch body could not be serialized for cache key generation");
   }
 }
 
@@ -114,6 +120,33 @@ async function serializeFormData(
   }
 }
 
+type ParsedFormContentType = "multipart/form-data" | "application/x-www-form-urlencoded";
+
+function getParsedFormContentType(contentType: string | undefined): ParsedFormContentType | undefined {
+  const mediaType = contentType?.split(";")[0]?.trim().toLowerCase();
+  if (mediaType === "multipart/form-data" || mediaType === "application/x-www-form-urlencoded") {
+    return mediaType;
+  }
+  return undefined;
+}
+
+function stripMultipartBoundary(contentType: string): string {
+  const [type, ...params] = contentType.split(";");
+  const keptParams = params
+    .map((param) => param.trim())
+    .filter(Boolean)
+    .filter((param) => !/^boundary\s*=/i.test(param));
+  const normalizedType = type.trim().toLowerCase();
+  return keptParams.length > 0
+    ? `${normalizedType}; ${keptParams.join("; ")}`
+    : normalizedType;
+}
+
+interface SerializedBodyResult {
+  bodyChunks: string[];
+  canonicalizedContentType?: string;
+}
+
 async function readRequestBodyChunksWithinLimit(request: Request): Promise<{
   chunks: Uint8Array[];
   contentType: string | undefined;
@@ -163,13 +196,16 @@ async function readRequestBodyChunksWithinLimit(request: Request): Promise<{
  * Returns the serialized body chunks and optionally stashes the original body
  * on init as `_ogBody` so it can still be used after stream consumption.
  */
-async function serializeBody(input: string | URL | Request, init?: RequestInit): Promise<string[]> {
-  if (!init?.body && !(input instanceof Request && input.body)) return [];
+async function serializeBody(input: string | URL | Request, init?: RequestInit): Promise<SerializedBodyResult> {
+  if (!init?.body && !(input instanceof Request && input.body)) {
+    return { bodyChunks: [] };
+  }
 
   const bodyChunks: string[] = [];
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   let totalBodyBytes = 0;
+  let canonicalizedContentType: string | undefined;
 
   const pushBodyChunk = (chunk: string): void => {
     totalBodyBytes += encoder.encode(chunk).byteLength;
@@ -218,7 +254,7 @@ async function serializeBody(input: string | URL | Request, init?: RequestInit):
       if (err instanceof BodyTooLargeForCacheKeyError) {
         throw err;
       }
-      console.error("[vinext] Problem reading body for cache key", err);
+      throw new SkipCacheKeyGenerationError();
     }
   } else if (init?.body instanceof URLSearchParams) {
     // URLSearchParams — .toString() gives a stable serialization
@@ -247,24 +283,36 @@ async function serializeBody(input: string | URL | Request, init?: RequestInit):
     pushBodyChunk(init.body);
     (init as any)._ogBody = init.body;
   } else if (input instanceof Request && input.body) {
-    const { chunks, contentType } = await readRequestBodyChunksWithinLimit(input);
-    const normalizedContentType = contentType?.split(";")[0]?.trim().toLowerCase();
+    let chunks: Uint8Array[];
+    let contentType: string | undefined;
+    try {
+      ({ chunks, contentType } = await readRequestBodyChunksWithinLimit(input));
+    } catch (err) {
+      if (err instanceof BodyTooLargeForCacheKeyError) {
+        throw err;
+      }
+      throw new SkipCacheKeyGenerationError();
+    }
+    const formContentType = getParsedFormContentType(contentType);
 
-    if (normalizedContentType === "multipart/form-data" || normalizedContentType === "application/x-www-form-urlencoded") {
+    if (formContentType) {
       try {
         const boundedRequest = new Request(input.url, {
           method: input.method,
           headers: contentType ? { "content-type": contentType } : undefined,
-          body: new Blob(chunks.map((chunk) => chunk.slice().buffer)),
+          body: new Blob(chunks.map((chunk) => chunk.slice())),
         });
         const formData = await boundedRequest.formData();
         await serializeFormData(formData, pushBodyChunk, getTotalBodyBytes);
-        return bodyChunks;
+        canonicalizedContentType = formContentType === "multipart/form-data" && contentType
+          ? stripMultipartBoundary(contentType)
+          : undefined;
+        return { bodyChunks, canonicalizedContentType };
       } catch (err) {
         if (err instanceof BodyTooLargeForCacheKeyError) {
           throw err;
         }
-        console.error("[vinext] Problem reading Request form body for cache key", err);
+        throw new SkipCacheKeyGenerationError();
       }
     }
 
@@ -277,7 +325,7 @@ async function serializeBody(input: string | URL | Request, init?: RequestInit):
     }
   }
 
-  return bodyChunks;
+  return { bodyChunks, canonicalizedContentType };
 }
 
 /**
@@ -304,7 +352,10 @@ async function buildFetchCacheKey(input: string | URL | Request, init?: RequestI
   if (init?.method) method = init.method;
 
   const headers = collectHeaders(input, init);
-  const bodyChunks = await serializeBody(input, init);
+  const { bodyChunks, canonicalizedContentType } = await serializeBody(input, init);
+  if (canonicalizedContentType) {
+    headers["content-type"] = canonicalizedContentType;
+  }
 
   const cacheString = JSON.stringify([
     CACHE_KEY_PREFIX,
@@ -472,7 +523,7 @@ function createPatchedFetch(): typeof globalThis.fetch {
     try {
       cacheKey = await buildFetchCacheKey(input, init);
     } catch (err) {
-      if (err instanceof BodyTooLargeForCacheKeyError) {
+      if (err instanceof BodyTooLargeForCacheKeyError || err instanceof SkipCacheKeyGenerationError) {
         const cleanInit = stripNextFromInit(init);
         return originalFetch(input, cleanInit);
       }

@@ -497,6 +497,23 @@ describe("fetch cache shim", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("urlencoded Request bodies with different charset headers get separate cache entries", async () => {
+    const makeRequest = (charset: string) => new Request("https://api.example.com/req-form-charset", {
+      method: "POST",
+      headers: { "content-type": `application/x-www-form-urlencoded; charset=${charset}` },
+      body: "name=value",
+    });
+
+    const res1 = await fetch(makeRequest("utf-8"), { next: { revalidate: 60 } });
+    const data1 = await res1.json();
+    expect(data1.count).toBe(1);
+
+    const res2 = await fetch(makeRequest("shift_jis"), { next: { revalidate: 60 } });
+    const data2 = await res2.json();
+    expect(data2.count).toBe(2);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   // ── force-cache with next.revalidate ────────────────────────────────
 
   it("cache: 'force-cache' with next.revalidate uses the specified TTL", async () => {
@@ -1431,6 +1448,27 @@ describe("fetch cache shim", () => {
       const data2 = await res2.json();
       expect(data2.count).toBe(1); // Same params = cached
       expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("explicit URLSearchParams charset headers remain part of the cache key", async () => {
+      const res1 = await fetch("https://api.example.com/body-usp-charset", {
+        method: "POST",
+        body: new URLSearchParams({ q: "same" }),
+        headers: { "content-type": "application/x-www-form-urlencoded; charset=utf-8" },
+        next: { revalidate: 60 },
+      });
+      const data1 = await res1.json();
+      expect(data1.count).toBe(1);
+
+      const res2 = await fetch("https://api.example.com/body-usp-charset", {
+        method: "POST",
+        body: new URLSearchParams({ q: "same" }),
+        headers: { "content-type": "application/x-www-form-urlencoded; charset=shift_jis" },
+        next: { revalidate: 60 },
+      });
+      const data2 = await res2.json();
+      expect(data2.count).toBe(2);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
     });
   });
 });
