@@ -45,12 +45,38 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            const body = context.payload.comment.body.trim();
+            const match = body.match(/^\/deploy-preview\s+([0-9a-f]{40})$/i);
+
+            if (!match) {
+              core.setFailed('Usage: /deploy-preview <full-40-char-commit-sha>');
+              return;
+            }
+
+            const requestedSha = match[1].toLowerCase();
+
             const pr = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: context.issue.number,
             });
-            core.setOutput('sha', pr.data.head.sha);
+
+            // Pin deployment to the exact commit approved in the comment.
+            // Validate that SHA belongs to this PR to avoid deploying arbitrary refs.
+            const commits = await github.paginate(github.rest.pulls.listCommits, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              per_page: 100,
+            });
+
+            const commitShas = new Set(commits.map((c) => c.sha.toLowerCase()));
+            if (!commitShas.has(requestedSha)) {
+              core.setFailed(`Commit ${requestedSha} is not part of PR #${pr.data.number}`);
+              return;
+            }
+
+            core.setOutput('sha', requestedSha);
             core.setOutput('number', pr.data.number);
 
   deploy:
