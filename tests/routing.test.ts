@@ -2,11 +2,22 @@ import { describe, it, expect } from "vitest";
 import path from "node:path";
 import { pagesRouter, matchRoute } from "../packages/vinext/src/routing/pages-router.js";
 import { appRouter, matchAppRoute, invalidateAppRouteCache } from "../packages/vinext/src/routing/app-router.js";
+import { routePrecedence } from "../packages/vinext/src/routing/utils.js";
 
 const FIXTURE_DIR = path.resolve(
   import.meta.dirname,
   "./fixtures/pages-basic/pages",
 );
+
+describe("routePrecedence", () => {
+  it("keeps fully static routes ahead of dynamic routes with static suffixes", () => {
+    const staticScore = routePrecedence("/users/settings");
+    const dynamicWithSuffixScore = routePrecedence("/:id/settings");
+
+    expect(staticScore).toBe(0);
+    expect(dynamicWithSuffixScore).toBeGreaterThan(staticScore);
+  });
+});
 
 describe("pagesRouter - route discovery", () => {
   it("discovers pages from the fixture directory", async () => {

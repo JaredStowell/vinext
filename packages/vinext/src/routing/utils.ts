@@ -67,5 +67,11 @@ export function routePrecedence(pattern: string): number {
     score -= staticPrefixCount * 50;
   }
 
+  // Keep all dynamic routes below purely static routes.
+  // Static routes always score 0, so dynamic scores must stay positive.
+  if (isDynamic && score <= 0) {
+    score = 1;
+  }
+
   return score;
 }
