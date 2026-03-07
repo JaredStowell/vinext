@@ -5528,6 +5528,12 @@ describe("Pages Router router helpers", () => {
     it("returns false for query-only", () => {
       expect(isExternalUrl("?foo=1")).toBe(false);
     });
+
+    it("returns false for dangerous schemes", () => {
+      expect(isExternalUrl("javascript:alert(1)")).toBe(false);
+      expect(isExternalUrl("data:text/html,<h1>x</h1>")).toBe(false);
+    });
+
   });
 
   describe("isHashOnlyChange", () => {

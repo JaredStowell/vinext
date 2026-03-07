@@ -191,6 +191,12 @@ describe("isExternalUrl", () => {
   it("hash-only is not external", () => {
     expect(isExternalUrl("#section")).toBe(false);
   });
+
+  it("blocks dangerous schemes from being treated as external", () => {
+    expect(isExternalUrl("javascript:alert(1)")).toBe(false);
+    expect(isExternalUrl("data:text/html,<h1>x</h1>")).toBe(false);
+  });
+
 });
 
 // ─── isHashOnlyChange ───────────────────────────────────────────────────
