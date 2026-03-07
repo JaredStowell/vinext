@@ -449,6 +449,54 @@ describe("fetch cache shim", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("same multipart Request bodies hit the same cache entry even with different boundaries", async () => {
+    const makeMultipartRequest = (boundary: string) => new Request("https://api.example.com/req-form-boundary", {
+      method: "POST",
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      body: [
+        `--${boundary}`,
+        'Content-Disposition: form-data; name="name"',
+        "",
+        "same-value",
+        `--${boundary}--`,
+        "",
+      ].join("\r\n"),
+    });
+
+    const res1 = await fetch(makeMultipartRequest("boundary-a"), { next: { revalidate: 60 } });
+    const data1 = await res1.json();
+    expect(data1.count).toBe(1);
+
+    const res2 = await fetch(makeMultipartRequest("boundary-b"), { next: { revalidate: 60 } });
+    const data2 = await res2.json();
+    expect(data2.count).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("malformed multipart Request bodies bypass cache instead of hashing raw bytes", async () => {
+    const makeMalformedMultipartRequest = () => new Request("https://api.example.com/req-form-malformed", {
+      method: "POST",
+      headers: { "content-type": "multipart/form-data; boundary=expected" },
+      body: [
+        "--actual",
+        'Content-Disposition: form-data; name="name"',
+        "",
+        "value",
+        "--actual--",
+        "",
+      ].join("\r\n"),
+    });
+
+    const res1 = await fetch(makeMalformedMultipartRequest(), { next: { revalidate: 60 } });
+    const data1 = await res1.json();
+    expect(data1.count).toBe(1);
+
+    const res2 = await fetch(makeMalformedMultipartRequest(), { next: { revalidate: 60 } });
+    const data2 = await res2.json();
+    expect(data2.count).toBe(2);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   // ── force-cache with next.revalidate ────────────────────────────────
 
   it("cache: 'force-cache' with next.revalidate uses the specified TTL", async () => {
