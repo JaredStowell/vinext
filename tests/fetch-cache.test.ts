@@ -449,6 +449,31 @@ describe("fetch cache shim", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("same Request FormData bodies hit the same cache entry despite generated multipart boundaries", async () => {
+    const makeForm = () => {
+      const form = new FormData();
+      form.append("name", "same-value");
+      return form;
+    };
+
+    const req1 = new Request("https://api.example.com/req-form-same", {
+      method: "POST",
+      body: makeForm(),
+    });
+    const res1 = await fetch(req1, { next: { revalidate: 60 } });
+    const data1 = await res1.json();
+    expect(data1.count).toBe(1);
+
+    const req2 = new Request("https://api.example.com/req-form-same", {
+      method: "POST",
+      body: makeForm(),
+    });
+    const res2 = await fetch(req2, { next: { revalidate: 60 } });
+    const data2 = await res2.json();
+    expect(data2.count).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("same multipart Request bodies hit the same cache entry even with different boundaries", async () => {
     const makeMultipartRequest = (boundary: string) => new Request("https://api.example.com/req-form-boundary", {
       method: "POST",
@@ -965,6 +990,60 @@ describe("fetch cache shim", () => {
       });
       const data2 = await res2.json();
       expect(data2.count).toBe(2); // Different multi-value form data = different cache
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("FormData entry order is preserved in the cache key", async () => {
+      const formA = new FormData();
+      formA.append("a", "1");
+      formA.append("b", "2");
+      formA.append("a", "3");
+
+      const formB = new FormData();
+      formB.append("a", "1");
+      formB.append("a", "3");
+      formB.append("b", "2");
+
+      const res1 = await fetch("https://api.example.com/body-form-order", {
+        method: "POST",
+        body: formA,
+        next: { revalidate: 60 },
+      });
+      const data1 = await res1.json();
+      expect(data1.count).toBe(1);
+
+      const res2 = await fetch("https://api.example.com/body-form-order", {
+        method: "POST",
+        body: formB,
+        next: { revalidate: 60 },
+      });
+      const data2 = await res2.json();
+      expect(data2.count).toBe(2);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("FormData file metadata is included in the cache key", async () => {
+      const formA = new FormData();
+      formA.append("file", new File(["same-bytes"], "a.txt", { type: "text/plain" }));
+
+      const formB = new FormData();
+      formB.append("file", new File(["same-bytes"], "b.bin", { type: "application/octet-stream" }));
+
+      const res1 = await fetch("https://api.example.com/body-form-file-metadata", {
+        method: "POST",
+        body: formA,
+        next: { revalidate: 60 },
+      });
+      const data1 = await res1.json();
+      expect(data1.count).toBe(1);
+
+      const res2 = await fetch("https://api.example.com/body-form-file-metadata", {
+        method: "POST",
+        body: formB,
+        next: { revalidate: 60 },
+      });
+      const data2 = await res2.json();
+      expect(data2.count).toBe(2);
       expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 

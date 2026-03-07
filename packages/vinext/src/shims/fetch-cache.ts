@@ -98,25 +98,20 @@ async function serializeFormData(
   pushBodyChunk: (chunk: string) => void,
   getTotalBodyBytes: () => number,
 ): Promise<void> {
-  for (const key of new Set(formData.keys())) {
-    const values = formData.getAll(key);
-    const serializedValues = await Promise.all(
-      values.map(async (val) => {
-        if (typeof val === "string") {
-          return { kind: "string", value: val };
-        }
-        if (val.size > MAX_CACHE_KEY_BODY_BYTES || getTotalBodyBytes() + val.size > MAX_CACHE_KEY_BODY_BYTES) {
-          throw new BodyTooLargeForCacheKeyError();
-        }
-        return {
-          kind: "file",
-          // Note: File name/type/lastModified are not included — only content.
-          // Two Files with identical content but different names produce the same key.
-          value: await val.text(),
-        };
-      }),
-    );
-    pushBodyChunk(JSON.stringify([key, serializedValues]));
+  for (const [key, val] of formData.entries()) {
+    if (typeof val === "string") {
+      pushBodyChunk(JSON.stringify([key, { kind: "string", value: val }]));
+      continue;
+    }
+    if (val.size > MAX_CACHE_KEY_BODY_BYTES || getTotalBodyBytes() + val.size > MAX_CACHE_KEY_BODY_BYTES) {
+      throw new BodyTooLargeForCacheKeyError();
+    }
+    pushBodyChunk(JSON.stringify([key, {
+      kind: "file",
+      name: val.name,
+      type: val.type,
+      value: await val.text(),
+    }]));
   }
 }
 
