@@ -3790,8 +3790,9 @@ function stripServerExports(code: string): string | null {
       continue;
     }
 
-    // Case 3: export { getServerSideProps } or export { getServerSideProps as gSSP }
-    if (node.specifiers && node.specifiers.length > 0 && !node.source) {
+    // Case 3: export { getServerSideProps }, export { getServerSideProps as gSSP },
+    // or export { getServerSideProps } from "./server"
+    if (node.specifiers && node.specifiers.length > 0) {
       const kept: any[] = [];
       const stripped: string[] = [];
       for (const spec of node.specifiers) {
@@ -3812,7 +3813,8 @@ function stripServerExports(code: string): string | null {
             const exported = sp.exported?.name ?? sp.exported?.value;
             return local === exported ? local : `${local} as ${exported}`;
           }).join(", ");
-          parts.push(`export { ${keptStr} };`);
+          const source = node.source ? ` from ${code.slice(node.source.start, node.source.end)}` : "";
+          parts.push(`export { ${keptStr} }${source};`);
         }
         for (const name of stripped) {
           parts.push(`export const ${name} = undefined;`);
