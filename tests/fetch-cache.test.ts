@@ -1251,6 +1251,36 @@ describe("fetch cache shim", () => {
       expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
+    it("oversized Request body bypasses cache without cloning the body when content-length exceeds the limit", async () => {
+      const cloneSpy = vi.spyOn(Request.prototype, "clone");
+      const request = new Request("https://api.example.com/large-request-stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/octet-stream",
+          "content-length": String(1024 * 1024 + 1),
+        },
+        body: new ReadableStream<Uint8Array>({
+          pull(controller) {
+            controller.enqueue(new Uint8Array([1]));
+            controller.close();
+          },
+        }),
+        duplex: "half",
+      } as RequestInit & { duplex: "half" });
+
+      try {
+        const res = await fetch(request, { next: { revalidate: 60 } });
+        const data = await res.json();
+
+        expect(data.count).toBe(1);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(cloneSpy).not.toHaveBeenCalled();
+        expect(request.bodyUsed).toBe(false);
+      } finally {
+        cloneSpy.mockRestore();
+      }
+    });
+
     it("ReadableStream with many small chunks accumulating past limit bypasses cache", async () => {
       const chunkSize = 64 * 1024; // 64 KiB per chunk
       const numChunks = 17; // 17 * 64 KiB = 1088 KiB > 1 MiB

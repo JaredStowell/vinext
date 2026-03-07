@@ -114,6 +114,48 @@ async function serializeFormData(
   }
 }
 
+async function readRequestBodyChunksWithinLimit(request: Request): Promise<{
+  chunks: Uint8Array[];
+  contentType: string | undefined;
+}> {
+  const contentLengthHeader = request.headers.get("content-length");
+  if (contentLengthHeader) {
+    const contentLength = Number(contentLengthHeader);
+    if (Number.isFinite(contentLength) && contentLength > MAX_CACHE_KEY_BODY_BYTES) {
+      throw new BodyTooLargeForCacheKeyError();
+    }
+  }
+
+  const requestClone = request.clone();
+  const contentType = requestClone.headers.get("content-type") ?? undefined;
+  const reader = requestClone.body?.getReader();
+  if (!reader) {
+    return { chunks: [], contentType };
+  }
+
+  const chunks: Uint8Array[] = [];
+  let totalBodyBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      totalBodyBytes += value.byteLength;
+      if (totalBodyBytes > MAX_CACHE_KEY_BODY_BYTES) {
+        throw new BodyTooLargeForCacheKeyError();
+      }
+
+      chunks.push(value);
+    }
+  } catch (err) {
+    void reader.cancel().catch(() => {});
+    throw err;
+  }
+
+  return { chunks, contentType };
+}
+
 /**
  * Serialize request body into string chunks for cache key inclusion.
  * Handles all body types: string, Uint8Array, ReadableStream, FormData, Blob,
@@ -205,12 +247,17 @@ async function serializeBody(input: string | URL | Request, init?: RequestInit):
     pushBodyChunk(init.body);
     (init as any)._ogBody = init.body;
   } else if (input instanceof Request && input.body) {
-    const requestClone = input.clone();
-    const contentType = requestClone.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
+    const { chunks, contentType } = await readRequestBodyChunksWithinLimit(input);
+    const normalizedContentType = contentType?.split(";")[0]?.trim().toLowerCase();
 
-    if (contentType === "multipart/form-data" || contentType === "application/x-www-form-urlencoded") {
+    if (normalizedContentType === "multipart/form-data" || normalizedContentType === "application/x-www-form-urlencoded") {
       try {
-        const formData = await input.clone().formData();
+        const boundedRequest = new Request(input.url, {
+          method: input.method,
+          headers: contentType ? { "content-type": contentType } : undefined,
+          body: new Blob(chunks.map((chunk) => chunk.slice().buffer)),
+        });
+        const formData = await boundedRequest.formData();
         await serializeFormData(formData, pushBodyChunk, getTotalBodyBytes);
         return bodyChunks;
       } catch (err) {
@@ -221,11 +268,13 @@ async function serializeBody(input: string | URL | Request, init?: RequestInit):
       }
     }
 
-    const arrayBuffer = await requestClone.arrayBuffer();
-    if (arrayBuffer.byteLength > MAX_CACHE_KEY_BODY_BYTES) {
-      throw new BodyTooLargeForCacheKeyError();
+    for (const chunk of chunks) {
+      bodyChunks.push(decoder.decode(chunk, { stream: true }));
     }
-    pushBodyChunk(decoder.decode(new Uint8Array(arrayBuffer)));
+    const finalChunk = decoder.decode();
+    if (finalChunk) {
+      pushBodyChunk(finalChunk);
+    }
   }
 
   return bodyChunks;
