@@ -94,7 +94,19 @@ function hasAuthHeaders(input: string | URL | Request, init?: RequestInit): bool
  * on init as `_ogBody` so it can still be used after stream consumption.
  */
 async function serializeBody(init?: RequestInit): Promise<string[]> {
-  if (!init?.body) return [];
+  if (!init) return [];
+
+  const cacheInit = init as RequestInit & {
+    _ogBody?: BodyInit;
+    _restoreBodyFromOg?: boolean;
+  };
+
+  // Clear stale restoration metadata on every request. This prevents replaying
+  // a previous request body when callers reuse the same RequestInit object.
+  delete cacheInit._ogBody;
+  delete cacheInit._restoreBodyFromOg;
+
+  if (!init.body) return [];
 
   const bodyChunks: string[] = [];
   const encoder = new TextEncoder();
@@ -114,12 +126,13 @@ async function serializeBody(init?: RequestInit): Promise<string[]> {
       throw new BodyTooLargeForCacheKeyError();
     }
     pushBodyChunk(decoder.decode(init.body));
-    (init as any)._ogBody = init.body;
+    cacheInit._ogBody = init.body;
   } else if (typeof (init.body as any).getReader === "function") {
     // ReadableStream
     const readableBody = init.body as ReadableStream<Uint8Array | string>;
     const [bodyForHashing, bodyForFetch] = readableBody.tee();
-    (init as any)._ogBody = bodyForFetch;
+    cacheInit._ogBody = bodyForFetch;
+    cacheInit._restoreBodyFromOg = true;
     const reader = bodyForHashing.getReader();
 
     try {
@@ -151,12 +164,12 @@ async function serializeBody(init?: RequestInit): Promise<string[]> {
     }
   } else if (init.body instanceof URLSearchParams) {
     // URLSearchParams — .toString() gives a stable serialization
-    (init as any)._ogBody = init.body;
+    cacheInit._ogBody = init.body;
     pushBodyChunk(init.body.toString());
   } else if (typeof (init.body as any).keys === "function") {
     // FormData
     const formData = init.body as FormData;
-    (init as any)._ogBody = init.body;
+    cacheInit._ogBody = init.body;
     for (const key of new Set(formData.keys())) {
       const values = formData.getAll(key);
       const serializedValues = await Promise.all(
@@ -180,7 +193,7 @@ async function serializeBody(init?: RequestInit): Promise<string[]> {
     }
     pushBodyChunk(await blob.text());
     const arrayBuffer = await blob.arrayBuffer();
-    (init as any)._ogBody = new Blob([arrayBuffer], { type: blob.type });
+    cacheInit._ogBody = new Blob([arrayBuffer], { type: blob.type });
   } else if (typeof init.body === "string") {
     // String length is always <= UTF-8 byte length, so this is a
     // cheap lower-bound check that avoids encoder.encode() for huge strings.
@@ -188,7 +201,7 @@ async function serializeBody(init?: RequestInit): Promise<string[]> {
       throw new BodyTooLargeForCacheKeyError();
     }
     pushBodyChunk(init.body);
-    (init as any)._ogBody = init.body;
+    cacheInit._ogBody = init.body;
   }
 
   return bodyChunks;
@@ -505,11 +518,15 @@ function createPatchedFetch(): typeof globalThis.fetch {
  */
 function stripNextFromInit(init?: RequestInit): RequestInit | undefined {
   if (!init) return init;
-  const castInit = init as RequestInit & { next?: unknown; _ogBody?: BodyInit };
-  const { next: _next, _ogBody, ...rest } = castInit;
+  const castInit = init as RequestInit & {
+    next?: unknown;
+    _ogBody?: BodyInit;
+    _restoreBodyFromOg?: boolean;
+  };
+  const { next: _next, _ogBody, _restoreBodyFromOg, ...rest } = castInit;
   // Restore the original body if it was stashed by serializeBody (e.g. after
   // consuming a ReadableStream for cache key generation).
-  if (_ogBody !== undefined) {
+  if (_restoreBodyFromOg && _ogBody !== undefined) {
     rest.body = _ogBody;
   }
   return Object.keys(rest).length > 0 ? rest : undefined;

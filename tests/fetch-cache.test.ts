@@ -1048,6 +1048,47 @@ describe("fetch cache shim", () => {
       const init = call[1] as RequestInit;
       expect(init.body).toBe('{"key":"value"}');
     });
+
+    it("does not replay a stale body when reusing init without body", async () => {
+      const sharedInit: RequestInit & { next?: { revalidate?: number } } = {
+        method: "POST",
+        body: '{"secret":"value"}',
+        next: { revalidate: 60 },
+      };
+
+      await fetch("https://api.example.com/reuse-body-first", sharedInit);
+
+      delete sharedInit.body;
+      sharedInit.method = "GET";
+
+      await fetch("https://api.example.com/reuse-body-second", sharedInit);
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const secondInit = fetchMock.mock.calls[1][1] as RequestInit;
+      expect(secondInit.method).toBe("GET");
+      expect(secondInit.body).toBeUndefined();
+    });
+
+    it("does not replay a stale body when reusing init with unsupported body type", async () => {
+      const sharedInit: RequestInit & {
+        next?: { revalidate?: number };
+        body?: BodyInit | Record<string, string>;
+      } = {
+        method: "POST",
+        body: new TextEncoder().encode("first-body"),
+        next: { revalidate: 60 },
+      };
+
+      await fetch("https://api.example.com/reuse-unsupported-first", sharedInit);
+
+      sharedInit.body = { unexpected: "shape" };
+
+      await fetch("https://api.example.com/reuse-unsupported-second", sharedInit as RequestInit);
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const secondInit = fetchMock.mock.calls[1][1] as RequestInit;
+      expect(secondInit.body).toEqual({ unexpected: "shape" });
+    });
   });
 
   describe("cache key oversized body safeguards", () => {
