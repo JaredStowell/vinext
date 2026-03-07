@@ -1244,6 +1244,35 @@ export { getServerSideProps, config };
     expect(result).toContain("export const getServerSideProps = undefined;");
   });
 
+
+  it("handles export-from re-exports", () => {
+    const code = `
+export default function Page() {
+  return null;
+}
+
+export { getServerSideProps } from './server';
+`;
+    const result = _stripServerExports(code);
+    expect(result).not.toBeNull();
+    expect(result).toContain("export const getServerSideProps = undefined;");
+    expect(result).not.toContain("from './server'");
+  });
+
+  it("handles export-from with mixed specifiers", () => {
+    const code = `
+export default function Page() {
+  return null;
+}
+
+export { getServerSideProps, config } from './server';
+`;
+    const result = _stripServerExports(code);
+    expect(result).not.toBeNull();
+    expect(result).toContain("export { config } from './server';");
+    expect(result).toContain("export const getServerSideProps = undefined;");
+  });
+
   it("handles strings containing braces", () => {
     const code = `
 export default function Page({ msg }) {
