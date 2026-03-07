@@ -104,9 +104,16 @@ jobs:
           CF_GATEWAY_NAME: ${{ secrets.CF_AI_GATEWAY_NAME }}
           CF_API_TOKEN: ${{ secrets.CF_AI_GATEWAY_TOKEN }}
         run: |
+          log_literal() {
+            local token="stop-commands-$(date +%s)-$RANDOM"
+            echo "::stop-commands::$token"
+            printf '%s\n' "$1"
+            echo "::$token::"
+          }
+
           COMMITS=$(cat /tmp/commits.txt)
           echo "::group::Commits since last release"
-          echo "$COMMITS"
+          log_literal "$COMMITS"
           echo "::endgroup::"
 
           RESPONSE=$(curl -s --max-time 30 \
@@ -139,7 +146,7 @@ jobs:
           fi
 
           echo "::group::Release summary"
-          echo "$SUMMARY"
+          log_literal "$SUMMARY"
           echo "::endgroup::"
 
           {
@@ -156,17 +163,24 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           SUMMARY: ${{ steps.summary.outputs.text }}
         run: |
+          log_literal() {
+            local token="stop-commands-$(date +%s)-$RANDOM"
+            echo "::stop-commands::$token"
+            printf '%s\n' "$1"
+            echo "::$token::"
+          }
+
           PAYLOAD=$(jq -n \
             --arg version "$VERSION" \
             --arg summary "$SUMMARY" \
             '{"text": ("*vinext v" + $version + " published to npm*\n\n" + $summary + "\n\nnpm: https://www.npmjs.com/package/vinext/v/" + $version)}')
 
           echo "::group::Webhook payload"
-          echo "$PAYLOAD"
+          log_literal "$PAYLOAD"
           echo "::endgroup::"
 
           RESPONSE=$(curl -sS -w "\nHTTP %{http_code}" -X POST "$GOOGLE_CHAT_WEBHOOK" \
             -H "Content-Type: application/json; charset=UTF-8" \
             -d "$PAYLOAD")
 
-          echo "$RESPONSE"
+          log_literal "$RESPONSE"
