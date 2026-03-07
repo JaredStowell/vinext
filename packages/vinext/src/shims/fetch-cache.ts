@@ -87,14 +87,42 @@ function hasAuthHeaders(input: string | URL | Request, init?: RequestInit): bool
   return AUTH_HEADERS.some((name) => name in headers);
 }
 
+async function serializeFormData(
+  formData: FormData,
+  pushBodyChunk: (chunk: string) => void,
+  getTotalBodyBytes: () => number,
+): Promise<void> {
+  for (const key of new Set(formData.keys())) {
+    const values = formData.getAll(key);
+    const serializedValues = await Promise.all(
+      values.map(async (val) => {
+        if (typeof val === "string") {
+          return { kind: "string", value: val };
+        }
+        if (val.size > MAX_CACHE_KEY_BODY_BYTES || getTotalBodyBytes() + val.size > MAX_CACHE_KEY_BODY_BYTES) {
+          throw new BodyTooLargeForCacheKeyError();
+        }
+        return {
+          kind: "file",
+          // Note: File name/type/lastModified are not included — only content.
+          // Two Files with identical content but different names produce the same key.
+          value: await val.text(),
+        };
+      }),
+    );
+    pushBodyChunk(JSON.stringify([key, serializedValues]));
+  }
+}
+
 /**
  * Serialize request body into string chunks for cache key inclusion.
- * Handles all body types: string, Uint8Array, ReadableStream, FormData, Blob.
+ * Handles all body types: string, Uint8Array, ReadableStream, FormData, Blob,
+ * and Request object bodies.
  * Returns the serialized body chunks and optionally stashes the original body
  * on init as `_ogBody` so it can still be used after stream consumption.
  */
-async function serializeBody(init?: RequestInit): Promise<string[]> {
-  if (!init?.body) return [];
+async function serializeBody(input: string | URL | Request, init?: RequestInit): Promise<string[]> {
+  if (!init?.body && !(input instanceof Request && input.body)) return [];
 
   const bodyChunks: string[] = [];
   const encoder = new TextEncoder();
@@ -108,14 +136,15 @@ async function serializeBody(init?: RequestInit): Promise<string[]> {
     }
     bodyChunks.push(chunk);
   };
+  const getTotalBodyBytes = (): number => totalBodyBytes;
 
-  if (init.body instanceof Uint8Array) {
+  if (init?.body instanceof Uint8Array) {
     if (init.body.byteLength > MAX_CACHE_KEY_BODY_BYTES) {
       throw new BodyTooLargeForCacheKeyError();
     }
     pushBodyChunk(decoder.decode(init.body));
     (init as any)._ogBody = init.body;
-  } else if (typeof (init.body as any).getReader === "function") {
+  } else if (init?.body && typeof (init.body as any).getReader === "function") {
     // ReadableStream
     const readableBody = init.body as ReadableStream<Uint8Array | string>;
     const [bodyForHashing, bodyForFetch] = readableBody.tee();
@@ -149,30 +178,16 @@ async function serializeBody(init?: RequestInit): Promise<string[]> {
       }
       console.error("[vinext] Problem reading body for cache key", err);
     }
-  } else if (init.body instanceof URLSearchParams) {
+  } else if (init?.body instanceof URLSearchParams) {
     // URLSearchParams — .toString() gives a stable serialization
     (init as any)._ogBody = init.body;
     pushBodyChunk(init.body.toString());
-  } else if (typeof (init.body as any).keys === "function") {
+  } else if (init?.body && typeof (init.body as any).keys === "function") {
     // FormData
     const formData = init.body as FormData;
     (init as any)._ogBody = init.body;
-    for (const key of new Set(formData.keys())) {
-      const values = formData.getAll(key);
-      const serializedValues = await Promise.all(
-        values.map(async (val) => {
-          if (typeof val === "string") return val;
-          if (val.size > MAX_CACHE_KEY_BODY_BYTES || totalBodyBytes + val.size > MAX_CACHE_KEY_BODY_BYTES) {
-            throw new BodyTooLargeForCacheKeyError();
-          }
-          // Note: File name/type/lastModified are not included — only content.
-          // Two Files with identical content but different names produce the same key.
-          return await val.text();
-        })
-      );
-      pushBodyChunk(`${key}=${serializedValues.join(",")}`);
-    }
-  } else if (typeof (init.body as any).arrayBuffer === "function") {
+    await serializeFormData(formData, pushBodyChunk, getTotalBodyBytes);
+  } else if (init?.body && typeof (init.body as any).arrayBuffer === "function") {
     // Blob
     const blob = init.body as Blob;
     if (blob.size > MAX_CACHE_KEY_BODY_BYTES) {
@@ -181,7 +196,7 @@ async function serializeBody(init?: RequestInit): Promise<string[]> {
     pushBodyChunk(await blob.text());
     const arrayBuffer = await blob.arrayBuffer();
     (init as any)._ogBody = new Blob([arrayBuffer], { type: blob.type });
-  } else if (typeof init.body === "string") {
+  } else if (typeof init?.body === "string") {
     // String length is always <= UTF-8 byte length, so this is a
     // cheap lower-bound check that avoids encoder.encode() for huge strings.
     if (init.body.length > MAX_CACHE_KEY_BODY_BYTES) {
@@ -189,6 +204,28 @@ async function serializeBody(init?: RequestInit): Promise<string[]> {
     }
     pushBodyChunk(init.body);
     (init as any)._ogBody = init.body;
+  } else if (input instanceof Request && input.body) {
+    const requestClone = input.clone();
+    const contentType = requestClone.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
+
+    if (contentType === "multipart/form-data" || contentType === "application/x-www-form-urlencoded") {
+      try {
+        const formData = await input.clone().formData();
+        await serializeFormData(formData, pushBodyChunk, getTotalBodyBytes);
+        return bodyChunks;
+      } catch (err) {
+        if (err instanceof BodyTooLargeForCacheKeyError) {
+          throw err;
+        }
+        console.error("[vinext] Problem reading Request form body for cache key", err);
+      }
+    }
+
+    const arrayBuffer = await requestClone.arrayBuffer();
+    if (arrayBuffer.byteLength > MAX_CACHE_KEY_BODY_BYTES) {
+      throw new BodyTooLargeForCacheKeyError();
+    }
+    pushBodyChunk(decoder.decode(new Uint8Array(arrayBuffer)));
   }
 
   return bodyChunks;
@@ -218,7 +255,7 @@ async function buildFetchCacheKey(input: string | URL | Request, init?: RequestI
   if (init?.method) method = init.method;
 
   const headers = collectHeaders(input, init);
-  const bodyChunks = await serializeBody(init);
+  const bodyChunks = await serializeBody(input, init);
 
   const cacheString = JSON.stringify([
     CACHE_KEY_PREFIX,

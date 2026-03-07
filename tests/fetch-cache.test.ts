@@ -380,6 +380,48 @@ describe("fetch cache shim", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("includes Request object bodies in the cache key", async () => {
+    const req1 = new Request("https://api.example.com/req-body", {
+      method: "POST",
+      body: "alpha",
+      headers: { "content-type": "text/plain" },
+    });
+    const res1 = await fetch(req1, { next: { revalidate: 60 } });
+    const data1 = await res1.json();
+    expect(data1.count).toBe(1);
+
+    const req2 = new Request("https://api.example.com/req-body", {
+      method: "POST",
+      body: "bravo",
+      headers: { "content-type": "text/plain" },
+    });
+    const res2 = await fetch(req2, { next: { revalidate: 60 } });
+    const data2 = await res2.json();
+    expect(data2.count).toBe(2); // Different Request body = different cache
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("same Request object bodies hit the same cache entry", async () => {
+    const req1 = new Request("https://api.example.com/req-body-same", {
+      method: "POST",
+      body: "same-body",
+      headers: { "content-type": "text/plain" },
+    });
+    const res1 = await fetch(req1, { next: { revalidate: 60 } });
+    const data1 = await res1.json();
+    expect(data1.count).toBe(1);
+
+    const req2 = new Request("https://api.example.com/req-body-same", {
+      method: "POST",
+      body: "same-body",
+      headers: { "content-type": "text/plain" },
+    });
+    const res2 = await fetch(req2, { next: { revalidate: 60 } });
+    const data2 = await res2.json();
+    expect(data2.count).toBe(1); // Same Request body = cached
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   // ── force-cache with next.revalidate ────────────────────────────────
 
   it("cache: 'force-cache' with next.revalidate uses the specified TTL", async () => {
@@ -807,6 +849,33 @@ describe("fetch cache shim", () => {
       expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
+    it("FormData values with commas do not collide in the cache key", async () => {
+      const formA = new FormData();
+      formA.append("name", "a,b");
+      formA.append("name", "c");
+
+      const formB = new FormData();
+      formB.append("name", "a");
+      formB.append("name", "b,c");
+
+      const res1 = await fetch("https://api.example.com/body-form-comma", {
+        method: "POST",
+        body: formA,
+        next: { revalidate: 60 },
+      });
+      const data1 = await res1.json();
+      expect(data1.count).toBe(1);
+
+      const res2 = await fetch("https://api.example.com/body-form-comma", {
+        method: "POST",
+        body: formB,
+        next: { revalidate: 60 },
+      });
+      const data2 = await res2.json();
+      expect(data2.count).toBe(2); // Different multi-value form data = different cache
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
     it("ReadableStream bodies are included in cache key", async () => {
       const streamA = new ReadableStream({
         start(controller) {
@@ -1047,6 +1116,22 @@ describe("fetch cache shim", () => {
       const call = fetchMock.mock.calls[0];
       const init = call[1] as RequestInit;
       expect(init.body).toBe('{"key":"value"}');
+    });
+
+    it("Request object body is still passed through after cache key generation", async () => {
+      const request = new Request("https://api.example.com/request-restore", {
+        method: "POST",
+        body: "request-body-content",
+        headers: { "content-type": "text/plain" },
+      });
+
+      await fetch(request, { next: { revalidate: 60 } });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const call = fetchMock.mock.calls[0];
+      const forwardedRequest = call[0] as Request;
+      expect(forwardedRequest).toBeInstanceOf(Request);
+      expect(await forwardedRequest.text()).toBe("request-body-content");
     });
   });
 
