@@ -422,6 +422,33 @@ describe("fetch cache shim", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("Request FormData values with commas do not collide in the cache key", async () => {
+    const formA = new FormData();
+    formA.append("name", "a,b");
+    formA.append("name", "c");
+
+    const req1 = new Request("https://api.example.com/req-form-body", {
+      method: "POST",
+      body: formA,
+    });
+    const res1 = await fetch(req1, { next: { revalidate: 60 } });
+    const data1 = await res1.json();
+    expect(data1.count).toBe(1);
+
+    const formB = new FormData();
+    formB.append("name", "a");
+    formB.append("name", "b,c");
+
+    const req2 = new Request("https://api.example.com/req-form-body", {
+      method: "POST",
+      body: formB,
+    });
+    const res2 = await fetch(req2, { next: { revalidate: 60 } });
+    const data2 = await res2.json();
+    expect(data2.count).toBe(2); // Different Request FormData body = different cache
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   // ── force-cache with next.revalidate ────────────────────────────────
 
   it("cache: 'force-cache' with next.revalidate uses the specified TTL", async () => {
