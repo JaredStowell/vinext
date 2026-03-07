@@ -72,8 +72,13 @@ async function scanPageRoutes(
     "**/*",
     pagesDir,
     matcher.extensions,
-    (name: string) => name === "api" || name.startsWith("_"),
+    (name: string) => name.startsWith("_"),
   )) {
+    // Ignore top-level pages/api/* only (nested */api/* directories are valid page routes)
+    if (file === "api" || file.startsWith(`api${path.sep}`)) {
+      continue;
+    }
+
     const route = fileToRoute(file, pagesDir, matcher);
     if (route) routes.push(route);
   }

@@ -57,6 +57,15 @@ describe("pagesRouter - route discovery", () => {
     expect(patterns).not.toContain("/_document");
     expect(patterns).not.toContain("/_error");
   });
+
+  it("keeps nested api directories as page routes", async () => {
+    const routes = await pagesRouter(FIXTURE_DIR);
+
+    const nestedApiRoute = routes.find((r) => r.pattern === "/blog/api");
+    expect(nestedApiRoute).toBeDefined();
+    expect(nestedApiRoute!.filePath).toContain(path.join("blog", "api", "index.tsx"));
+  });
+
 });
 
 describe("matchRoute - URL matching", () => {
