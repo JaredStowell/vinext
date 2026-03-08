@@ -15,14 +15,15 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 // We need to mock fetch at the module level BEFORE fetch-cache.ts captures
 // `originalFetch`. Use vi.stubGlobal to intercept at import time.
 let requestCount = 0;
-const fetchMock = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
+const defaultFetchMockImplementation = async (input: string | URL | Request, _init?: RequestInit) => {
   requestCount++;
   const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
   return new Response(JSON.stringify({ url, count: requestCount }), {
     status: 200,
     headers: { "content-type": "application/json" },
   });
-});
+};
+const fetchMock = vi.fn(defaultFetchMockImplementation);
 
 // Stub globalThis.fetch BEFORE importing modules that capture it
 vi.stubGlobal("fetch", fetchMock);
@@ -37,7 +38,8 @@ describe("fetch cache shim", () => {
   beforeEach(() => {
     // Reset state
     requestCount = 0;
-    fetchMock.mockClear();
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(defaultFetchMockImplementation);
     // Reset the cache handler to a fresh instance for each test
     setCacheHandler(new MemoryCacheHandler());
     // Install the patched fetch
@@ -224,6 +226,46 @@ describe("fetch cache shim", () => {
     // Wait for background refetch
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(fetchMock).toHaveBeenCalledTimes(2); // Original + background refetch
+  });
+
+  it("preserves Request bodies for stale background revalidation", async () => {
+    const seenBodies: string[] = [];
+    fetchMock.mockImplementation(async (input: string | URL | Request, _init?: RequestInit) => {
+      requestCount++;
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const body = input instanceof Request ? await input.clone().text() : "";
+      seenBodies.push(body);
+      return new Response(JSON.stringify({ url, count: requestCount, body }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    const makeRequest = () => new Request("https://api.example.com/stale-request-body", {
+      method: "POST",
+      body: "request-body-content",
+      headers: { "content-type": "text/plain" },
+    });
+
+    const res1 = await fetch(makeRequest(), { next: { revalidate: 1 } });
+    const data1 = await res1.json();
+    expect(data1.count).toBe(1);
+    expect(data1.body).toBe("request-body-content");
+
+    const handler = getCacheHandler() as InstanceType<typeof MemoryCacheHandler>;
+    const store = (handler as any).store as Map<string, any>;
+    for (const [, entry] of store) {
+      entry.revalidateAt = Date.now() - 1000;
+    }
+
+    const res2 = await fetch(makeRequest(), { next: { revalidate: 1 } });
+    const data2 = await res2.json();
+    expect(data2.count).toBe(1);
+    expect(data2.body).toBe("request-body-content");
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(seenBodies).toEqual(["request-body-content", "request-body-content"]);
   });
 
   // ── Independent cache entries per URL ───────────────────────────────
@@ -1303,6 +1345,25 @@ describe("fetch cache shim", () => {
       const forwardedRequest = call[0] as Request;
       expect(forwardedRequest).toBeInstanceOf(Request);
       expect(await forwardedRequest.text()).toBe("request-body-content");
+    });
+
+    it("already-consumed Request bodies bypass cache key generation and defer to the underlying fetch", async () => {
+      fetchMock.mockImplementation(async (input: string | URL | Request, _init?: RequestInit) => {
+        if (input instanceof Request && input.bodyUsed) {
+          throw new TypeError("body already used");
+        }
+        return defaultFetchMockImplementation(input, _init);
+      });
+
+      const request = new Request("https://api.example.com/request-used", {
+        method: "POST",
+        body: "request-body-content",
+        headers: { "content-type": "text/plain" },
+      });
+      await request.text();
+
+      await expect(fetch(request, { next: { revalidate: 60 } })).rejects.toThrow("body already used");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
   });
 

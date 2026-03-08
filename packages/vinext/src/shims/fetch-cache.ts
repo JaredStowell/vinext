@@ -295,7 +295,7 @@ async function serializeBody(input: string | URL | Request, init?: RequestInit):
         const boundedRequest = new Request(input.url, {
           method: input.method,
           headers: contentType ? { "content-type": contentType } : undefined,
-          body: new Blob(chunks.map((chunk) => chunk.slice())),
+          body: new Blob(chunks as unknown as BlobPart[]),
         });
         const formData = await boundedRequest.formData();
         await serializeFormData(formData, pushBodyChunk, getTotalBodyBytes);
@@ -312,7 +312,7 @@ async function serializeBody(input: string | URL | Request, init?: RequestInit):
     }
 
     for (const chunk of chunks) {
-      bodyChunks.push(decoder.decode(chunk, { stream: true }));
+      pushBodyChunk(decoder.decode(chunk, { stream: true }));
     }
     const finalChunk = decoder.decode();
     if (finalChunk) {
