@@ -733,6 +733,27 @@ describe("next/cache shim", () => {
     setCacheHandler(new MemoryCacheHandler());
   });
 
+  it("unstable_cache caches undefined results", async () => {
+    const { unstable_cache, setCacheHandler, MemoryCacheHandler } =
+      await import("../packages/vinext/src/shims/cache.js");
+
+    setCacheHandler(new MemoryCacheHandler());
+
+    let callCount = 0;
+    const cached = unstable_cache(async () => {
+      callCount++;
+      return undefined;
+    }, ["undefined-result-test"]);
+
+    await expect(cached()).resolves.toBeUndefined();
+    expect(callCount).toBe(1);
+
+    await expect(cached()).resolves.toBeUndefined();
+    expect(callCount).toBe(1);
+
+    setCacheHandler(new MemoryCacheHandler());
+  });
+
   it("revalidateTag invalidates cached entries", async () => {
     const {
       unstable_cache,
