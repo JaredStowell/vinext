@@ -115,6 +115,8 @@ export interface NextConfig {
   output?: "export" | "standalone";
   /** File extensions treated as routable pages/routes (Next.js pageExtensions) */
   pageExtensions?: string[];
+  /** Extra origins allowed to access the dev server. */
+  allowedDevOrigins?: string[];
   /**
    * Enable Cache Components (Next.js 16).
    * When true, enables the "use cache" directive for pages, components, and functions.
@@ -150,6 +152,8 @@ export interface ResolvedNextConfig {
   i18n: NextI18nConfig | null;
   /** MDX remark/rehype/recma plugins extracted from @next/mdx config */
   mdx: MdxOptions | null;
+  /** Extra allowed origins for dev server access (from allowedDevOrigins). */
+  allowedDevOrigins: string[];
   /** Extra allowed origins for server action CSRF validation (from experimental.serverActions.allowedOrigins). */
   serverActionsAllowedOrigins: string[];
 }
@@ -259,6 +263,7 @@ export async function resolveNextConfig(
       images: undefined,
       i18n: null,
       mdx: null,
+      allowedDevOrigins: [],
       serverActionsAllowedOrigins: [],
     };
   }
@@ -293,6 +298,10 @@ export async function resolveNextConfig(
 
   // Extract MDX remark/rehype plugins from @next/mdx's webpack wrapper
   const mdx = extractMdxOptions(config);
+
+  const allowedDevOrigins = Array.isArray(config.allowedDevOrigins)
+    ? config.allowedDevOrigins
+    : [];
 
   // Resolve serverActions.allowedOrigins from experimental config
   const experimental = config.experimental as Record<string, unknown> | undefined;
@@ -342,6 +351,7 @@ export async function resolveNextConfig(
     images: config.images,
     i18n,
     mdx,
+    allowedDevOrigins,
     serverActionsAllowedOrigins,
   };
 }

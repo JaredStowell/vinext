@@ -29,7 +29,7 @@ export interface AppRouterConfig {
   headers?: NextHeader[];
   /** Extra origins allowed for server action CSRF checks (from experimental.serverActions.allowedOrigins). */
   allowedOrigins?: string[];
-  /** Extra origins allowed for dev server access (from serverActionsAllowedOrigins or custom config). */
+  /** Extra origins allowed for dev server access (from allowedDevOrigins). */
   allowedDevOrigins?: string[];
 }
 

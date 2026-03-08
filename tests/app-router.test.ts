@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { createBuilder, type ViteDevServer } from "vite";
+import { createBuilder, createServer, type ViteDevServer } from "vite";
 import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
@@ -2330,6 +2330,17 @@ describe("App Router next.config.js features (generateRscEntry)", () => {
     expect(code).toContain("*.my-domain.com");
   });
 
+  it("keeps allowedDevOrigins separate from allowedOrigins", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes, null, [], null, "", false, {
+      allowedOrigins: ["actions.example.com"],
+      allowedDevOrigins: ["allowed.example.com"],
+    });
+    expect(code).toContain("actions.example.com");
+    expect(code).toContain("allowed.example.com");
+    expect(code).toContain("const __allowedOrigins = [\"actions.example.com\"]");
+    expect(code).toContain("const __allowedDevOrigins = [\"allowed.example.com\"]");
+  });
+
   it("embeds empty allowedOrigins when none provided", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes, null, [], null, "", false);
     expect(code).toContain("__allowedOrigins = []");
@@ -2370,6 +2381,59 @@ describe("App Router next.config.js features (generateRscEntry)", () => {
     expect(code).toContain("staging.example.com");
     expect(code).toContain("*.preview.dev");
     expect(code).toContain("__allowedDevOrigins");
+  });
+
+  it("loads allowedDevOrigins from next.config into the virtual RSC entry", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vinext-app-rsc-allowed-dev-origins-"));
+    try {
+      fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, "app", "layout.tsx"),
+        "export default function Layout({ children }) { return <html><body>{children}</body></html>; }",
+      );
+      fs.writeFileSync(
+        path.join(tmpDir, "app", "page.tsx"),
+        "export default function Page() { return <div>allowed-dev-origins</div>; }",
+      );
+      fs.writeFileSync(
+        path.join(tmpDir, "next.config.mjs"),
+        `export default {
+  allowedDevOrigins: ["allowed.example.com"],
+  experimental: {
+    serverActions: {
+      allowedOrigins: ["actions.example.com"],
+    },
+  },
+};`,
+      );
+      fs.symlinkSync(
+        path.resolve(__dirname, "..", "node_modules"),
+        path.join(tmpDir, "node_modules"),
+        "junction",
+      );
+
+      const testServer = await createServer({
+        root: tmpDir,
+        configFile: false,
+        plugins: [vinext({ appDir: tmpDir })],
+        server: { port: 0 },
+        logLevel: "silent",
+      });
+
+      try {
+        const resolved = await testServer.pluginContainer.resolveId("virtual:vinext-rsc-entry");
+        expect(resolved).toBeTruthy();
+        const loaded = await testServer.pluginContainer.load(resolved!.id);
+        const code = typeof loaded === "string" ? loaded : (loaded as any)?.code ?? "";
+
+        expect(code).toContain("const __allowedDevOrigins = [\"allowed.example.com\"]");
+        expect(code).toContain("const __allowedOrigins = [\"actions.example.com\"]");
+      } finally {
+        await testServer.close();
+      }
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   describe("rscOnError: non-plain object dev hint", () => {

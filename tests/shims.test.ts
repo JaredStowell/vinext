@@ -5067,6 +5067,48 @@ describe("cacheComponents config (Next.js 16)", () => {
     expect(config.serverActionsAllowedOrigins).toEqual(["my-proxy.com", "*.my-domain.com"]);
   });
 
+  it("resolveNextConfig resolves allowedDevOrigins from top-level config", async () => {
+    const { resolveNextConfig } = await import(
+      "../packages/vinext/src/config/next-config.js"
+    );
+    const config = await resolveNextConfig({
+      allowedDevOrigins: ["staging.example.com", "*.preview.dev"],
+    });
+    expect(config.allowedDevOrigins).toEqual(["staging.example.com", "*.preview.dev"]);
+  });
+
+  it("resolveNextConfig keeps allowedDevOrigins separate from serverActionsAllowedOrigins", async () => {
+    const { resolveNextConfig } = await import(
+      "../packages/vinext/src/config/next-config.js"
+    );
+    const config = await resolveNextConfig({
+      allowedDevOrigins: ["dev.example.com"],
+      experimental: {
+        serverActions: {
+          allowedOrigins: ["actions.example.com"],
+        },
+      },
+    });
+    expect(config.allowedDevOrigins).toEqual(["dev.example.com"]);
+    expect(config.serverActionsAllowedOrigins).toEqual(["actions.example.com"]);
+  });
+
+  it("resolveNextConfig defaults allowedDevOrigins to empty array", async () => {
+    const { resolveNextConfig } = await import(
+      "../packages/vinext/src/config/next-config.js"
+    );
+    const config = await resolveNextConfig({});
+    expect(config.allowedDevOrigins).toEqual([]);
+  });
+
+  it("resolveNextConfig handles null input with empty allowedDevOrigins", async () => {
+    const { resolveNextConfig } = await import(
+      "../packages/vinext/src/config/next-config.js"
+    );
+    const config = await resolveNextConfig(null);
+    expect(config.allowedDevOrigins).toEqual([]);
+  });
+
   it("resolveNextConfig defaults serverActionsAllowedOrigins to empty array", async () => {
     const { resolveNextConfig } = await import(
       "../packages/vinext/src/config/next-config.js"

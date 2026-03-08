@@ -2342,7 +2342,7 @@ hydrate();
             rewrites: nextConfig?.rewrites,
             headers: nextConfig?.headers,
             allowedOrigins: nextConfig?.serverActionsAllowedOrigins,
-            allowedDevOrigins: nextConfig?.serverActionsAllowedOrigins,
+            allowedDevOrigins: nextConfig?.allowedDevOrigins,
           });
         }
         if (id === RESOLVED_APP_SSR_ENTRY && hasAppDir) {
@@ -2506,7 +2506,7 @@ hydrate();
               "sec-fetch-site": req.headers["sec-fetch-site"] as string | undefined,
               "sec-fetch-mode": req.headers["sec-fetch-mode"] as string | undefined,
             },
-            nextConfig?.serverActionsAllowedOrigins,
+            nextConfig?.allowedDevOrigins,
           );
           if (blockReason) {
             console.warn(`[vinext] Blocked dev request: ${blockReason} (${req.url})`);
@@ -2683,7 +2683,7 @@ hydrate();
                   "sec-fetch-site": req.headers["sec-fetch-site"] as string | undefined,
                   "sec-fetch-mode": req.headers["sec-fetch-mode"] as string | undefined,
                 },
-                nextConfig?.serverActionsAllowedOrigins,
+                nextConfig?.allowedDevOrigins,
               );
               if (blockReason) {
                 console.warn(`[vinext] Blocked dev request: ${blockReason} (${url})`);

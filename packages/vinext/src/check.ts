@@ -72,6 +72,7 @@ const CONFIG_SUPPORT: Record<string, { status: Status; detail?: string }> = {
   i18n: { status: "supported", detail: "path-prefix routing (domains not yet supported)" },
   env: { status: "supported" },
   images: { status: "partial", detail: "remotePatterns validated, no local optimization" },
+  allowedDevOrigins: { status: "supported", detail: "dev server cross-origin allowlist" },
   output: { status: "supported", detail: "'export' and 'standalone' modes" },
   transpilePackages: { status: "supported", detail: "Vite handles this natively" },
   webpack: { status: "unsupported", detail: "Vite replaces webpack — custom webpack configs need migration" },
@@ -215,7 +216,7 @@ export function analyzeConfig(root: string): CheckItem[] {
   // Check for known config options by searching for property names in the config file
   const configOptions = [
     "basePath", "trailingSlash", "redirects", "rewrites", "headers",
-    "i18n", "env", "images", "output", "transpilePackages", "webpack",
+    "i18n", "env", "images", "allowedDevOrigins", "output", "transpilePackages", "webpack",
     "reactStrictMode", "poweredByHeader",
   ];
 
