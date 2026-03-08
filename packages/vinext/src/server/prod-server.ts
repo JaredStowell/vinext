@@ -555,6 +555,11 @@ async function startAppRouterServer(options: AppRouterServerOptions) {
     // Image optimization passthrough (Node.js prod server has no Images binding;
     // serves the original file with cache headers and security headers)
     if (pathname === IMAGE_OPTIMIZATION_PATH) {
+      if (imageConfig?.unoptimized) {
+        res.writeHead(404);
+        res.end("Not Found");
+        return;
+      }
       const parsedUrl = new URL(url, "http://localhost");
       const defaultAllowedWidths = [...DEFAULT_DEVICE_SIZES, ...DEFAULT_IMAGE_SIZES];
       const params = parseImageParams(parsedUrl, defaultAllowedWidths);
@@ -674,6 +679,7 @@ async function startPagesRouterServer(options: PagesRouterServerOptions) {
   ];
   // Extract image security config for SVG handling and security headers
   const pagesImageConfig: ImageConfig | undefined = vinextConfig?.images ? {
+    unoptimized: vinextConfig.images.unoptimized,
     dangerouslyAllowSVG: vinextConfig.images.dangerouslyAllowSVG,
     contentDispositionType: vinextConfig.images.contentDispositionType,
     contentSecurityPolicy: vinextConfig.images.contentSecurityPolicy,
@@ -723,6 +729,11 @@ async function startPagesRouterServer(options: PagesRouterServerOptions) {
 
     // ── Image optimization passthrough ──────────────────────────────
     if (pathname === IMAGE_OPTIMIZATION_PATH || staticLookupPath === IMAGE_OPTIMIZATION_PATH) {
+      if (pagesImageConfig?.unoptimized) {
+        res.writeHead(404);
+        res.end("Not Found");
+        return;
+      }
       const parsedUrl = new URL(rawUrl, "http://localhost");
       const params = parseImageParams(parsedUrl, allowedImageWidths);
       if (!params) {

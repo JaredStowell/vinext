@@ -5640,6 +5640,11 @@ describe("next/server enhancements", () => {
 });
 
 describe("next/image enhancements", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
   it("exports StaticImageData type", async () => {
     const imageModule = await import(
       "../packages/vinext/src/shims/image.js"
@@ -5811,6 +5816,49 @@ describe("next/image enhancements", () => {
     expect(result.props.src).not.toContain("/_vinext/image");
   });
 
+  // Ported from Next.js:
+  // test/integration/next-image-new/unoptimized/test/index.test.ts
+  // test/unit/next-image-get-img-props.test.ts
+  // https://github.com/vercel/next.js/blob/canary/test/integration/next-image-new/unoptimized/test/index.test.ts
+  // https://github.com/vercel/next.js/blob/canary/test/unit/next-image-get-img-props.test.ts
+  it("images.unoptimized bypasses optimization in getImageProps", async () => {
+    vi.stubEnv("__VINEXT_IMAGE_UNOPTIMIZED", "true");
+    vi.resetModules();
+
+    const { getImageProps } = await import("../packages/vinext/src/shims/image.js");
+    const result = getImageProps({
+      src: "/photo.jpg",
+      alt: "Globally unoptimized",
+      width: 800,
+      height: 600,
+    });
+
+    expect(result.props.src).toBe("/photo.jpg");
+    expect(result.props.src).not.toContain("/_vinext/image");
+    expect(result.props.srcSet).toBeUndefined();
+  });
+
+  // Ported from Next.js:
+  // packages/next/src/shared/lib/get-img-props.ts
+  // https://github.com/vercel/next.js/blob/canary/packages/next/src/shared/lib/get-img-props.ts
+  it("images.unoptimized still wins when unoptimized={false}", async () => {
+    vi.stubEnv("__VINEXT_IMAGE_UNOPTIMIZED", "true");
+    vi.resetModules();
+
+    const { getImageProps } = await import("../packages/vinext/src/shims/image.js");
+    const result = getImageProps({
+      src: "/photo.jpg",
+      alt: "Config wins",
+      width: 800,
+      height: 600,
+      unoptimized: false,
+    });
+
+    expect(result.props.src).toBe("/photo.jpg");
+    expect(result.props.src).not.toContain("/_vinext/image");
+    expect(result.props.srcSet).toBeUndefined();
+  });
+
   it("SVG src auto-skips optimization endpoint (default behavior)", async () => {
     const { getImageProps } = await import("../packages/vinext/src/shims/image.js");
     const result = getImageProps({
@@ -5837,6 +5885,11 @@ describe("next/image enhancements", () => {
 });
 
 describe("next/image component rendering", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
   it("renders basic image with src, alt, width, height", async () => {
     const React = await import("react");
     const { renderToStaticMarkup } = await import("react-dom/server");
@@ -5904,6 +5957,26 @@ describe("next/image component rendering", () => {
     // srcSet entries point to /_vinext/image optimization endpoint
     expect(html).toContain("/_vinext/image");
     expect(html).toContain("url=%2Fphoto.jpg");
+  });
+
+  // Ported from Next.js:
+  // test/integration/next-image-new/unoptimized/test/index.test.ts
+  // https://github.com/vercel/next.js/blob/canary/test/integration/next-image-new/unoptimized/test/index.test.ts
+  it("images.unoptimized renders raw local image URLs without srcSet", async () => {
+    vi.stubEnv("__VINEXT_IMAGE_UNOPTIMIZED", "true");
+    vi.resetModules();
+
+    const React = await import("react");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const Image = (await import("../packages/vinext/src/shims/image.js")).default;
+
+    const html = renderToStaticMarkup(
+      React.createElement(Image, { src: "/photo.jpg", alt: "Unoptimized image", width: 800, height: 600 }),
+    );
+
+    expect(html).toContain('src="/photo.jpg"');
+    expect(html).not.toContain("/_vinext/image");
+    expect(html).not.toContain("srcSet=");
   });
 
   it("renders blur placeholder with background-image", async () => {
@@ -6391,6 +6464,28 @@ describe("isSafeImageContentType", () => {
 });
 
 describe("handleImageOptimization", () => {
+  // Ported from Next.js:
+  // test/integration/image-optimizer/test/index.test.ts
+  // https://github.com/vercel/next.js/blob/canary/test/integration/image-optimizer/test/index.test.ts
+  it("returns 404 when images.unoptimized is enabled", async () => {
+    const { handleImageOptimization } = await import("../packages/vinext/src/server/image-optimization.js");
+    const fetchAsset = vi.fn(async () => new Response("", {
+      status: 200,
+      headers: { "Content-Type": "image/jpeg" },
+    }));
+    const request = new Request("http://localhost/_vinext/image?url=%2Fimg.jpg&w=800");
+
+    const response = await handleImageOptimization(
+      request,
+      { fetchAsset },
+      undefined,
+      { unoptimized: true },
+    );
+
+    expect(response.status).toBe(404);
+    expect(fetchAsset).not.toHaveBeenCalled();
+  });
+
   it("returns 400 for invalid params", async () => {
     const { handleImageOptimization } = await import("../packages/vinext/src/server/image-optimization.js");
     const request = new Request("http://localhost/_vinext/image");

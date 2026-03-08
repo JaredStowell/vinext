@@ -916,6 +916,7 @@ const __trailingSlash = ${JSON.stringify(ts)};
 const __configRedirects = ${JSON.stringify(redirects)};
 const __configRewrites = ${JSON.stringify(rewrites)};
 const __configHeaders = ${JSON.stringify(headers)};
+const __imageUnoptimized = ${JSON.stringify(config?.images?.unoptimized ?? false)};
 const __allowedOrigins = ${JSON.stringify(allowedOrigins)};
 
 ${generateDevOriginCheckCode(config?.allowedDevOrigins)}
@@ -1517,6 +1518,9 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
 
   // ── Image optimization passthrough (dev mode — no transformation) ───────
   if (cleanPathname === "/_vinext/image") {
+    if (__imageUnoptimized) {
+      return new Response("Not Found", { status: 404 });
+    }
     const __rawImgUrl = url.searchParams.get("url");
     // Normalize backslashes: browsers and the URL constructor treat
     // /\\evil.com as protocol-relative (//evil.com), bypassing the // check.

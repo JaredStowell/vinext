@@ -475,6 +475,7 @@ const configRedirects = vinextConfig?.redirects ?? [];
 const configRewrites = vinextConfig?.rewrites ?? { beforeFiles: [], afterFiles: [], fallback: [] };
 const configHeaders = vinextConfig?.headers ?? [];
 const imageConfig: ImageConfig | undefined = vinextConfig?.images ? {
+  unoptimized: vinextConfig.images.unoptimized,
   dangerouslyAllowSVG: vinextConfig.images.dangerouslyAllowSVG,
   contentDispositionType: vinextConfig.images.contentDispositionType,
   contentSecurityPolicy: vinextConfig.images.contentSecurityPolicy,

@@ -48,6 +48,7 @@ const __imageDeviceSizes: number[] = (() => {
     return [640, 750, 828, 1080, 1200, 1920, 2048, 3840];
   }
 })();
+const __imageUnoptimized = process.env.__VINEXT_IMAGE_UNOPTIMIZED === "true";
 /**
  * Whether dangerouslyAllowSVG is enabled in next.config.js.
  * When false (default), .svg sources auto-skip the optimization endpoint
@@ -291,16 +292,14 @@ const Image = forwardRef<HTMLImageElement, ImageProps>(function Image(
   // SVG sources auto-skip unless dangerouslyAllowSVG is enabled, matching
   // Next.js behavior where .svg triggers unoptimized=true by default.
   const imgQuality = quality ?? 75;
-  const isSvg = src.endsWith(".svg");
-  const skipOptimization = _unoptimized === true || (isSvg && !__dangerouslyAllowSVG);
+  const isSvg = src.split("?", 1)[0].endsWith(".svg");
+  const skipOptimization = __imageUnoptimized || _unoptimized === true || (isSvg && !__dangerouslyAllowSVG);
 
   // Build srcSet for responsive local images (common breakpoints).
   // Each entry points to /_vinext/image with the appropriate width.
   const srcSet = imgWidth && !fill && !skipOptimization
     ? generateSrcSet(src, imgWidth, imgQuality)
-    : imgWidth && !fill
-      ? RESPONSIVE_WIDTHS.filter((w) => w <= imgWidth * 2).map((w) => `${src} ${w}w`).join(", ") || `${src} ${imgWidth}w`
-      : undefined;
+    : undefined;
 
   // The main `src` also goes through the optimization endpoint. Use the
   // declared width (or the first responsive width as fallback).
@@ -405,8 +404,8 @@ export function getImageProps(props: ImageProps): {
   // For local images (no loader, not remote), route through optimization endpoint.
   // When `unoptimized` is true, bypass the endpoint entirely (Next.js compat).
   // SVG sources auto-skip unless dangerouslyAllowSVG is enabled.
-  const isSvg = resolvedSrc.endsWith(".svg");
-  const skipOpt = _unoptimized === true || (isSvg && !__dangerouslyAllowSVG) || blockedInProd || !!loader || isRemoteUrl(resolvedSrc);
+  const isSvg = resolvedSrc.split("?", 1)[0].endsWith(".svg");
+  const skipOpt = __imageUnoptimized || _unoptimized === true || (isSvg && !__dangerouslyAllowSVG) || blockedInProd || !!loader || isRemoteUrl(resolvedSrc);
   const optimizedSrc = skipOpt
     ? resolvedSrc
     : imgWidth

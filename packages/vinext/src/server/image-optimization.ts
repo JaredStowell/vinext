@@ -25,6 +25,8 @@ export const IMAGE_OPTIMIZATION_PATH = "/_vinext/image";
  * Controls SVG handling and security headers for the image endpoint.
  */
 export interface ImageConfig {
+  /** Disable the image optimization endpoint entirely. Default: false. */
+  unoptimized?: boolean;
   /** Allow SVG through the image optimization endpoint. Default: false. */
   dangerouslyAllowSVG?: boolean;
   /** Content-Disposition header value. Default: "inline". */
@@ -195,6 +197,10 @@ export async function handleImageOptimization(
   allowedWidths?: number[],
   imageConfig?: ImageConfig,
 ): Promise<Response> {
+  if (imageConfig?.unoptimized) {
+    return new Response("Not Found", { status: 404 });
+  }
+
   const url = new URL(request.url);
   const params = parseImageParams(url, allowedWidths);
 

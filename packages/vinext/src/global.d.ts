@@ -288,6 +288,12 @@ declare global {
       __VINEXT_IMAGE_SIZES?: string;
 
       /**
+       * `"true"` or `"false"` — whether image optimization is globally
+       * disabled (`next.config.js` → `images.unoptimized`).
+       */
+      __VINEXT_IMAGE_UNOPTIMIZED?: string;
+
+      /**
        * `"true"` or `"false"` — whether SVG sources are allowed through the
        * image optimizer (`next.config.js` → `images.dangerouslyAllowSVG`).
        */

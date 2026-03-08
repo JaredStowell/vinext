@@ -672,6 +672,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
       images: {
         deviceSizes: nextConfig?.images?.deviceSizes,
         imageSizes: nextConfig?.images?.imageSizes,
+        unoptimized: nextConfig?.images?.unoptimized,
         dangerouslyAllowSVG: nextConfig?.images?.dangerouslyAllowSVG,
         contentDispositionType: nextConfig?.images?.contentDispositionType,
         contentSecurityPolicy: nextConfig?.images?.contentSecurityPolicy,
@@ -1847,6 +1848,9 @@ hydrate();
             JSON.stringify(imageSizes),
           );
         }
+        defines["process.env.__VINEXT_IMAGE_UNOPTIMIZED"] = JSON.stringify(
+          String(nextConfig.images?.unoptimized ?? false),
+        );
         // Expose dangerouslyAllowSVG flag for the image shim's auto-skip logic.
         // When false (default), .svg sources bypass the optimization endpoint.
         defines["process.env.__VINEXT_IMAGE_DANGEROUSLY_ALLOW_SVG"] = JSON.stringify(
@@ -2695,6 +2699,11 @@ hydrate();
               // ── Image optimization passthrough (dev mode) ─────────────
               // In dev, redirect to the original asset URL so Vite serves it.
               if (url.split("?")[0] === "/_vinext/image") {
+                if (nextConfig.images?.unoptimized) {
+                  res.writeHead(404, { "Content-Type": "text/plain" });
+                  res.end("Not Found");
+                  return;
+                }
                 const imgParams = new URLSearchParams(url.split("?")[1] ?? "");
                 const rawImgUrl = imgParams.get("url");
                 // Normalize backslashes: browsers and the URL constructor treat
@@ -3558,6 +3567,7 @@ hydrate();
           if (!outDir) return;
 
           const imageConfig = {
+            unoptimized: nextConfig?.images?.unoptimized,
             dangerouslyAllowSVG: nextConfig?.images?.dangerouslyAllowSVG,
             contentDispositionType: nextConfig?.images?.contentDispositionType,
             contentSecurityPolicy: nextConfig?.images?.contentSecurityPolicy,
