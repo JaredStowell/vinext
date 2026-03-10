@@ -14,7 +14,13 @@ declare module "next/link" {
 
 declare module "next/navigation" {
   export function usePathname(): string;
-  export function useSearchParams(): URLSearchParams;
+  export class ReadonlyURLSearchParams extends URLSearchParams {
+    append(name: string, value: string): never;
+    delete(name: string, value?: string): never;
+    set(name: string, value: string): never;
+    sort(): never;
+  }
+  export function useSearchParams(): ReadonlyURLSearchParams;
   export function useParams<T = Record<string, string | string[]>>(): T;
   export function useRouter(): {
     push(href: string, options?: { scroll?: boolean }): void;
