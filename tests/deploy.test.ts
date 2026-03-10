@@ -648,6 +648,7 @@ describe("generatePagesRouterWorkerEntry", () => {
 
   it("uses segment-boundary check before skipping redirect destination prefixing", () => {
     const content = generatePagesRouterWorkerEntry();
+    expect(content).toContain("!isExternalUrl(redirect.destination)");
     expect(content).toContain("!hasBasePath(redirect.destination, basePath)");
   });
 });

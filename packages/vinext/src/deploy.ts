@@ -694,7 +694,9 @@ export default {
         const redirect = matchRedirect(resolvedPathname, configRedirects, reqCtx);
         if (redirect) {
           const dest = sanitizeDestination(
-            basePath && !hasBasePath(redirect.destination, basePath)
+            basePath &&
+              !isExternalUrl(redirect.destination) &&
+              !hasBasePath(redirect.destination, basePath)
               ? basePath + redirect.destination
               : redirect.destination,
           );

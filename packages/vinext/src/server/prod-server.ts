@@ -959,7 +959,9 @@ async function startPagesRouterServer(options: PagesRouterServerOptions) {
           // doesn't already start with it.
           // Sanitize the final destination to prevent protocol-relative URL open redirects.
           const dest = sanitizeDestination(
-            basePath && !hasBasePath(redirect.destination, basePath)
+            basePath &&
+              !isExternalUrl(redirect.destination) &&
+              !hasBasePath(redirect.destination, basePath)
               ? basePath + redirect.destination
               : redirect.destination,
           );

@@ -1392,7 +1392,9 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     const __redir = matchRedirect(__redirPathname, __configRedirects, __reqCtx);
     if (__redir) {
       const __redirDest = sanitizeDestination(
-        __basePath && !hasBasePath(__redir.destination, __basePath)
+        __basePath &&
+          !isExternalUrl(__redir.destination) &&
+          !hasBasePath(__redir.destination, __basePath)
           ? __basePath + __redir.destination
           : __redir.destination
       );

@@ -3236,7 +3236,9 @@ function applyRedirects(
   if (result) {
     // Sanitize to prevent open redirect via protocol-relative URLs
     const dest = sanitizeDestination(
-      basePath && !hasBasePath(result.destination, basePath)
+      basePath &&
+        !isExternalUrl(result.destination) &&
+        !hasBasePath(result.destination, basePath)
         ? basePath + result.destination
         : result.destination,
     );

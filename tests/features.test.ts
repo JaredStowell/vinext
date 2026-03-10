@@ -1280,6 +1280,11 @@ export default {
         destination: "/application/about",
         permanent: false,
       },
+      {
+        source: "/redir-external",
+        destination: "https://example.com/page",
+        permanent: false,
+      },
     ];
   },
 };
@@ -1423,6 +1428,14 @@ export default function Home() {
     const res = await fetch(`${bpBaseUrl}/app/redir`, { redirect: "manual" });
     expect(res.status).toBe(307);
     expect(res.headers.get("location")).toBe("/app/application/about");
+  });
+
+  it("does not prepend basePath to external redirect destinations", async () => {
+    const res = await fetch(`${bpBaseUrl}/app/redir-external`, {
+      redirect: "manual",
+    });
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toBe("https://example.com/page");
   });
 
   it("GET /api/hello (without basePath) does NOT serve API routes", async () => {
