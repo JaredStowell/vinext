@@ -304,7 +304,7 @@ function parseCookieHeader(cookieHeader: string): Map<string, string> {
     if (!name) continue;
 
     try {
-      cookies.set(name, decodeURIComponent(pair.slice(splitAt + 1).trim() || "true"));
+      cookies.set(name, decodeURIComponent(pair.slice(splitAt + 1).trim()));
     } catch {
       // Match Next.js/@edge-runtime behavior: ignore malformed cookie values.
     }
