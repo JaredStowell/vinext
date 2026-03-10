@@ -255,12 +255,16 @@ describe("next/headers shim", () => {
     });
 
     const syncHeaders = headers();
+    expect(() => syncHeaders.set).toThrow(/Headers cannot be modified/);
+    expect(() => syncHeaders.append).toThrow(/Headers cannot be modified/);
+    expect(() => syncHeaders.delete).toThrow(/Headers cannot be modified/);
     expect(() => syncHeaders.set("foo", "mutated")).toThrow(/Headers cannot be modified/);
     expect(() => syncHeaders.append("foo", "mutated")).toThrow(/Headers cannot be modified/);
     expect(() => syncHeaders.delete("foo")).toThrow(/Headers cannot be modified/);
     expect(syncHeaders.get("foo")).toBe("original");
 
     const awaitedHeaders = await headers();
+    expect(() => awaitedHeaders.set).toThrow(/Headers cannot be modified/);
     expect(() => awaitedHeaders.set("foo", "mutated")).toThrow(/Headers cannot be modified/);
     expect(awaitedHeaders.get("foo")).toBe("original");
     expect((await headers()).get("foo")).toBe("original");
@@ -315,6 +319,12 @@ describe("next/headers shim", () => {
     });
 
     const syncCookies = cookies();
+    expect(() => syncCookies.set).toThrow(
+      /Cookies can only be modified in a Server Action or Route Handler/,
+    );
+    expect(() => syncCookies.delete).toThrow(
+      /Cookies can only be modified in a Server Action or Route Handler/,
+    );
     expect(() => syncCookies.set("session", "mutated")).toThrow(
       /Cookies can only be modified in a Server Action or Route Handler/,
     );
@@ -324,6 +334,9 @@ describe("next/headers shim", () => {
     expect(syncCookies.get("session")).toEqual({ name: "session", value: "abc123" });
 
     const awaitedCookies = await cookies();
+    expect(() => awaitedCookies.set).toThrow(
+      /Cookies can only be modified in a Server Action or Route Handler/,
+    );
     expect(() => awaitedCookies.set("session", "mutated")).toThrow(
       /Cookies can only be modified in a Server Action or Route Handler/,
     );
@@ -531,7 +544,7 @@ describe("next/headers shim", () => {
   });
 
   it('draftMode() throws the dynamic = "error" access error before exposing draft controls', async () => {
-    const { setHeadersContext, draftMode, getDraftModeCookieHeader } =
+    const { setHeadersContext, draftMode, getDraftModeCookieHeader, consumeDynamicUsage } =
       await import("../packages/vinext/src/shims/headers.js");
     const accessError = new Error(
       'Page with `dynamic = "error"` used a dynamic API. This page was expected to be fully static.',
@@ -544,6 +557,7 @@ describe("next/headers shim", () => {
     });
 
     await expect(draftMode()).rejects.toThrow(accessError);
+    expect(consumeDynamicUsage()).toBe(false);
     expect(getDraftModeCookieHeader()).toBeNull();
 
     setHeadersContext(null);

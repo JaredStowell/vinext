@@ -2431,8 +2431,8 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
   // force-static / error: treat as static regardless of dynamic usage.
   // force-static intentionally provides empty headers/cookies context so
   // dynamic APIs return safe defaults; we ignore the dynamic usage signal.
-  // dynamic='error' should have already thrown (via throwing Proxy) if user
-  // code accessed dynamic APIs, so reaching here means rendering succeeded.
+  // dynamic='error' should have already thrown via the request API accessError
+  // trap if user code touched a dynamic API, so reaching here means rendering succeeded.
   if ((isForceStatic || isDynamicError) && (revalidateSeconds === null || revalidateSeconds === 0)) {
     return attachMiddlewareContext(new Response(htmlStream, {
       headers: {

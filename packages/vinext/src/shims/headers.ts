@@ -342,7 +342,7 @@ function _sealHeaders(headers: Headers): Headers {
   return new Proxy(headers, {
     get(target, prop) {
       if (typeof prop === "string" && _HEADERS_MUTATING_METHODS.has(prop)) {
-        return ReadonlyHeadersError.callable;
+        throw new ReadonlyHeadersError();
       }
 
       const value = Reflect.get(target, prop, target);
@@ -377,7 +377,7 @@ function _sealCookies(cookies: RequestCookies): RequestCookies {
   return new Proxy(cookies, {
     get(target, prop) {
       if (prop === "set" || prop === "delete") {
-        return ReadonlyRequestCookiesError.callable;
+        throw new ReadonlyRequestCookiesError();
       }
 
       const value = Reflect.get(target, prop, target);
@@ -396,6 +396,8 @@ function _getMutableCookies(ctx: HeadersContext): RequestCookies {
 
 function _getReadonlyCookies(ctx: HeadersContext): RequestCookies {
   if (!ctx.readonlyCookies) {
+    // Keep a separate readonly wrapper so render-path reads avoid the
+    // mutable phase-checking proxy while still reflecting the shared cookie map.
     ctx.readonlyCookies = _sealCookies(new RequestCookies(ctx.cookies));
   }
 
@@ -628,12 +630,12 @@ interface DraftModeResult {
  */
 export async function draftMode(): Promise<DraftModeResult> {
   throwIfInsideCacheScope("draftMode()");
-  markDynamicUsage();
 
   const state = _getState();
   if (state.headersContext?.accessError) {
     throw state.headersContext.accessError;
   }
+  markDynamicUsage();
   const secret = getDraftSecret();
   const isEnabled = state.headersContext
     ? state.headersContext.cookies.get(DRAFT_MODE_COOKIE) === secret
