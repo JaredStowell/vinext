@@ -83,6 +83,14 @@ export interface NavigationContext {
   params: Record<string, string | string[]>;
 }
 
+const _READONLY_SEARCH_PARAMS = Symbol("vinext.navigation.readonlySearchParams");
+const _READONLY_SEARCH_PARAMS_SOURCE = Symbol("vinext.navigation.readonlySearchParamsSource");
+
+type NavigationContextWithReadonlyCache = NavigationContext & {
+  [_READONLY_SEARCH_PARAMS]?: ReadonlyURLSearchParams;
+  [_READONLY_SEARCH_PARAMS_SOURCE]?: URLSearchParams;
+};
+
 // ---------------------------------------------------------------------------
 // Server-side navigation state lives in a separate server-only module
 // (navigation-state.ts) that uses AsyncLocalStorage for request isolation.
@@ -233,8 +241,7 @@ function notifyListeners(): void {
 // new instances on every render (infinite re-renders).
 let _cachedSearch = !isServer ? window.location.search : "";
 let _cachedReadonlySearchParams = new ReadonlyURLSearchParams(_cachedSearch);
-let _cachedServerSearchParamsSource: URLSearchParams | null = null;
-let _cachedServerReadonlySearchParams: ReadonlyURLSearchParams | null = null;
+let _cachedEmptyServerSearchParams: ReadonlyURLSearchParams | null = null;
 let _cachedPathname = !isServer ? stripBasePath(window.location.pathname, __basePath) : "/";
 
 function getPathnameSnapshot(): string {
@@ -255,19 +262,19 @@ function getSearchParamsSnapshot(): ReadonlyURLSearchParams {
 }
 
 function getServerSearchParamsSnapshot(): ReadonlyURLSearchParams {
-  const searchParams = _getServerContext()?.searchParams ?? null;
-  if (searchParams != null) {
-    if (searchParams !== _cachedServerSearchParamsSource) {
-      _cachedServerSearchParamsSource = searchParams;
-      _cachedServerReadonlySearchParams = new ReadonlyURLSearchParams(searchParams);
+  const ctx = _getServerContext() as NavigationContextWithReadonlyCache | null;
+  if (ctx != null) {
+    const searchParams = ctx.searchParams;
+    if (ctx[_READONLY_SEARCH_PARAMS_SOURCE] !== searchParams) {
+      ctx[_READONLY_SEARCH_PARAMS_SOURCE] = searchParams;
+      ctx[_READONLY_SEARCH_PARAMS] = new ReadonlyURLSearchParams(searchParams);
     }
-    return _cachedServerReadonlySearchParams!;
+    return ctx[_READONLY_SEARCH_PARAMS]!;
   }
-  if (_cachedServerSearchParamsSource !== null || _cachedServerReadonlySearchParams === null) {
-    _cachedServerSearchParamsSource = null;
-    _cachedServerReadonlySearchParams = new ReadonlyURLSearchParams();
+  if (_cachedEmptyServerSearchParams === null) {
+    _cachedEmptyServerSearchParams = new ReadonlyURLSearchParams();
   }
-  return _cachedServerReadonlySearchParams;
+  return _cachedEmptyServerSearchParams;
 }
 
 // Track client-side params (set during RSC hydration/navigation)

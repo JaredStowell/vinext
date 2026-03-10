@@ -7978,6 +7978,52 @@ describe("next/navigation enhancements", () => {
     }
   });
 
+  it("useSearchParams keeps wrapper identity stable across concurrent ALS-scoped requests", async () => {
+    const { runWithNavigationContext } =
+      await import("../packages/vinext/src/shims/navigation-state.js");
+    const { setNavigationContext, useSearchParams } =
+      await import("../packages/vinext/src/shims/navigation.js");
+
+    let releaseInterleave!: () => void;
+    const waitForInterleave = new Promise<void>((resolve) => {
+      releaseInterleave = resolve;
+    });
+
+    async function runRequest(query: string, pathname: string) {
+      return runWithNavigationContext(async () => {
+        setNavigationContext({
+          pathname,
+          searchParams: new URLSearchParams(query),
+          params: {},
+        });
+
+        const first = useSearchParams();
+        await waitForInterleave;
+        const second = useSearchParams();
+
+        return {
+          first,
+          second,
+          value: first.toString(),
+        };
+      });
+    }
+
+    const requestA = runRequest("a=1", "/request-a");
+    const requestB = runRequest("b=2", "/request-b");
+
+    await Promise.resolve();
+    releaseInterleave();
+
+    const [a, b] = await Promise.all([requestA, requestB]);
+
+    expect(a.first).toBe(a.second);
+    expect(b.first).toBe(b.second);
+    expect(a.value).toBe("a=1");
+    expect(b.value).toBe("b=2");
+    expect(a.first).not.toBe(b.first);
+  });
+
   it("useServerInsertedHTML is a no-op function", async () => {
     const { useServerInsertedHTML } = await import("../packages/vinext/src/shims/navigation.js");
     // Should not throw
