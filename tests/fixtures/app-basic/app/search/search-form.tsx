@@ -12,14 +12,16 @@ export default function SearchForm() {
         </button>
       </Form>
 
-      <Form action="/search?lang=en" id="search-form-with-query">
+      <Form action="/search" id="search-form-with-hidden-lang">
+        <input type="hidden" name="lang" value="en" />
         <input name="q" placeholder="Search with locale..." id="search-input-with-query" />
         <button type="submit" id="search-button-with-query">
-          Search With Query
+          Search With Hidden Lang
         </button>
       </Form>
 
       <Form action="/search" id="search-form-with-submitter-action">
+        <input type="hidden" name="lang" value="fr" />
         <input
           name="q"
           placeholder="Search with submitter action..."
@@ -28,7 +30,7 @@ export default function SearchForm() {
         <button
           type="submit"
           id="search-button-with-submitter-action"
-          formAction="/search?lang=fr"
+          formAction="/search-alt"
           name="source"
           value="submitter-action"
         >
@@ -37,6 +39,7 @@ export default function SearchForm() {
       </Form>
 
       <Form action="/search" method="POST" id="search-form-post-with-get-submitter">
+        <input type="hidden" name="lang" value="de" />
         <input
           name="q"
           placeholder="Search with submitter method..."
@@ -45,7 +48,7 @@ export default function SearchForm() {
         <button
           type="submit"
           id="search-button-post-with-get-submitter"
-          formAction="/search?lang=de"
+          formAction="/search-alt"
           formMethod="GET"
           name="source"
           value="submitter-method"

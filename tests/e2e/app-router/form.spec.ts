@@ -66,9 +66,7 @@ test.describe("next/form GET interception", () => {
     expect(url.searchParams.get("q")).toBe("react");
   });
 
-  test("Form GET submission preserves existing query params in the action URL", async ({
-    page,
-  }) => {
+  test("Form GET submission includes hidden inputs in the destination URL", async ({ page }) => {
     await page.goto(`${BASE}/search`);
     await expect(page.locator("h1")).toHaveText("Search");
     await waitForHydration(page);
@@ -103,6 +101,7 @@ test.describe("next/form GET interception", () => {
     await expect(page.locator("#search-input-with-submitter-action")).toHaveValue("button");
     await page.locator("#search-button-with-submitter-action").click({ noWaitAfter: true });
 
+    await expect(page.locator("h1")).toHaveText("Search Alt");
     await expect(page.locator("#search-result")).toHaveText("Results for: button", {
       timeout: 10_000,
     });
@@ -110,7 +109,7 @@ test.describe("next/form GET interception", () => {
     await expect(page.locator("#search-source")).toHaveText("Source: submitter-action");
 
     const url = new URL(page.url());
-    expect(url.pathname).toBe("/search");
+    expect(url.pathname).toBe("/search-alt");
     expect(url.searchParams.get("lang")).toBe("fr");
     expect(url.searchParams.get("q")).toBe("button");
     expect(url.searchParams.get("source")).toBe("submitter-action");
@@ -126,6 +125,7 @@ test.describe("next/form GET interception", () => {
     await expect(page.locator("#search-input-post-with-get-submitter")).toHaveValue("override");
     await page.locator("#search-button-post-with-get-submitter").click({ noWaitAfter: true });
 
+    await expect(page.locator("h1")).toHaveText("Search Alt");
     await expect(page.locator("#search-result")).toHaveText("Results for: override", {
       timeout: 10_000,
     });
@@ -133,7 +133,7 @@ test.describe("next/form GET interception", () => {
     await expect(page.locator("#search-source")).toHaveText("Source: submitter-method");
 
     const url = new URL(page.url());
-    expect(url.pathname).toBe("/search");
+    expect(url.pathname).toBe("/search-alt");
     expect(url.searchParams.get("lang")).toBe("de");
     expect(url.searchParams.get("q")).toBe("override");
     expect(url.searchParams.get("source")).toBe("submitter-method");
