@@ -2313,7 +2313,8 @@ describe("App Router next.config.js features (generateRscEntry)", () => {
     });
     // Generated code should prepend basePath to redirect destination
     expect(code).toContain("__basePath");
-    expect(code).toContain("__redir.destination.startsWith(__basePath)");
+    expect(code).toContain("!isExternalUrl(__redir.destination)");
+    expect(code).toContain("hasBasePath(__redir.destination, __basePath)");
   });
 
   it("generates CSRF origin validation code for server actions", () => {

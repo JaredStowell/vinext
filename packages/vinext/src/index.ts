@@ -44,6 +44,7 @@ import {
 import { scanMetadataFiles } from "./server/metadata-routes.js";
 import { staticExportPages } from "./build/static-export.js";
 import { detectPackageManager } from "./utils/project.js";
+import { hasBasePath } from "./utils/base-path.js";
 import { asyncHooksStubPlugin } from "./plugins/async-hooks-stub.js";
 import { hasWranglerConfig, formatMissingCloudflarePluginError } from "./deploy.js";
 import tsconfigPaths from "vite-tsconfig-paths";
@@ -2070,7 +2071,13 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
 
               // Apply redirects from next.config.js
               if (nextConfig?.redirects.length) {
-                const redirected = applyRedirects(pathname, res, nextConfig.redirects, reqCtx);
+                const redirected = applyRedirects(
+                  pathname,
+                  res,
+                  nextConfig.redirects,
+                  reqCtx,
+                  nextConfig.basePath ?? "",
+                );
                 if (redirected) return;
               }
 
@@ -3223,11 +3230,16 @@ function applyRedirects(
   res: any,
   redirects: NextRedirect[],
   ctx: RequestContext,
+  basePath = "",
 ): boolean {
   const result = matchRedirect(pathname, redirects, ctx);
   if (result) {
     // Sanitize to prevent open redirect via protocol-relative URLs
-    const dest = sanitizeDestination(result.destination);
+    const dest = sanitizeDestination(
+      basePath && !isExternalUrl(result.destination) && !hasBasePath(result.destination, basePath)
+        ? basePath + result.destination
+        : result.destination,
+    );
     res.writeHead(result.permanent ? 308 : 307, { Location: dest });
     res.end();
     return true;
