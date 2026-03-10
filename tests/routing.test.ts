@@ -28,6 +28,32 @@ async function withTempDir<T>(prefix: string, run: (tmpDir: string) => Promise<T
   }
 }
 
+function makeTestAppRoute(
+  pattern: string,
+  patternParts: string[],
+): AppRoute & { patternParts: string[] } {
+  return {
+    pattern,
+    patternParts,
+    pagePath: null,
+    routePath: null,
+    layouts: [],
+    templates: [],
+    parallelSlots: [],
+    loadingPath: null,
+    errorPath: null,
+    layoutErrorPaths: [],
+    notFoundPath: null,
+    notFoundPaths: [],
+    forbiddenPath: null,
+    unauthorizedPath: null,
+    routeSegments: [],
+    layoutTreePositions: [],
+    isDynamic: pattern.includes(":"),
+    params: [],
+  };
+}
+
 describe("pagesRouter - route discovery", () => {
   it("discovers pages from the fixture directory", async () => {
     const routes = await pagesRouter(FIXTURE_DIR);
@@ -614,22 +640,22 @@ describe("matchAppRoute - URL matching", () => {
   });
 
   it("rejects malformed non-terminal catch-all patterns in the matcher", () => {
-    const malformedRoute = { pattern: "/:slug+/edit" } as AppRoute;
+    const malformedRoute = makeTestAppRoute("/:slug+/edit", [":slug+", "edit"]);
 
     expect(matchAppRoute("/foo", [malformedRoute])).toBeNull();
     expect(matchAppRoute("/foo/edit", [malformedRoute])).toBeNull();
   });
 
   it("rejects malformed non-terminal optional catch-all patterns in the matcher", () => {
-    const malformedRoute = { pattern: "/:slug*/edit" } as AppRoute;
+    const malformedRoute = makeTestAppRoute("/:slug*/edit", [":slug*", "edit"]);
 
     expect(matchAppRoute("/", [malformedRoute])).toBeNull();
     expect(matchAppRoute("/foo/edit", [malformedRoute])).toBeNull();
   });
 
   it("skips malformed catch-all patterns and continues to later valid routes", () => {
-    const malformedRoute = { pattern: "/:slug+/edit" } as AppRoute;
-    const validRoute = { pattern: "/foo" } as AppRoute;
+    const malformedRoute = makeTestAppRoute("/:slug+/edit", [":slug+", "edit"]);
+    const validRoute = makeTestAppRoute("/foo", ["foo"]);
 
     const result = matchAppRoute("/foo", [malformedRoute, validRoute]);
 
