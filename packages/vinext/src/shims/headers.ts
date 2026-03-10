@@ -20,6 +20,29 @@ interface HeadersContext {
   cookies: Map<string, string>;
 }
 
+function parseCookieHeader(cookieHeader: string): Map<string, string> {
+  const cookies = new Map<string, string>();
+  for (const pair of cookieHeader.split(/; */)) {
+    if (!pair) continue;
+
+    const splitAt = pair.indexOf("=");
+    if (splitAt === -1) {
+      cookies.set(pair, "true");
+      continue;
+    }
+
+    const key = pair.slice(0, splitAt).trim();
+    if (!key) continue;
+
+    try {
+      cookies.set(key, decodeURIComponent(pair.slice(splitAt + 1).trim() || "true"));
+    } catch {
+      // Match Next.js/@edge-runtime behavior: ignore malformed cookie values.
+    }
+  }
+  return cookies;
+}
+
 type VinextHeadersShimState = {
   headersContext: HeadersContext | null;
   dynamicUsageDetected: boolean;
@@ -226,11 +249,9 @@ export function applyMiddlewareRequestHeaders(middlewareResponseHeaders: Headers
   // If middleware modified the cookie header, rebuild the cookies map.
   ctx.cookies.clear();
   if (nextCookieHeader !== null) {
-    for (const part of nextCookieHeader.split(";")) {
-      const [k, ...rest] = part.split("=");
-      if (k) {
-        ctx.cookies.set(k.trim(), rest.join("=").trim());
-      }
+    const nextCookies = parseCookieHeader(nextCookieHeader);
+    for (const [name, value] of nextCookies) {
+      ctx.cookies.set(name, value);
     }
   }
 }
@@ -302,15 +323,9 @@ export function headersContextFromRequest(request: Request): HeadersContext {
 
   function getCookies(): Map<string, string> {
     if (_cookies) return _cookies;
-    _cookies = new Map<string, string>();
     // Read from the proxy so middleware-modified cookie headers are respected.
     const cookieHeader = headersProxy.get("cookie") || "";
-    for (const part of cookieHeader.split(";")) {
-      const [key, ...rest] = part.split("=");
-      if (key) {
-        _cookies.set(key.trim(), rest.join("=").trim());
-      }
-    }
+    _cookies = parseCookieHeader(cookieHeader);
     return _cookies;
   }
 
@@ -505,10 +520,13 @@ class RequestCookies {
     return { name, value };
   }
 
-  getAll(): Array<{ name: string; value: string }> {
+  getAll(nameOrOptions?: string | { name: string }): Array<{ name: string; value: string }> {
+    const name = typeof nameOrOptions === "string" ? nameOrOptions : nameOrOptions?.name;
     const result: Array<{ name: string; value: string }> = [];
-    for (const [name, value] of this._cookies) {
-      result.push({ name, value });
+    for (const [cookieName, value] of this._cookies) {
+      if (name === undefined || cookieName === name) {
+        result.push({ name: cookieName, value });
+      }
     }
     return result;
   }

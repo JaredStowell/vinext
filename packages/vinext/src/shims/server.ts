@@ -289,6 +289,29 @@ interface CookieEntry {
   value: string;
 }
 
+function parseCookieHeader(cookieHeader: string): Map<string, string> {
+  const cookies = new Map<string, string>();
+  for (const pair of cookieHeader.split(/; */)) {
+    if (!pair) continue;
+
+    const splitAt = pair.indexOf("=");
+    if (splitAt === -1) {
+      cookies.set(pair, "true");
+      continue;
+    }
+
+    const name = pair.slice(0, splitAt).trim();
+    if (!name) continue;
+
+    try {
+      cookies.set(name, decodeURIComponent(pair.slice(splitAt + 1).trim() || "true"));
+    } catch {
+      // Match Next.js/@edge-runtime behavior: ignore malformed cookie values.
+    }
+  }
+  return cookies;
+}
+
 export class RequestCookies {
   private _headers: Headers;
 
@@ -297,16 +320,7 @@ export class RequestCookies {
   }
 
   private _parse(): Map<string, string> {
-    const map = new Map<string, string>();
-    const cookie = this._headers.get("cookie") ?? "";
-    for (const part of cookie.split(";")) {
-      const eq = part.indexOf("=");
-      if (eq === -1) continue;
-      const name = part.slice(0, eq).trim();
-      const value = part.slice(eq + 1).trim();
-      map.set(name, value);
-    }
-    return map;
+    return parseCookieHeader(this._headers.get("cookie") ?? "");
   }
 
   get(name: string): CookieEntry | undefined {
@@ -314,8 +328,11 @@ export class RequestCookies {
     return value !== undefined ? { name, value } : undefined;
   }
 
-  getAll(): CookieEntry[] {
-    return [...this._parse().entries()].map(([name, value]) => ({ name, value }));
+  getAll(nameOrOptions?: string | CookieEntry): CookieEntry[] {
+    const name = typeof nameOrOptions === "string" ? nameOrOptions : nameOrOptions?.name;
+    return [...this._parse().entries()]
+      .filter(([cookieName]) => name === undefined || cookieName === name)
+      .map(([cookieName, value]) => ({ name: cookieName, value }));
   }
 
   has(name: string): boolean {
