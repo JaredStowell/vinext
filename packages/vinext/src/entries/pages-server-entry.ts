@@ -322,6 +322,7 @@ function matchPattern(url, pattern) {
   for (let i = 0; i < patternParts.length; i++) {
     const pp = patternParts[i];
     if (pp.endsWith("+")) {
+      if (i !== patternParts.length - 1) return null;
       const paramName = pp.slice(1, -1);
       const remaining = urlParts.slice(i);
       if (remaining.length === 0) return null;
@@ -329,6 +330,7 @@ function matchPattern(url, pattern) {
       return params;
     }
     if (pp.endsWith("*")) {
+      if (i !== patternParts.length - 1) return null;
       const paramName = pp.slice(1, -1);
       params[paramName] = urlParts.slice(i);
       return params;
