@@ -361,6 +361,112 @@ describe("next/headers shim", () => {
     expect(ctx.headers.get("cookie")).toBe("a=1; b=2");
   });
 
+  it("cookies().getAll(name) filters by name and matches upstream duplicate semantics", async () => {
+    const { headersContextFromRequest, runWithHeadersContext, cookies } =
+      await import("../packages/vinext/src/shims/headers.js");
+
+    // Ported from the current @edge-runtime/cookies RequestCookies behavior:
+    // duplicate names are collapsed to the last value, and getAll(name) filters.
+    const ctx = headersContextFromRequest(
+      new Request("https://example.com", {
+        headers: { cookie: "a=1; a=2; b=3" },
+      }),
+    );
+
+    await runWithHeadersContext(ctx, async () => {
+      const jar = await cookies();
+      expect(jar.get("a")).toEqual({ name: "a", value: "2" });
+      expect(jar.getAll("a")).toEqual([{ name: "a", value: "2" }]);
+      expect(jar.getAll()).toEqual([
+        { name: "a", value: "2" },
+        { name: "b", value: "3" },
+      ]);
+    });
+  });
+
+  it("cookies().getAll({ name }) supports the RequestCookie overload and missing names", async () => {
+    const { headersContextFromRequest, runWithHeadersContext, cookies } =
+      await import("../packages/vinext/src/shims/headers.js");
+
+    const ctx = headersContextFromRequest(
+      new Request("https://example.com", {
+        headers: { cookie: "a=1; a=2; token=abc%3D123" },
+      }),
+    );
+
+    await runWithHeadersContext(ctx, async () => {
+      const jar = await cookies();
+      expect(jar.getAll({ name: "a" })).toEqual([{ name: "a", value: "2" }]);
+      expect(jar.getAll("missing")).toEqual([]);
+      expect(jar.getAll({ name: "missing" })).toEqual([]);
+      expect(jar.get("token")).toEqual({ name: "token", value: "abc=123" });
+    });
+  });
+
+  it("cookies() ignores malformed cookie values and treats bare tokens as true", async () => {
+    const { headersContextFromRequest, runWithHeadersContext, cookies } =
+      await import("../packages/vinext/src/shims/headers.js");
+
+    const ctx = headersContextFromRequest(
+      new Request("https://example.com", {
+        headers: { cookie: "bad=%E0%A4%A; good=ok; flag" },
+      }),
+    );
+
+    await runWithHeadersContext(ctx, async () => {
+      const jar = await cookies();
+      expect(jar.get("bad")).toBeUndefined();
+      expect(jar.get("good")).toEqual({ name: "good", value: "ok" });
+      expect(jar.get("flag")).toEqual({ name: "flag", value: "true" });
+      expect(jar.getAll()).toEqual([
+        { name: "good", value: "ok" },
+        { name: "flag", value: "true" },
+      ]);
+    });
+  });
+
+  it("cookies() preserves explicit empty values", async () => {
+    const { headersContextFromRequest, runWithHeadersContext, cookies } =
+      await import("../packages/vinext/src/shims/headers.js");
+
+    const ctx = headersContextFromRequest(
+      new Request("https://example.com", {
+        headers: { cookie: "empty=; flag" },
+      }),
+    );
+
+    await runWithHeadersContext(ctx, async () => {
+      const jar = await cookies();
+      expect(jar.get("empty")).toEqual({ name: "empty", value: "" });
+      expect(jar.get("flag")).toEqual({ name: "flag", value: "true" });
+      expect(jar.getAll()).toEqual([
+        { name: "empty", value: "" },
+        { name: "flag", value: "true" },
+      ]);
+    });
+  });
+
+  it("cookies() preserves whitespace exactly like the Next.js parser", async () => {
+    const { headersContextFromRequest, runWithHeadersContext, cookies } =
+      await import("../packages/vinext/src/shims/headers.js");
+
+    const ctx = headersContextFromRequest(
+      new Request("https://example.com", {
+        headers: { cookie: "a= 1 ; a =2" },
+      }),
+    );
+
+    await runWithHeadersContext(ctx, async () => {
+      const jar = await cookies();
+      expect(jar.get("a")).toEqual({ name: "a", value: " 1 " });
+      expect(jar.get("a ")).toEqual({ name: "a ", value: "2" });
+      expect(jar.getAll()).toEqual([
+        { name: "a", value: " 1 " },
+        { name: "a ", value: "2" },
+      ]);
+    });
+  });
+
   it("headersContextFromRequest returns mutable headers (not the immutable Request.headers)", async () => {
     // In Cloudflare Workers, Request.headers is immutable. applyMiddlewareRequestHeaders
     // needs ctx.headers.set() after middleware runs, so the context must hold a mutable
@@ -443,6 +549,66 @@ describe("next/headers shim", () => {
       // Cookies map should be rebuilt with the new values
       expect(ctx.cookies.get("a")).toBe("2");
       expect(ctx.cookies.get("b")).toBe("3");
+    });
+  });
+
+  it("cookies().getAll(name) reflects middleware cookie rewrites with duplicate names", async () => {
+    const {
+      headersContextFromRequest,
+      applyMiddlewareRequestHeaders,
+      runWithHeadersContext,
+      cookies,
+    } = await import("../packages/vinext/src/shims/headers.js");
+    const req = new Request("https://example.com", {
+      headers: { cookie: "a=1; b=2" },
+    });
+    const ctx = headersContextFromRequest(req);
+
+    await runWithHeadersContext(ctx, async () => {
+      applyMiddlewareRequestHeaders(
+        new Headers({
+          "x-middleware-request-cookie": "a=1; a=2; b=4",
+        }),
+      );
+
+      const jar = await cookies();
+      expect(jar.get("a")).toEqual({ name: "a", value: "2" });
+      expect(jar.getAll("a")).toEqual([{ name: "a", value: "2" }]);
+      expect(jar.getAll({ name: "a" })).toEqual([{ name: "a", value: "2" }]);
+      expect(jar.getAll()).toEqual([
+        { name: "a", value: "2" },
+        { name: "b", value: "4" },
+      ]);
+    });
+  });
+
+  it("cookies() preserves explicit empty values after middleware cookie rewrites", async () => {
+    const {
+      headersContextFromRequest,
+      applyMiddlewareRequestHeaders,
+      runWithHeadersContext,
+      cookies,
+    } = await import("../packages/vinext/src/shims/headers.js");
+    const ctx = headersContextFromRequest(
+      new Request("https://example.com", {
+        headers: { cookie: "start=1" },
+      }),
+    );
+
+    await runWithHeadersContext(ctx, async () => {
+      applyMiddlewareRequestHeaders(
+        new Headers({
+          "x-middleware-request-cookie": "empty=; flag",
+        }),
+      );
+
+      const jar = await cookies();
+      expect(jar.get("empty")).toEqual({ name: "empty", value: "" });
+      expect(jar.get("flag")).toEqual({ name: "flag", value: "true" });
+      expect(jar.getAll()).toEqual([
+        { name: "empty", value: "" },
+        { name: "flag", value: "true" },
+      ]);
     });
   });
 
@@ -734,6 +900,25 @@ describe("next/server shim", () => {
     const res = NextResponse.rewrite("https://example.com/internal");
 
     expect(res.headers.get("x-middleware-rewrite")).toBe("https://example.com/internal");
+  });
+
+  it("NextResponse.rewrite() forwards request header overrides", async () => {
+    const { NextResponse } = await import("../packages/vinext/src/shims/server.js");
+    const forwardedHeaders = new Headers({
+      cookie: "a=1",
+      "x-added": "1",
+    });
+
+    const res = NextResponse.rewrite("https://example.com/internal", {
+      request: {
+        headers: forwardedHeaders,
+      },
+    });
+
+    expect(res.headers.get("x-middleware-rewrite")).toBe("https://example.com/internal");
+    expect(res.headers.get("x-middleware-override-headers")).toBe("cookie,x-added");
+    expect(res.headers.get("x-middleware-request-cookie")).toBe("a=1");
+    expect(res.headers.get("x-middleware-request-x-added")).toBe("1");
   });
 
   it("NextResponse.next() sets x-middleware-next header", async () => {
@@ -1939,6 +2124,42 @@ describe("middleware matcher patterns", () => {
     const { matchesMiddleware } = await import("../packages/vinext/src/server/middleware.js");
     expect(matchesMiddleware("/about", "/about")).toBe(true);
     expect(matchesMiddleware("/other", "/about")).toBe(false);
+    // Ported from Next.js: test/e2e/middleware-custom-matchers-i18n/test/index.test.ts
+    // https://github.com/vercel/next.js/blob/canary/test/e2e/middleware-custom-matchers-i18n/test/index.test.ts
+    expect(
+      matchesMiddleware("/about", "/about", undefined, {
+        locales: ["en", "fr"],
+        defaultLocale: "en",
+      }),
+    ).toBe(true);
+    expect(
+      matchesMiddleware("/fr/about", "/about", undefined, {
+        locales: ["en", "fr"],
+        defaultLocale: "en",
+      }),
+    ).toBe(true);
+    expect(
+      matchesMiddleware("/", "/", undefined, {
+        locales: ["en", "fr"],
+        defaultLocale: "en",
+      }),
+    ).toBe(true);
+  });
+
+  it("matchesMiddleware: locale-prefixed negative-lookahead matchers keep internal paths excluded", async () => {
+    const { matchesMiddleware } = await import("../packages/vinext/src/server/middleware.js");
+    const matcher = "/((?!api|_next|favicon\\.ico).*)";
+    const i18nConfig = {
+      locales: ["en", "fr"],
+      defaultLocale: "en",
+    };
+
+    expect(matchesMiddleware("/fr/about", matcher, undefined, i18nConfig)).toBe(true);
+    expect(matchesMiddleware("/fr/api/hello", matcher, undefined, i18nConfig)).toBe(false);
+    expect(matchesMiddleware("/fr/_next/static/chunk.js", matcher, undefined, i18nConfig)).toBe(
+      false,
+    );
+    expect(matchesMiddleware("/fr/favicon.ico", matcher, undefined, i18nConfig)).toBe(false);
   });
 
   it("matchesMiddleware: array of string matchers", async () => {
@@ -1956,6 +2177,89 @@ describe("middleware matcher patterns", () => {
     expect(matchesMiddleware("/about", matcher)).toBe(true);
     expect(matchesMiddleware("/dashboard/settings", matcher)).toBe(true);
     expect(matchesMiddleware("/other", matcher)).toBe(false);
+  });
+
+  it("matchesMiddleware: object matchers respect has and missing conditions", async () => {
+    const { matchesMiddleware } = await import("../packages/vinext/src/server/middleware.js");
+    const matcher: any = [
+      {
+        source: "/dashboard",
+        has: [{ type: "header", key: "x-user-tier", value: "pro" }],
+        missing: [{ type: "cookie", key: "blocked" }],
+      },
+    ];
+
+    expect(matchesMiddleware("/dashboard", matcher)).toBe(false);
+    expect(
+      matchesMiddleware(
+        "/dashboard",
+        matcher,
+        new Request("https://example.com/dashboard", {
+          headers: { "x-user-tier": "pro" },
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      matchesMiddleware(
+        "/dashboard",
+        matcher,
+        new Request("https://example.com/dashboard", {
+          headers: { "x-user-tier": "free", cookie: "blocked=1" },
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("matchesMiddleware: rejects a single object matcher config", async () => {
+    const { matchesMiddleware } = await import("../packages/vinext/src/server/middleware.js");
+    const matcher: any = {
+      source: "/dashboard",
+      has: [{ type: "header", key: "x-user-tier", value: "pro" }],
+    };
+
+    expect(matchesMiddleware("/dashboard", matcher)).toBe(false);
+    expect(
+      matchesMiddleware(
+        "/dashboard",
+        matcher,
+        new Request("https://example.com/dashboard", {
+          headers: { "x-user-tier": "pro" },
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("matchesMiddleware: rejects object matchers with unsupported fields", async () => {
+    const { matchesMiddleware } = await import("../packages/vinext/src/server/middleware.js");
+    const matcher: any = [{ source: "/does-not-match", regexp: "^/dashboard(?:/.*)?$" }];
+
+    expect(matchesMiddleware("/dashboard/settings", matcher)).toBe(false);
+    expect(matchesMiddleware("/about", matcher)).toBe(false);
+  });
+
+  it("matchesMiddleware: matches default-locale and locale-prefixed paths unless locale is false", async () => {
+    const { matchesMiddleware } = await import("../packages/vinext/src/server/middleware.js");
+    const i18nConfig = {
+      locales: ["en", "fr"],
+      defaultLocale: "en",
+    };
+
+    // Ported from Next.js: test/e2e/middleware-custom-matchers-i18n/test/index.test.ts
+    // https://github.com/vercel/next.js/blob/canary/test/e2e/middleware-custom-matchers-i18n/test/index.test.ts
+    expect(matchesMiddleware("/dashboard", [{ source: "/dashboard" }], undefined, i18nConfig)).toBe(
+      true,
+    );
+    expect(
+      matchesMiddleware("/fr/dashboard", [{ source: "/dashboard" }], undefined, i18nConfig),
+    ).toBe(true);
+    expect(
+      matchesMiddleware(
+        "/fr/dashboard",
+        [{ source: "/dashboard", locale: false }],
+        undefined,
+        i18nConfig,
+      ),
+    ).toBe(false);
   });
 
   it("matchesMiddleware: mixed array of strings and objects", async () => {
@@ -2062,10 +2366,61 @@ describe("middleware codegen parity", () => {
     // Exact match
     expect(matchMiddlewarePattern("/about", "/about")).toBe(true);
     expect(matchMiddlewarePattern("/other", "/about")).toBe(false);
+    // Ported from Next.js: test/e2e/middleware-custom-matchers-i18n/test/index.test.ts
+    // https://github.com/vercel/next.js/blob/canary/test/e2e/middleware-custom-matchers-i18n/test/index.test.ts
+    expect(
+      matchesMiddleware("/about", "/about", undefined, {
+        locales: ["en", "fr"],
+        defaultLocale: "en",
+      }),
+    ).toBe(true);
+    expect(
+      matchesMiddleware("/fr/about", "/about", undefined, {
+        locales: ["en", "fr"],
+        defaultLocale: "en",
+      }),
+    ).toBe(true);
+    // Ported from Next.js: test/e2e/middleware-matcher/index.test.ts
+    // https://github.com/vercel/next.js/blob/canary/test/e2e/middleware-matcher/index.test.ts
+    expect(
+      matchesMiddleware("/", "/", undefined, {
+        locales: ["en", "fr"],
+        defaultLocale: "en",
+      }),
+    ).toBe(true);
 
     // Regex pattern with groups (must NOT corrupt the regex via dot-escaping)
     expect(matchMiddlewarePattern("/about", "/((?!api|_next|favicon\\.ico).*)")).toBe(true);
     expect(matchMiddlewarePattern("/api/hello", "/((?!api|_next|favicon\\.ico).*)")).toBe(false);
+    expect(
+      matchesMiddleware("/fr/about", "/((?!api|_next|favicon\\.ico).*)", undefined, {
+        locales: ["en", "fr"],
+        defaultLocale: "en",
+      }),
+    ).toBe(true);
+    expect(
+      matchesMiddleware("/fr/api/hello", "/((?!api|_next|favicon\\.ico).*)", undefined, {
+        locales: ["en", "fr"],
+        defaultLocale: "en",
+      }),
+    ).toBe(false);
+    expect(
+      matchesMiddleware(
+        "/fr/_next/static/chunk.js",
+        "/((?!api|_next|favicon\\.ico).*)",
+        undefined,
+        {
+          locales: ["en", "fr"],
+          defaultLocale: "en",
+        },
+      ),
+    ).toBe(false);
+    expect(
+      matchesMiddleware("/fr/favicon.ico", "/((?!api|_next|favicon\\.ico).*)", undefined, {
+        locales: ["en", "fr"],
+        defaultLocale: "en",
+      }),
+    ).toBe(false);
 
     // Named params
     expect(matchMiddlewarePattern("/user/123", "/user/:id")).toBe(true);
@@ -2073,6 +2428,44 @@ describe("middleware codegen parity", () => {
     // Wildcard
     expect(matchMiddlewarePattern("/dashboard/settings", "/dashboard/:path*")).toBe(true);
     expect(matchMiddlewarePattern("/dashboard", "/dashboard/:path*")).toBe(true);
+
+    const gatedMatcher = [
+      {
+        source: "/dashboard",
+        has: [{ type: "query", key: "preview", value: "1" }],
+        missing: [{ type: "header", key: "x-blocked" }],
+      },
+    ];
+    expect(matchesMiddleware("/dashboard", gatedMatcher)).toBe(false);
+    expect(
+      matchesMiddleware(
+        "/dashboard",
+        gatedMatcher,
+        new Request("https://example.com/dashboard?preview=1"),
+      ),
+    ).toBe(true);
+    expect(
+      matchesMiddleware(
+        "/dashboard",
+        gatedMatcher,
+        new Request("https://example.com/dashboard?preview=1", {
+          headers: { "x-blocked": "1" },
+        }),
+      ),
+    ).toBe(false);
+
+    expect(
+      matchesMiddleware("/dashboard", [{ source: "/dashboard" }], undefined, {
+        locales: ["en", "fr"],
+        defaultLocale: "en",
+      }),
+    ).toBe(true);
+    expect(
+      matchesMiddleware("/fr/dashboard", [{ source: "/dashboard" }], undefined, {
+        locales: ["en", "fr"],
+        defaultLocale: "en",
+      }),
+    ).toBe(true);
   });
 
   it("generateMiddlewareMatcherCode('es5') produces working matchesMiddleware", async () => {
@@ -2089,6 +2482,40 @@ describe("middleware codegen parity", () => {
     // Regex guard (must not corrupt regex patterns via dot-escaping)
     expect(matchMiddlewarePattern("/about", "/((?!api|_next|favicon\\.ico).*)")).toBe(true);
     expect(matchMiddlewarePattern("/api/hello", "/((?!api|_next|favicon\\.ico).*)")).toBe(false);
+
+    const headerMatcher = [
+      {
+        source: "/dashboard",
+        has: [{ type: "header", key: "x-user-tier", value: "pro" }],
+      },
+    ];
+    expect(matchesMiddleware("/dashboard", headerMatcher)).toBe(false);
+    expect(
+      matchesMiddleware(
+        "/dashboard",
+        headerMatcher,
+        new Request("https://example.com/dashboard", {
+          headers: { "x-user-tier": "pro" },
+        }),
+      ),
+    ).toBe(true);
+
+    const hostMatcher = [
+      {
+        source: "/dashboard",
+        has: [{ type: "host", value: "example.com" }],
+      },
+    ];
+    const mixedCaseHostRequest = {
+      url: "https://example.com/dashboard",
+      headers: new Headers([["host", "Example.com:3000"]]),
+    };
+    const emptyHostRequest = {
+      url: "https://example.com/dashboard",
+      headers: new Headers([["host", ""]]),
+    };
+    expect(matchesMiddleware("/dashboard", hostMatcher, mixedCaseHostRequest)).toBe(true);
+    expect(matchesMiddleware("/dashboard", hostMatcher, emptyHostRequest)).toBe(false);
   });
 
   it("generateNormalizePathCode produces working __normalizePath", async () => {
@@ -2287,6 +2714,7 @@ describe("double-encoded path handling in middleware", () => {
     const code = generateRscEntry("/tmp/app", [
       {
         pattern: "/dashboard",
+        patternParts: ["dashboard"],
         isDynamic: false,
         params: [],
         pagePath: null,
@@ -2321,6 +2749,7 @@ describe("double-encoded path handling in middleware", () => {
       [
         {
           pattern: "/dashboard",
+          patternParts: ["dashboard"],
           isDynamic: false,
           params: [],
           pagePath: null,
@@ -2515,6 +2944,71 @@ describe("RequestCookies API", () => {
     expect(all).toContainEqual({ name: "a", value: "1" });
     expect(all).toContainEqual({ name: "b", value: "2" });
     expect(all).toContainEqual({ name: "c", value: "3" });
+  });
+
+  it("getAll(name) filters by cookie name", async () => {
+    const { RequestCookies } = await import("../packages/vinext/src/shims/server.js");
+    const headers = new Headers({ cookie: "a=1; a=2; b=3" });
+    const cookies = new RequestCookies(headers);
+
+    expect(cookies.get("a")).toEqual({ name: "a", value: "2" });
+    expect(cookies.getAll("a")).toEqual([{ name: "a", value: "2" }]);
+    expect(cookies.getAll()).toEqual([
+      { name: "a", value: "2" },
+      { name: "b", value: "3" },
+    ]);
+  });
+
+  it("getAll({ name }) filters by cookie name and missing names return []", async () => {
+    const { RequestCookies } = await import("../packages/vinext/src/shims/server.js");
+    const headers = new Headers({ cookie: "a=1; a=2; token=abc=def" });
+    const cookies = new RequestCookies(headers);
+
+    expect(cookies.getAll({ name: "a", value: "ignored" })).toEqual([{ name: "a", value: "2" }]);
+    expect(cookies.getAll("missing")).toEqual([]);
+    expect(cookies.getAll({ name: "missing", value: "" })).toEqual([]);
+    expect(cookies.get("token")).toEqual({ name: "token", value: "abc=def" });
+  });
+
+  it("parses encoded values, skips malformed values, and supports bare tokens", async () => {
+    const { RequestCookies } = await import("../packages/vinext/src/shims/server.js");
+    const headers = new Headers({ cookie: "token=abc%3D123; bad=%E0%A4%A; flag; ok=yes" });
+    const cookies = new RequestCookies(headers);
+
+    expect(cookies.get("token")).toEqual({ name: "token", value: "abc=123" });
+    expect(cookies.get("bad")).toBeUndefined();
+    expect(cookies.get("flag")).toEqual({ name: "flag", value: "true" });
+    expect(cookies.getAll()).toEqual([
+      { name: "token", value: "abc=123" },
+      { name: "flag", value: "true" },
+      { name: "ok", value: "yes" },
+    ]);
+  });
+
+  it("preserves explicit empty values", async () => {
+    const { RequestCookies } = await import("../packages/vinext/src/shims/server.js");
+    const headers = new Headers({ cookie: "empty=; flag" });
+    const cookies = new RequestCookies(headers);
+
+    expect(cookies.get("empty")).toEqual({ name: "empty", value: "" });
+    expect(cookies.get("flag")).toEqual({ name: "flag", value: "true" });
+    expect(cookies.getAll()).toEqual([
+      { name: "empty", value: "" },
+      { name: "flag", value: "true" },
+    ]);
+  });
+
+  it("preserves whitespace exactly like the Next.js parser", async () => {
+    const { RequestCookies } = await import("../packages/vinext/src/shims/server.js");
+    const headers = new Headers({ cookie: "a= 1 ; a =2" });
+    const cookies = new RequestCookies(headers);
+
+    expect(cookies.get("a")).toEqual({ name: "a", value: " 1 " });
+    expect(cookies.get("a ")).toEqual({ name: "a ", value: "2" });
+    expect(cookies.getAll()).toEqual([
+      { name: "a", value: " 1 " },
+      { name: "a ", value: "2" },
+    ]);
   });
 
   it("has() checks cookie existence", async () => {
@@ -2937,6 +3431,52 @@ describe("NextRequest API", () => {
     const req = new NextRequest("http://localhost/");
     expect(req.geo).toBeUndefined();
   });
+
+  it("nextUrl.buildId returns process.env.__VINEXT_BUILD_ID when set", async () => {
+    const original = process.env.__VINEXT_BUILD_ID;
+    try {
+      process.env.__VINEXT_BUILD_ID = "test-build-123";
+      const { NextRequest } = await import("../packages/vinext/src/shims/server.js");
+      const req = new NextRequest("http://localhost/");
+      expect(req.nextUrl.buildId).toBe("test-build-123");
+    } finally {
+      if (original === undefined) {
+        delete process.env.__VINEXT_BUILD_ID;
+      } else {
+        process.env.__VINEXT_BUILD_ID = original;
+      }
+    }
+  });
+
+  it("nextUrl.buildId returns undefined when __VINEXT_BUILD_ID is not set", async () => {
+    const original = process.env.__VINEXT_BUILD_ID;
+    try {
+      delete process.env.__VINEXT_BUILD_ID;
+      const { NextRequest } = await import("../packages/vinext/src/shims/server.js");
+      const req = new NextRequest("http://localhost/");
+      expect(req.nextUrl.buildId).toBeUndefined();
+    } finally {
+      if (original !== undefined) {
+        process.env.__VINEXT_BUILD_ID = original;
+      }
+    }
+  });
+
+  it("buildId pass-through on NextRequest delegates to nextUrl.buildId", async () => {
+    const original = process.env.__VINEXT_BUILD_ID;
+    try {
+      process.env.__VINEXT_BUILD_ID = "test-build-456";
+      const { NextRequest } = await import("../packages/vinext/src/shims/server.js");
+      const req = new NextRequest("http://localhost/");
+      expect(req.buildId).toBe(req.nextUrl.buildId);
+    } finally {
+      if (original === undefined) {
+        delete process.env.__VINEXT_BUILD_ID;
+      } else {
+        process.env.__VINEXT_BUILD_ID = original;
+      }
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -2957,6 +3497,137 @@ describe("NextResponse.next() request header forwarding", () => {
     expect(res.headers.get("x-middleware-next")).toBe("1");
     expect(res.headers.get("x-middleware-request-x-custom-header")).toBe("custom-value");
     expect(res.headers.get("x-middleware-request-authorization")).toBe("Bearer token123");
+  });
+
+  it("serializes the full override set so omitted headers can be deleted downstream", async () => {
+    const { NextResponse } = await import("../packages/vinext/src/shims/server.js");
+
+    const forwardedHeaders = new Headers({
+      "x-custom-header": "custom-value",
+      "x-added": "1",
+    });
+
+    const res = NextResponse.next({
+      request: {
+        headers: forwardedHeaders,
+      },
+    });
+
+    const overrideHeaders = res.headers.get("x-middleware-override-headers");
+    expect(overrideHeaders).not.toBeNull();
+    expect(overrideHeaders!.split(",").sort()).toEqual([...forwardedHeaders.keys()].sort());
+    expect(res.headers.get("x-middleware-request-x-custom-header")).toBe("custom-value");
+    expect(res.headers.get("x-middleware-request-x-added")).toBe("1");
+  });
+});
+
+describe("middleware request header overrides", () => {
+  // Ported from Next.js: test/e2e/middleware-request-header-overrides/test/index.test.ts
+  // https://github.com/vercel/next.js/blob/canary/test/e2e/middleware-request-header-overrides/test/index.test.ts
+  it("config-matchers applyMiddlewareRequestHeaders deletes omitted headers from the request", async () => {
+    const { applyMiddlewareRequestHeaders } =
+      await import("../packages/vinext/src/config/config-matchers.js");
+
+    const middlewareHeaders: Record<string, string> = {
+      "x-middleware-override-headers": "x-keep,x-added",
+      "x-middleware-request-x-keep": "updated",
+      "x-middleware-request-x-added": "1",
+      "x-middleware-next": "1",
+    };
+
+    const request = new Request("http://localhost/test", {
+      headers: {
+        authorization: "Bearer secret",
+        cookie: "a=1; b=2",
+        "x-keep": "original",
+      },
+    });
+
+    const { request: nextRequest, postMwReqCtx } = applyMiddlewareRequestHeaders(
+      middlewareHeaders,
+      request,
+    );
+
+    expect(nextRequest.headers.get("authorization")).toBeNull();
+    expect(nextRequest.headers.get("cookie")).toBeNull();
+    expect(nextRequest.headers.get("x-keep")).toBe("updated");
+    expect(nextRequest.headers.get("x-added")).toBe("1");
+    expect(Object.keys(postMwReqCtx.cookies)).toEqual([]);
+    expect(middlewareHeaders).toEqual({});
+  });
+
+  it("config-matchers applyMiddlewareRequestHeaders preserves existing headers in add-only overrides", async () => {
+    const { applyMiddlewareRequestHeaders } =
+      await import("../packages/vinext/src/config/config-matchers.js");
+
+    const request = new Request("http://localhost/test", {
+      headers: {
+        authorization: "Bearer secret",
+        cookie: "a=1; b=2",
+        "x-keep": "original",
+      },
+    });
+
+    const forwardedHeaders = new Headers(request.headers);
+    forwardedHeaders.set("x-added", "1");
+
+    const middlewareHeaders: Record<string, string> = {
+      "x-middleware-override-headers": [...forwardedHeaders.keys()].join(","),
+      "x-middleware-request-authorization": forwardedHeaders.get("authorization")!,
+      "x-middleware-request-cookie": forwardedHeaders.get("cookie")!,
+      "x-middleware-request-x-keep": forwardedHeaders.get("x-keep")!,
+      "x-middleware-request-x-added": "1",
+      "x-middleware-next": "1",
+    };
+
+    const { request: nextRequest, postMwReqCtx } = applyMiddlewareRequestHeaders(
+      middlewareHeaders,
+      request,
+    );
+
+    expect(nextRequest.headers.get("authorization")).toBe("Bearer secret");
+    expect(nextRequest.headers.get("cookie")).toBe("a=1; b=2");
+    expect(nextRequest.headers.get("x-keep")).toBe("original");
+    expect(nextRequest.headers.get("x-added")).toBe("1");
+    expect(postMwReqCtx.cookies).toEqual({ a: "1", b: "2" });
+    expect(middlewareHeaders).toEqual({});
+  });
+
+  it("next/headers applyMiddlewareRequestHeaders replaces the live request header set", async () => {
+    const {
+      applyMiddlewareRequestHeaders,
+      cookies,
+      headers,
+      headersContextFromRequest,
+      runWithHeadersContext,
+    } = await import("../packages/vinext/src/shims/headers.js");
+
+    const request = new Request("http://localhost/test", {
+      headers: {
+        authorization: "Bearer secret",
+        cookie: "a=1; b=2",
+        "x-keep": "original",
+      },
+    });
+
+    await runWithHeadersContext(headersContextFromRequest(request), async () => {
+      applyMiddlewareRequestHeaders(
+        new Headers({
+          "x-middleware-override-headers": "x-keep,x-added",
+          "x-middleware-request-x-keep": "updated",
+          "x-middleware-request-x-added": "1",
+        }),
+      );
+
+      const liveHeaders = await headers();
+      const liveCookies = await cookies();
+
+      expect(liveHeaders.get("authorization")).toBeNull();
+      expect(liveHeaders.get("cookie")).toBeNull();
+      expect(liveHeaders.get("x-keep")).toBe("updated");
+      expect(liveHeaders.get("x-added")).toBe("1");
+      expect(liveCookies.getAll()).toEqual([]);
+    });
   });
 });
 
@@ -4892,11 +5563,13 @@ describe("metadata route serializers", () => {
     expect(types).toContain("manifest");
     expect(types).toContain("favicon");
 
-    // Sitemap should be dynamic (.ts)
-    const sitemap = routes.find((r: { type: string }) => r.type === "sitemap");
+    // Root sitemap should be dynamic (.ts)
+    const sitemap = routes.find(
+      (r: { type: string; servedUrl: string }) =>
+        r.type === "sitemap" && r.servedUrl === "/sitemap.xml",
+    );
     expect(sitemap).toBeDefined();
     expect(sitemap!.isDynamic).toBe(true);
-    expect(sitemap!.servedUrl).toBe("/sitemap.xml");
     expect(sitemap!.contentType).toBe("application/xml");
 
     // Favicon should be static (.ico)

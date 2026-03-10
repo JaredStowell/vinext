@@ -1706,6 +1706,7 @@ describe("App Router Static export", () => {
         unauthorizedPath: null,
         isDynamic: true,
         params: ["id"],
+        patternParts: ["fake", ":id"],
       },
     ];
     const config = await resolveNextConfig({ output: "export" });
@@ -1752,6 +1753,7 @@ describe("App Router Static export", () => {
         unauthorizedPath: null,
         isDynamic: false,
         params: [],
+        patternParts: ["api", "test"],
       },
     ];
     const config = await resolveNextConfig({ output: "export" });
@@ -1911,6 +1913,66 @@ describe("metadata routes integration (App Router)", () => {
     expect(magic[2]).toBe(0x01);
     expect(magic[3]).toBe(0x00);
   });
+
+  // generateSitemaps() support — paginated sitemaps at /products/sitemap/{id}.xml
+  it("serves /products/sitemap/0.xml from generateSitemaps", async () => {
+    const res = await fetch(`${baseUrl}/products/sitemap/0.xml`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/xml");
+    const xml = await res.text();
+    expect(xml).toContain("<urlset");
+    expect(xml).toContain("https://example.com/products/batch-0/item-1");
+    expect(xml).toContain("https://example.com/products/batch-0/item-2");
+    // Should NOT contain entries from other batches
+    expect(xml).not.toContain("batch-1");
+  });
+
+  it("serves /products/sitemap/1.xml with distinct entries", async () => {
+    const res = await fetch(`${baseUrl}/products/sitemap/1.xml`);
+    expect(res.status).toBe(200);
+    const xml = await res.text();
+    expect(xml).toContain("https://example.com/products/batch-1/item-1");
+    expect(xml).toContain("https://example.com/products/batch-1/item-2");
+    expect(xml).not.toContain("batch-0");
+  });
+
+  // Ported from Next.js: test/e2e/app-dir/metadata-dynamic-routes/index.test.ts
+  // "Should 404 when missing .xml extension"
+  it("returns 404 for sitemap id without .xml extension", async () => {
+    const res = await fetch(`${baseUrl}/products/sitemap/0`);
+    expect(res.status).toBe(404);
+  });
+
+  it("serves /products/sitemap/featured.xml with string id", async () => {
+    const res = await fetch(`${baseUrl}/products/sitemap/featured.xml`);
+    expect(res.status).toBe(200);
+    const xml = await res.text();
+    expect(xml).toContain("https://example.com/products/batch-featured/item-1");
+    expect(xml).toContain("https://example.com/products/batch-featured/item-2");
+  });
+
+  it("returns 404 for invalid sitemap id", async () => {
+    const res = await fetch(`${baseUrl}/products/sitemap/99.xml`);
+    expect(res.status).toBe(404);
+  });
+
+  it("does not serve /products/sitemap.xml when generateSitemaps exists", async () => {
+    const res = await fetch(`${baseUrl}/products/sitemap.xml`);
+    // The base URL should not match — either 404 or falls through to page routing
+    expect(res.status).toBe(404);
+  });
+
+  it("scanMetadataFiles discovers nested products/sitemap.ts", async () => {
+    const { scanMetadataFiles } = await import("../packages/vinext/src/server/metadata-routes.js");
+    const appDir = path.resolve(import.meta.dirname, "./fixtures/app-basic/app");
+    const routes = scanMetadataFiles(appDir);
+    const productsSitemap = routes.find(
+      (r: { type: string; servedUrl: string }) =>
+        r.type === "sitemap" && r.servedUrl === "/products/sitemap.xml",
+    );
+    expect(productsSitemap).toBeDefined();
+    expect(productsSitemap!.isDynamic).toBe(true);
+  });
 });
 
 describe("App Router next.config.js features (dev server integration)", () => {
@@ -1986,6 +2048,22 @@ describe("App Router next.config.js features (dev server integration)", () => {
     expect(authRes.status).toBe(200);
     const html = await authRes.text();
     expect(html).toContain("About");
+  });
+
+  it("fallback rewrites targeting Pages routes still work in mixed app/pages projects", async () => {
+    const noAuthRes = await fetch(`${baseUrl}/mw-gated-fallback-pages`);
+    expect(noAuthRes.status).toBe(404);
+
+    const { res, html } = await fetchHtml(`${baseUrl}`, "/mw-gated-fallback-pages?mw-auth", {
+      headers: {
+        authorization: "Bearer secret",
+        cookie: "a=1; b=2",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(html).toContain("Pages Header Override Delete");
+    expect(html).toContain('"page":"/pages-header-override-delete"');
   });
 
   it("applies custom headers from next.config.js on API routes", async () => {
@@ -2313,7 +2391,8 @@ describe("App Router next.config.js features (generateRscEntry)", () => {
     });
     // Generated code should prepend basePath to redirect destination
     expect(code).toContain("__basePath");
-    expect(code).toContain("__redir.destination.startsWith(__basePath)");
+    expect(code).toContain("!isExternalUrl(__redir.destination)");
+    expect(code).toContain("hasBasePath(__redir.destination, __basePath)");
   });
 
   it("generates CSRF origin validation code for server actions", () => {
@@ -2587,6 +2666,28 @@ describe("App Router middleware with NextRequest", () => {
     expect(res.headers.get("x-mw-has-session")).toBe("true");
   });
 
+  it("object-form matcher requires has and missing conditions", async () => {
+    const noHeaderRes = await fetch(`${baseUrl}/mw-object-gated`);
+    expect(noHeaderRes.status).toBe(200);
+    expect(noHeaderRes.headers.get("x-mw-ran")).toBeNull();
+
+    const blockedRes = await fetch(`${baseUrl}/mw-object-gated`, {
+      headers: {
+        "x-mw-allow": "1",
+        Cookie: "mw-blocked=1",
+      },
+    });
+    expect(blockedRes.status).toBe(200);
+    expect(blockedRes.headers.get("x-mw-ran")).toBeNull();
+
+    const allowedRes = await fetch(`${baseUrl}/mw-object-gated`, {
+      headers: { "x-mw-allow": "1" },
+    });
+    expect(allowedRes.status).toBe(200);
+    expect(allowedRes.headers.get("x-mw-ran")).toBe("true");
+    expect(allowedRes.headers.get("x-mw-pathname")).toBe("/mw-object-gated");
+  });
+
   it("middleware can redirect using NextRequest", async () => {
     const res = await fetch(`${baseUrl}/middleware-redirect`, { redirect: "manual" });
     expect(res.status).toBe(307);
@@ -2611,6 +2712,40 @@ describe("App Router middleware with NextRequest", () => {
   it("middleware that throws returns 500 instead of bypassing", async () => {
     const res = await fetch(`${baseUrl}/middleware-throw`);
     expect(res.status).toBe(500);
+  });
+
+  it("middleware request header overrides can delete credential headers before rendering", async () => {
+    // Ported from Next.js: test/e2e/middleware-request-header-overrides/test/index.test.ts
+    // https://github.com/vercel/next.js/blob/canary/test/e2e/middleware-request-header-overrides/test/index.test.ts
+    const { res, html } = await fetchHtml(baseUrl, "/header-override-delete", {
+      headers: {
+        authorization: "Bearer secret",
+        cookie: "a=1; b=2",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(html).toContain('id="authorization">null<');
+    expect(html).toContain('id="cookie">null<');
+    expect(html).toContain('id="middleware-header">hello-from-middleware<');
+    expect(html).toContain('id="cookie-count">0<');
+  });
+
+  it("middleware request header overrides can delete credential headers before pages getServerSideProps in mixed projects", async () => {
+    const { res, html } = await fetchHtml(baseUrl, "/pages-header-override-delete", {
+      headers: {
+        authorization: "Bearer secret",
+        cookie: "a=1; b=2",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(html).toContain("Pages Header Override Delete");
+    expect(html).toContain('<p id="authorization"></p>');
+    expect(html).toContain('<p id="cookie"></p>');
+    expect(html).toContain('id="middleware-header">hello-from-middleware<');
+    expect(html).toContain('"authorization":null');
+    expect(html).toContain('"cookie":null');
   });
 
   it("does not leak x-middleware-next or x-middleware-rewrite headers to the client", async () => {

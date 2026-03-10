@@ -44,6 +44,14 @@ export function middleware(request: NextRequest) {
     return NextResponse.next({ request: { headers } });
   }
 
+  if (url.pathname === "/header-override-delete") {
+    const headers = new Headers(request.headers);
+    headers.delete("authorization");
+    headers.delete("cookie");
+    headers.set("x-from-middleware", "hello-from-middleware");
+    return NextResponse.next({ request: { headers } });
+  }
+
   // Inject a cookie via middleware request headers. Config has/missing
   // conditions should not see this cookie as the original request did
   // not include it.
@@ -79,5 +87,12 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!api|_next|favicon\\.ico).*)"],
+  matcher: [
+    "/((?!api|_next|favicon\\.ico|mw-object-gated).*)",
+    {
+      source: "/mw-object-gated",
+      has: [{ type: "header", key: "x-mw-allow", value: "1" }],
+      missing: [{ type: "cookie", key: "mw-blocked" }],
+    },
+  ],
 };

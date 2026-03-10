@@ -21,6 +21,9 @@ import {
 import { findFileWithExts } from "./pages-entry-helpers.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const _requestContextShimPath = fileURLToPath(
+  new URL("../shims/request-context.js", import.meta.url),
+).replace(/\\/g, "/");
 
 /**
  * Generate the virtual SSR server entry module.
@@ -51,11 +54,11 @@ export async function generateServerEntry(
   // Build the route table — include filePath for SSR manifest lookup
   const pageRouteEntries = pageRoutes.map((r: Route, i: number) => {
     const absPath = r.filePath.replace(/\\/g, "/");
-    return `  { pattern: ${JSON.stringify(r.pattern)}, isDynamic: ${r.isDynamic}, params: ${JSON.stringify(r.params)}, module: page_${i}, filePath: ${JSON.stringify(absPath)} }`;
+    return `  { pattern: ${JSON.stringify(r.pattern)}, patternParts: ${JSON.stringify(r.patternParts)}, isDynamic: ${r.isDynamic}, params: ${JSON.stringify(r.params)}, module: page_${i}, filePath: ${JSON.stringify(absPath)} }`;
   });
 
   const apiRouteEntries = apiRoutes.map((r: Route, i: number) => {
-    return `  { pattern: ${JSON.stringify(r.pattern)}, isDynamic: ${r.isDynamic}, params: ${JSON.stringify(r.params)}, module: api_${i} }`;
+    return `  { pattern: ${JSON.stringify(r.pattern)}, patternParts: ${JSON.stringify(r.patternParts)}, isDynamic: ${r.isDynamic}, params: ${JSON.stringify(r.params)}, module: api_${i} }`;
   });
 
   // Check for _app and _document
@@ -80,6 +83,9 @@ export async function generateServerEntry(
         localeDetection: nextConfig.i18n.localeDetection,
       })
     : "null";
+
+  // Embed the resolved build ID at build time
+  const buildIdJson = JSON.stringify(nextConfig?.buildId ?? null);
 
   // Serialize the full resolved config for the production server.
   // This embeds redirects, rewrites, headers, basePath, trailingSlash
@@ -143,6 +149,11 @@ ${generateSafeRegExpCode("es5")}
 ${generateMiddlewareMatcherCode("es5")}
 
 export async function runMiddleware(request, ctx) {
+  if (ctx) return _runWithExecutionContext(ctx, () => _runMiddleware(request));
+  return _runMiddleware(request);
+}
+
+async function _runMiddleware(request) {
   var isProxy = ${middlewarePath ? JSON.stringify(isProxyFile(middlewarePath)) : "false"};
   var middlewareFn = isProxy
     ? (middlewareModule.proxy ?? middlewareModule.default)
@@ -165,7 +176,7 @@ export async function runMiddleware(request, ctx) {
   }
   var normalizedPathname = __normalizePath(decodedPathname);
 
-  if (!matchesMiddleware(normalizedPathname, matcher)) return { continue: true };
+  if (!matchesMiddleware(normalizedPathname, matcher, request, i18nConfig)) return { continue: true };
 
    // Construct a new Request with the decoded + normalized pathname so middleware
    // always sees the same canonical path that the router uses.
@@ -183,7 +194,8 @@ export async function runMiddleware(request, ctx) {
     console.error("[vinext] Middleware error:", e);
     return { continue: false, response: new Response("Internal Server Error", { status: 500 }) };
   }
-  if (ctx && typeof ctx.waitUntil === "function") { ctx.waitUntil(fetchEvent.drainWaitUntil()); } else { fetchEvent.drainWaitUntil(); }
+  var _mwCtx = _getRequestExecutionContext();
+  if (_mwCtx && typeof _mwCtx.waitUntil === "function") { _mwCtx.waitUntil(fetchEvent.drainWaitUntil()); } else { fetchEvent.drainWaitUntil(); }
 
   if (!response) return { continue: true };
 
@@ -195,6 +207,7 @@ export async function runMiddleware(request, ctx) {
       // from the final client response.
       if (
         !key.startsWith("x-middleware-") ||
+        key === "x-middleware-override-headers" ||
         key.startsWith("x-middleware-request-")
       ) rHeaders.append(key, value);
     }
@@ -216,7 +229,7 @@ export async function runMiddleware(request, ctx) {
   if (rewriteUrl) {
     var rwHeaders = new Headers();
     for (var [k, v] of response.headers) {
-      if (!k.startsWith("x-middleware-") || k.startsWith("x-middleware-request-")) rwHeaders.append(k, v);
+      if (!k.startsWith("x-middleware-") || k === "x-middleware-override-headers" || k.startsWith("x-middleware-request-")) rwHeaders.append(k, v);
     }
     var rewritePath;
     try { var parsed = new URL(rewriteUrl, request.url); rewritePath = parsed.pathname + parsed.search; }
@@ -249,6 +262,7 @@ import { safeJsonStringify } from "vinext/html";
 import { getSSRFontLinks as _getSSRFontLinks, getSSRFontStyles as _getSSRFontStylesGoogle, getSSRFontPreloads as _getSSRFontPreloadsGoogle } from "next/font/google";
 import { getSSRFontStyles as _getSSRFontStylesLocal, getSSRFontPreloads as _getSSRFontPreloadsLocal } from "next/font/local";
 import { parseCookies } from ${JSON.stringify(path.resolve(__dirname, "../config/config-matchers.js").replace(/\\/g, "/"))};
+import { runWithExecutionContext as _runWithExecutionContext, getRequestExecutionContext as _getRequestExecutionContext } from ${JSON.stringify(_requestContextShimPath)};
 ${instrumentationImportCode}
 ${middlewareImportCode}
 
@@ -256,6 +270,9 @@ ${instrumentationInitCode}
 
 // i18n config (embedded at build time)
 const i18nConfig = ${i18nConfigJson};
+
+// Build ID (embedded at build time)
+const buildId = ${buildIdJson};
 
 // Full resolved config for production server (embedded at build time)
 export const vinextConfig = ${vinextConfigJson};
@@ -272,7 +289,7 @@ async function isrSet(key, data, revalidateSeconds, tags) {
   await handler.set(key, data, { revalidate: revalidateSeconds, tags: tags || [] });
 }
 const pendingRegenerations = new Map();
-function triggerBackgroundRegeneration(key, renderFn, ctx) {
+function triggerBackgroundRegeneration(key, renderFn) {
   if (pendingRegenerations.has(key)) return;
   const promise = renderFn()
     .catch((err) => console.error("[vinext] ISR regen failed for " + key + ":", err))
@@ -280,6 +297,7 @@ function triggerBackgroundRegeneration(key, renderFn, ctx) {
   pendingRegenerations.set(key, promise);
   // Register with the Workers ExecutionContext so the isolate is kept alive
   // until the regeneration finishes, even after the Response has been sent.
+  const ctx = _getRequestExecutionContext();
   if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(promise);
 }
 
@@ -308,16 +326,15 @@ function matchRoute(url, routes) {
   let normalizedUrl = pathname === "/" ? "/" : pathname.replace(/\\/$/, "");
   // NOTE: Do NOT decodeURIComponent here. The pathname is already decoded at
   // the entry point. Decoding again would create a double-decode vector.
+  const urlParts = normalizedUrl.split("/").filter(Boolean);
   for (const route of routes) {
-    const params = matchPattern(normalizedUrl, route.pattern);
+    const params = matchPattern(urlParts, route.patternParts);
     if (params !== null) return { route, params };
   }
   return null;
 }
 
-function matchPattern(url, pattern) {
-  const urlParts = url.split("/").filter(Boolean);
-  const patternParts = pattern.split("/").filter(Boolean);
+function matchPattern(urlParts, patternParts) {
   const params = Object.create(null);
   for (let i = 0; i < patternParts.length; i++) {
     const pp = patternParts[i];
@@ -634,6 +651,11 @@ async function readBodyWithLimit(request, maxBytes) {
 }
 
 export async function renderPage(request, url, manifest, ctx) {
+  if (ctx) return _runWithExecutionContext(ctx, () => _renderPage(request, url, manifest));
+  return _renderPage(request, url, manifest);
+}
+
+async function _renderPage(request, url, manifest) {
   const localeInfo = extractLocale(url);
   const locale = localeInfo.locale;
   const routeUrl = localeInfo.url;
@@ -779,7 +801,7 @@ export async function renderPage(request, url, manifest, ctx) {
           if (freshResult && freshResult.props && typeof freshResult.revalidate === "number" && freshResult.revalidate > 0) {
             await isrSet(cacheKey, { kind: "PAGES", html: cached.value.value.html, pageData: freshResult.props, headers: undefined, status: undefined }, freshResult.revalidate);
           }
-        }, ctx);
+        });
         var _staleHeaders = {
           "Content-Type": "text/html", "X-Vinext-Cache": "STALE",
           "Cache-Control": "s-maxage=0, stale-while-revalidate",
@@ -840,7 +862,7 @@ export async function renderPage(request, url, manifest, ctx) {
     const pageModuleIds = route.filePath ? [route.filePath] : [];
     const assetTags = collectAssetTags(manifest, pageModuleIds);
     const nextDataPayload = {
-      props: { pageProps }, page: patternToNextFormat(route.pattern), query: params, isFallback: false,
+      props: { pageProps }, page: patternToNextFormat(route.pattern), query: params, buildId, isFallback: false,
     };
     if (i18nConfig) {
       nextDataPayload.locale = locale;

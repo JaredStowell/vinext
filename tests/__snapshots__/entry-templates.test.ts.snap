@@ -352,8 +352,8 @@ import { MetadataHead, mergeMetadata, resolveModuleMetadata, ViewportHead, merge
 
 
 
-import { requestContextFromRequest, matchRedirect, matchRewrite, matchHeaders, isExternalUrl, proxyExternalRequest, sanitizeDestination } from "<ROOT>/packages/vinext/src/config/config-matchers.js";
-import { validateCsrfOrigin, validateImageUrl, guardProtocolRelativeUrl, stripBasePath, normalizeTrailingSlash, processMiddlewareHeaders } from "<ROOT>/packages/vinext/src/server/request-pipeline.js";
+import { requestContextFromRequest, normalizeHost, matchRedirect, matchRewrite, matchHeaders, isExternalUrl, proxyExternalRequest, sanitizeDestination } from "<ROOT>/packages/vinext/src/config/config-matchers.js";
+import { validateCsrfOrigin, validateImageUrl, guardProtocolRelativeUrl, hasBasePath, stripBasePath, normalizeTrailingSlash, processMiddlewareHeaders } from "<ROOT>/packages/vinext/src/server/request-pipeline.js";
 import { _consumeRequestScopedCacheLife, _runWithCacheState } from "next/cache";
 import { runWithFetchCache } from "vinext/fetch-cache";
 import { runWithPrivateCache as _runWithPrivateCache } from "vinext/cache-runtime";
@@ -585,6 +585,7 @@ import * as mod_10 from "/tmp/test/app/dashboard/not-found.tsx";
 const routes = [
   {
     pattern: "/",
+    patternParts: [],
     isDynamic: false,
     params: [],
     page: mod_0,
@@ -606,6 +607,7 @@ const routes = [
   },
   {
     pattern: "/about",
+    patternParts: ["about"],
     isDynamic: false,
     params: [],
     page: mod_2,
@@ -627,6 +629,7 @@ const routes = [
   },
   {
     pattern: "/blog/:slug",
+    patternParts: ["blog",":slug"],
     isDynamic: true,
     params: ["slug"],
     page: mod_3,
@@ -648,6 +651,7 @@ const routes = [
   },
   {
     pattern: "/dashboard",
+    patternParts: ["dashboard"],
     isDynamic: false,
     params: [],
     page: mod_5,
@@ -939,16 +943,15 @@ function matchRoute(url, routes) {
    // NOTE: Do NOT decodeURIComponent here. The caller is responsible for decoding
    // the pathname exactly once at the request entry point. Decoding again here
    // would cause inconsistent path matching between middleware and routing.
+  const urlParts = normalizedUrl.split("/").filter(Boolean);
   for (const route of routes) {
-    const params = matchPattern(normalizedUrl, route.pattern);
+    const params = matchPattern(urlParts, route.patternParts);
     if (params !== null) return { route, params };
   }
   return null;
 }
 
-function matchPattern(url, pattern) {
-  const urlParts = url.split("/").filter(Boolean);
-  const patternParts = pattern.split("/").filter(Boolean);
+function matchPattern(urlParts, patternParts) {
   const params = Object.create(null);
   for (let i = 0; i < patternParts.length; i++) {
     const pp = patternParts[i];
@@ -988,6 +991,7 @@ for (let ri = 0; ri < routes.length; ri++) {
         sourceRouteIndex: ri,
         slotName,
         targetPattern: intercept.targetPattern,
+        targetPatternParts: intercept.targetPattern.split("/").filter(Boolean),
         page: intercept.page,
         params: intercept.params,
       });
@@ -1000,8 +1004,9 @@ for (let ri = 0; ri < routes.length; ri++) {
  * Returns the match info or null.
  */
 function findIntercept(pathname) {
+  const urlParts = pathname.split("/").filter(Boolean);
   for (const entry of interceptLookup) {
-    const params = matchPattern(pathname, entry.targetPattern);
+    const params = matchPattern(urlParts, entry.targetPatternParts);
     if (params !== null) {
       return { ...entry, matchedParams: params };
     }
@@ -1296,6 +1301,7 @@ async function buildPageElement(route, params, opts, searchParams) {
 
 const __basePath = "";
 const __trailingSlash = false;
+const __i18nConfig = null;
 const __configRedirects = [];
 const __configRewrites = {"beforeFiles":[],"afterFiles":[],"fallback":[]};
 const __configHeaders = [];
@@ -1471,7 +1477,7 @@ function __buildPostMwRequestContext(request) {
     headers: ctx.headers,
     cookies: cookiesRecord,
     query: url.searchParams,
-    host: ctx.headers.get("host") || url.host,
+    host: normalizeHost(ctx.headers.get("host"), url.hostname),
   };
 }
 
@@ -1639,7 +1645,9 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     const __redir = matchRedirect(__redirPathname, __configRedirects, __reqCtx);
     if (__redir) {
       const __redirDest = sanitizeDestination(
-        __basePath && !__redir.destination.startsWith(__basePath)
+        __basePath &&
+          !isExternalUrl(__redir.destination) &&
+          !hasBasePath(__redir.destination, __basePath)
           ? __basePath + __redir.destination
           : __redir.destination
       );
@@ -1690,6 +1698,34 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
 
   // Handle metadata routes (sitemap.xml, robots.txt, manifest.webmanifest, etc.)
   for (const metaRoute of metadataRoutes) {
+    // generateSitemaps() support — paginated sitemaps at /{prefix}/sitemap/{id}.xml
+    // When a sitemap module exports generateSitemaps, the base URL (e.g. /products/sitemap.xml)
+    // is no longer served. Instead, individual sitemaps are served at /products/sitemap/{id}.xml.
+    if (
+      metaRoute.type === "sitemap" &&
+      metaRoute.isDynamic &&
+      typeof metaRoute.module.generateSitemaps === "function"
+    ) {
+      const sitemapPrefix = metaRoute.servedUrl.slice(0, -4); // strip ".xml"
+      // Match exactly /{prefix}/{id}.xml — one segment only (no slashes in id)
+      if (cleanPathname.startsWith(sitemapPrefix + "/") && cleanPathname.endsWith(".xml")) {
+        const rawId = cleanPathname.slice(sitemapPrefix.length + 1, -4);
+        if (rawId.includes("/")) continue; // multi-segment — not a paginated sitemap
+        const sitemaps = await metaRoute.module.generateSitemaps();
+        const matched = sitemaps.find(function(s) { return String(s.id) === rawId; });
+        if (!matched) return new Response("Not Found", { status: 404 });
+        // Pass the original typed id from generateSitemaps() so numeric IDs stay numeric.
+        // TODO: wrap with makeThenableParams-style Promise when upgrading to Next.js 16
+        // full-Promise param semantics (id becomes Promise<string> in v16).
+        const result = await metaRoute.module.default({ id: matched.id });
+        if (result instanceof Response) return result;
+        return new Response(sitemapToXml(result), {
+          headers: { "Content-Type": metaRoute.contentType },
+        });
+      }
+      // Skip — the base servedUrl is not served when generateSitemaps exists
+      continue;
+    }
     if (cleanPathname === metaRoute.servedUrl) {
       if (metaRoute.isDynamic) {
         // Dynamic metadata route — call the default export and serialize
@@ -2647,8 +2683,8 @@ import { MetadataHead, mergeMetadata, resolveModuleMetadata, ViewportHead, merge
 
 
 
-import { requestContextFromRequest, matchRedirect, matchRewrite, matchHeaders, isExternalUrl, proxyExternalRequest, sanitizeDestination } from "<ROOT>/packages/vinext/src/config/config-matchers.js";
-import { validateCsrfOrigin, validateImageUrl, guardProtocolRelativeUrl, stripBasePath, normalizeTrailingSlash, processMiddlewareHeaders } from "<ROOT>/packages/vinext/src/server/request-pipeline.js";
+import { requestContextFromRequest, normalizeHost, matchRedirect, matchRewrite, matchHeaders, isExternalUrl, proxyExternalRequest, sanitizeDestination } from "<ROOT>/packages/vinext/src/config/config-matchers.js";
+import { validateCsrfOrigin, validateImageUrl, guardProtocolRelativeUrl, hasBasePath, stripBasePath, normalizeTrailingSlash, processMiddlewareHeaders } from "<ROOT>/packages/vinext/src/server/request-pipeline.js";
 import { _consumeRequestScopedCacheLife, _runWithCacheState } from "next/cache";
 import { runWithFetchCache } from "vinext/fetch-cache";
 import { runWithPrivateCache as _runWithPrivateCache } from "vinext/cache-runtime";
@@ -2880,6 +2916,7 @@ import * as mod_10 from "/tmp/test/app/dashboard/not-found.tsx";
 const routes = [
   {
     pattern: "/",
+    patternParts: [],
     isDynamic: false,
     params: [],
     page: mod_0,
@@ -2901,6 +2938,7 @@ const routes = [
   },
   {
     pattern: "/about",
+    patternParts: ["about"],
     isDynamic: false,
     params: [],
     page: mod_2,
@@ -2922,6 +2960,7 @@ const routes = [
   },
   {
     pattern: "/blog/:slug",
+    patternParts: ["blog",":slug"],
     isDynamic: true,
     params: ["slug"],
     page: mod_3,
@@ -2943,6 +2982,7 @@ const routes = [
   },
   {
     pattern: "/dashboard",
+    patternParts: ["dashboard"],
     isDynamic: false,
     params: [],
     page: mod_5,
@@ -3234,16 +3274,15 @@ function matchRoute(url, routes) {
    // NOTE: Do NOT decodeURIComponent here. The caller is responsible for decoding
    // the pathname exactly once at the request entry point. Decoding again here
    // would cause inconsistent path matching between middleware and routing.
+  const urlParts = normalizedUrl.split("/").filter(Boolean);
   for (const route of routes) {
-    const params = matchPattern(normalizedUrl, route.pattern);
+    const params = matchPattern(urlParts, route.patternParts);
     if (params !== null) return { route, params };
   }
   return null;
 }
 
-function matchPattern(url, pattern) {
-  const urlParts = url.split("/").filter(Boolean);
-  const patternParts = pattern.split("/").filter(Boolean);
+function matchPattern(urlParts, patternParts) {
   const params = Object.create(null);
   for (let i = 0; i < patternParts.length; i++) {
     const pp = patternParts[i];
@@ -3283,6 +3322,7 @@ for (let ri = 0; ri < routes.length; ri++) {
         sourceRouteIndex: ri,
         slotName,
         targetPattern: intercept.targetPattern,
+        targetPatternParts: intercept.targetPattern.split("/").filter(Boolean),
         page: intercept.page,
         params: intercept.params,
       });
@@ -3295,8 +3335,9 @@ for (let ri = 0; ri < routes.length; ri++) {
  * Returns the match info or null.
  */
 function findIntercept(pathname) {
+  const urlParts = pathname.split("/").filter(Boolean);
   for (const entry of interceptLookup) {
-    const params = matchPattern(pathname, entry.targetPattern);
+    const params = matchPattern(urlParts, entry.targetPatternParts);
     if (params !== null) {
       return { ...entry, matchedParams: params };
     }
@@ -3591,6 +3632,7 @@ async function buildPageElement(route, params, opts, searchParams) {
 
 const __basePath = "/base";
 const __trailingSlash = true;
+const __i18nConfig = null;
 const __configRedirects = [{"source":"/old","destination":"/new","permanent":true}];
 const __configRewrites = {"beforeFiles":[{"source":"/api/:path*","destination":"/backend/:path*"}],"afterFiles":[],"fallback":[]};
 const __configHeaders = [{"source":"/api/:path*","headers":[{"key":"X-Custom","value":"test"}]}];
@@ -3766,7 +3808,7 @@ function __buildPostMwRequestContext(request) {
     headers: ctx.headers,
     cookies: cookiesRecord,
     query: url.searchParams,
-    host: ctx.headers.get("host") || url.host,
+    host: normalizeHost(ctx.headers.get("host"), url.hostname),
   };
 }
 
@@ -3937,7 +3979,9 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     const __redir = matchRedirect(__redirPathname, __configRedirects, __reqCtx);
     if (__redir) {
       const __redirDest = sanitizeDestination(
-        __basePath && !__redir.destination.startsWith(__basePath)
+        __basePath &&
+          !isExternalUrl(__redir.destination) &&
+          !hasBasePath(__redir.destination, __basePath)
           ? __basePath + __redir.destination
           : __redir.destination
       );
@@ -3988,6 +4032,34 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
 
   // Handle metadata routes (sitemap.xml, robots.txt, manifest.webmanifest, etc.)
   for (const metaRoute of metadataRoutes) {
+    // generateSitemaps() support — paginated sitemaps at /{prefix}/sitemap/{id}.xml
+    // When a sitemap module exports generateSitemaps, the base URL (e.g. /products/sitemap.xml)
+    // is no longer served. Instead, individual sitemaps are served at /products/sitemap/{id}.xml.
+    if (
+      metaRoute.type === "sitemap" &&
+      metaRoute.isDynamic &&
+      typeof metaRoute.module.generateSitemaps === "function"
+    ) {
+      const sitemapPrefix = metaRoute.servedUrl.slice(0, -4); // strip ".xml"
+      // Match exactly /{prefix}/{id}.xml — one segment only (no slashes in id)
+      if (cleanPathname.startsWith(sitemapPrefix + "/") && cleanPathname.endsWith(".xml")) {
+        const rawId = cleanPathname.slice(sitemapPrefix.length + 1, -4);
+        if (rawId.includes("/")) continue; // multi-segment — not a paginated sitemap
+        const sitemaps = await metaRoute.module.generateSitemaps();
+        const matched = sitemaps.find(function(s) { return String(s.id) === rawId; });
+        if (!matched) return new Response("Not Found", { status: 404 });
+        // Pass the original typed id from generateSitemaps() so numeric IDs stay numeric.
+        // TODO: wrap with makeThenableParams-style Promise when upgrading to Next.js 16
+        // full-Promise param semantics (id becomes Promise<string> in v16).
+        const result = await metaRoute.module.default({ id: matched.id });
+        if (result instanceof Response) return result;
+        return new Response(sitemapToXml(result), {
+          headers: { "Content-Type": metaRoute.contentType },
+        });
+      }
+      // Skip — the base servedUrl is not served when generateSitemaps exists
+      continue;
+    }
     if (cleanPathname === metaRoute.servedUrl) {
       if (metaRoute.isDynamic) {
         // Dynamic metadata route — call the default export and serialize
@@ -4945,8 +5017,8 @@ import { MetadataHead, mergeMetadata, resolveModuleMetadata, ViewportHead, merge
 
 
 
-import { requestContextFromRequest, matchRedirect, matchRewrite, matchHeaders, isExternalUrl, proxyExternalRequest, sanitizeDestination } from "<ROOT>/packages/vinext/src/config/config-matchers.js";
-import { validateCsrfOrigin, validateImageUrl, guardProtocolRelativeUrl, stripBasePath, normalizeTrailingSlash, processMiddlewareHeaders } from "<ROOT>/packages/vinext/src/server/request-pipeline.js";
+import { requestContextFromRequest, normalizeHost, matchRedirect, matchRewrite, matchHeaders, isExternalUrl, proxyExternalRequest, sanitizeDestination } from "<ROOT>/packages/vinext/src/config/config-matchers.js";
+import { validateCsrfOrigin, validateImageUrl, guardProtocolRelativeUrl, hasBasePath, stripBasePath, normalizeTrailingSlash, processMiddlewareHeaders } from "<ROOT>/packages/vinext/src/server/request-pipeline.js";
 import { _consumeRequestScopedCacheLife, _runWithCacheState } from "next/cache";
 import { runWithFetchCache } from "vinext/fetch-cache";
 import { runWithPrivateCache as _runWithPrivateCache } from "vinext/cache-runtime";
@@ -5179,6 +5251,7 @@ import * as mod_11 from "/tmp/test/app/global-error.tsx";
 const routes = [
   {
     pattern: "/",
+    patternParts: [],
     isDynamic: false,
     params: [],
     page: mod_0,
@@ -5200,6 +5273,7 @@ const routes = [
   },
   {
     pattern: "/about",
+    patternParts: ["about"],
     isDynamic: false,
     params: [],
     page: mod_2,
@@ -5221,6 +5295,7 @@ const routes = [
   },
   {
     pattern: "/blog/:slug",
+    patternParts: ["blog",":slug"],
     isDynamic: true,
     params: ["slug"],
     page: mod_3,
@@ -5242,6 +5317,7 @@ const routes = [
   },
   {
     pattern: "/dashboard",
+    patternParts: ["dashboard"],
     isDynamic: false,
     params: [],
     page: mod_5,
@@ -5554,16 +5630,15 @@ function matchRoute(url, routes) {
    // NOTE: Do NOT decodeURIComponent here. The caller is responsible for decoding
    // the pathname exactly once at the request entry point. Decoding again here
    // would cause inconsistent path matching between middleware and routing.
+  const urlParts = normalizedUrl.split("/").filter(Boolean);
   for (const route of routes) {
-    const params = matchPattern(normalizedUrl, route.pattern);
+    const params = matchPattern(urlParts, route.patternParts);
     if (params !== null) return { route, params };
   }
   return null;
 }
 
-function matchPattern(url, pattern) {
-  const urlParts = url.split("/").filter(Boolean);
-  const patternParts = pattern.split("/").filter(Boolean);
+function matchPattern(urlParts, patternParts) {
   const params = Object.create(null);
   for (let i = 0; i < patternParts.length; i++) {
     const pp = patternParts[i];
@@ -5603,6 +5678,7 @@ for (let ri = 0; ri < routes.length; ri++) {
         sourceRouteIndex: ri,
         slotName,
         targetPattern: intercept.targetPattern,
+        targetPatternParts: intercept.targetPattern.split("/").filter(Boolean),
         page: intercept.page,
         params: intercept.params,
       });
@@ -5615,8 +5691,9 @@ for (let ri = 0; ri < routes.length; ri++) {
  * Returns the match info or null.
  */
 function findIntercept(pathname) {
+  const urlParts = pathname.split("/").filter(Boolean);
   for (const entry of interceptLookup) {
-    const params = matchPattern(pathname, entry.targetPattern);
+    const params = matchPattern(urlParts, entry.targetPatternParts);
     if (params !== null) {
       return { ...entry, matchedParams: params };
     }
@@ -5919,6 +5996,7 @@ async function buildPageElement(route, params, opts, searchParams) {
 
 const __basePath = "";
 const __trailingSlash = false;
+const __i18nConfig = null;
 const __configRedirects = [];
 const __configRewrites = {"beforeFiles":[],"afterFiles":[],"fallback":[]};
 const __configHeaders = [];
@@ -6094,7 +6172,7 @@ function __buildPostMwRequestContext(request) {
     headers: ctx.headers,
     cookies: cookiesRecord,
     query: url.searchParams,
-    host: ctx.headers.get("host") || url.host,
+    host: normalizeHost(ctx.headers.get("host"), url.hostname),
   };
 }
 
@@ -6262,7 +6340,9 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     const __redir = matchRedirect(__redirPathname, __configRedirects, __reqCtx);
     if (__redir) {
       const __redirDest = sanitizeDestination(
-        __basePath && !__redir.destination.startsWith(__basePath)
+        __basePath &&
+          !isExternalUrl(__redir.destination) &&
+          !hasBasePath(__redir.destination, __basePath)
           ? __basePath + __redir.destination
           : __redir.destination
       );
@@ -6313,6 +6393,34 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
 
   // Handle metadata routes (sitemap.xml, robots.txt, manifest.webmanifest, etc.)
   for (const metaRoute of metadataRoutes) {
+    // generateSitemaps() support — paginated sitemaps at /{prefix}/sitemap/{id}.xml
+    // When a sitemap module exports generateSitemaps, the base URL (e.g. /products/sitemap.xml)
+    // is no longer served. Instead, individual sitemaps are served at /products/sitemap/{id}.xml.
+    if (
+      metaRoute.type === "sitemap" &&
+      metaRoute.isDynamic &&
+      typeof metaRoute.module.generateSitemaps === "function"
+    ) {
+      const sitemapPrefix = metaRoute.servedUrl.slice(0, -4); // strip ".xml"
+      // Match exactly /{prefix}/{id}.xml — one segment only (no slashes in id)
+      if (cleanPathname.startsWith(sitemapPrefix + "/") && cleanPathname.endsWith(".xml")) {
+        const rawId = cleanPathname.slice(sitemapPrefix.length + 1, -4);
+        if (rawId.includes("/")) continue; // multi-segment — not a paginated sitemap
+        const sitemaps = await metaRoute.module.generateSitemaps();
+        const matched = sitemaps.find(function(s) { return String(s.id) === rawId; });
+        if (!matched) return new Response("Not Found", { status: 404 });
+        // Pass the original typed id from generateSitemaps() so numeric IDs stay numeric.
+        // TODO: wrap with makeThenableParams-style Promise when upgrading to Next.js 16
+        // full-Promise param semantics (id becomes Promise<string> in v16).
+        const result = await metaRoute.module.default({ id: matched.id });
+        if (result instanceof Response) return result;
+        return new Response(sitemapToXml(result), {
+          headers: { "Content-Type": metaRoute.contentType },
+        });
+      }
+      // Skip — the base servedUrl is not served when generateSitemaps exists
+      continue;
+    }
     if (cleanPathname === metaRoute.servedUrl) {
       if (metaRoute.isDynamic) {
         // Dynamic metadata route — call the default export and serialize
@@ -7278,8 +7386,8 @@ import { MetadataHead, mergeMetadata, resolveModuleMetadata, ViewportHead, merge
 
 import * as _instrumentation from "/tmp/test/instrumentation.ts";
 
-import { requestContextFromRequest, matchRedirect, matchRewrite, matchHeaders, isExternalUrl, proxyExternalRequest, sanitizeDestination } from "<ROOT>/packages/vinext/src/config/config-matchers.js";
-import { validateCsrfOrigin, validateImageUrl, guardProtocolRelativeUrl, stripBasePath, normalizeTrailingSlash, processMiddlewareHeaders } from "<ROOT>/packages/vinext/src/server/request-pipeline.js";
+import { requestContextFromRequest, normalizeHost, matchRedirect, matchRewrite, matchHeaders, isExternalUrl, proxyExternalRequest, sanitizeDestination } from "<ROOT>/packages/vinext/src/config/config-matchers.js";
+import { validateCsrfOrigin, validateImageUrl, guardProtocolRelativeUrl, hasBasePath, stripBasePath, normalizeTrailingSlash, processMiddlewareHeaders } from "<ROOT>/packages/vinext/src/server/request-pipeline.js";
 import { _consumeRequestScopedCacheLife, _runWithCacheState } from "next/cache";
 import { runWithFetchCache } from "vinext/fetch-cache";
 import { runWithPrivateCache as _runWithPrivateCache } from "vinext/cache-runtime";
@@ -7540,6 +7648,7 @@ async function __ensureInstrumentation() {
 const routes = [
   {
     pattern: "/",
+    patternParts: [],
     isDynamic: false,
     params: [],
     page: mod_0,
@@ -7561,6 +7670,7 @@ const routes = [
   },
   {
     pattern: "/about",
+    patternParts: ["about"],
     isDynamic: false,
     params: [],
     page: mod_2,
@@ -7582,6 +7692,7 @@ const routes = [
   },
   {
     pattern: "/blog/:slug",
+    patternParts: ["blog",":slug"],
     isDynamic: true,
     params: ["slug"],
     page: mod_3,
@@ -7603,6 +7714,7 @@ const routes = [
   },
   {
     pattern: "/dashboard",
+    patternParts: ["dashboard"],
     isDynamic: false,
     params: [],
     page: mod_5,
@@ -7894,16 +8006,15 @@ function matchRoute(url, routes) {
    // NOTE: Do NOT decodeURIComponent here. The caller is responsible for decoding
    // the pathname exactly once at the request entry point. Decoding again here
    // would cause inconsistent path matching between middleware and routing.
+  const urlParts = normalizedUrl.split("/").filter(Boolean);
   for (const route of routes) {
-    const params = matchPattern(normalizedUrl, route.pattern);
+    const params = matchPattern(urlParts, route.patternParts);
     if (params !== null) return { route, params };
   }
   return null;
 }
 
-function matchPattern(url, pattern) {
-  const urlParts = url.split("/").filter(Boolean);
-  const patternParts = pattern.split("/").filter(Boolean);
+function matchPattern(urlParts, patternParts) {
   const params = Object.create(null);
   for (let i = 0; i < patternParts.length; i++) {
     const pp = patternParts[i];
@@ -7943,6 +8054,7 @@ for (let ri = 0; ri < routes.length; ri++) {
         sourceRouteIndex: ri,
         slotName,
         targetPattern: intercept.targetPattern,
+        targetPatternParts: intercept.targetPattern.split("/").filter(Boolean),
         page: intercept.page,
         params: intercept.params,
       });
@@ -7955,8 +8067,9 @@ for (let ri = 0; ri < routes.length; ri++) {
  * Returns the match info or null.
  */
 function findIntercept(pathname) {
+  const urlParts = pathname.split("/").filter(Boolean);
   for (const entry of interceptLookup) {
-    const params = matchPattern(pathname, entry.targetPattern);
+    const params = matchPattern(urlParts, entry.targetPatternParts);
     if (params !== null) {
       return { ...entry, matchedParams: params };
     }
@@ -8251,6 +8364,7 @@ async function buildPageElement(route, params, opts, searchParams) {
 
 const __basePath = "";
 const __trailingSlash = false;
+const __i18nConfig = null;
 const __configRedirects = [];
 const __configRewrites = {"beforeFiles":[],"afterFiles":[],"fallback":[]};
 const __configHeaders = [];
@@ -8426,7 +8540,7 @@ function __buildPostMwRequestContext(request) {
     headers: ctx.headers,
     cookies: cookiesRecord,
     query: url.searchParams,
-    host: ctx.headers.get("host") || url.host,
+    host: normalizeHost(ctx.headers.get("host"), url.hostname),
   };
 }
 
@@ -8597,7 +8711,9 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     const __redir = matchRedirect(__redirPathname, __configRedirects, __reqCtx);
     if (__redir) {
       const __redirDest = sanitizeDestination(
-        __basePath && !__redir.destination.startsWith(__basePath)
+        __basePath &&
+          !isExternalUrl(__redir.destination) &&
+          !hasBasePath(__redir.destination, __basePath)
           ? __basePath + __redir.destination
           : __redir.destination
       );
@@ -8648,6 +8764,34 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
 
   // Handle metadata routes (sitemap.xml, robots.txt, manifest.webmanifest, etc.)
   for (const metaRoute of metadataRoutes) {
+    // generateSitemaps() support — paginated sitemaps at /{prefix}/sitemap/{id}.xml
+    // When a sitemap module exports generateSitemaps, the base URL (e.g. /products/sitemap.xml)
+    // is no longer served. Instead, individual sitemaps are served at /products/sitemap/{id}.xml.
+    if (
+      metaRoute.type === "sitemap" &&
+      metaRoute.isDynamic &&
+      typeof metaRoute.module.generateSitemaps === "function"
+    ) {
+      const sitemapPrefix = metaRoute.servedUrl.slice(0, -4); // strip ".xml"
+      // Match exactly /{prefix}/{id}.xml — one segment only (no slashes in id)
+      if (cleanPathname.startsWith(sitemapPrefix + "/") && cleanPathname.endsWith(".xml")) {
+        const rawId = cleanPathname.slice(sitemapPrefix.length + 1, -4);
+        if (rawId.includes("/")) continue; // multi-segment — not a paginated sitemap
+        const sitemaps = await metaRoute.module.generateSitemaps();
+        const matched = sitemaps.find(function(s) { return String(s.id) === rawId; });
+        if (!matched) return new Response("Not Found", { status: 404 });
+        // Pass the original typed id from generateSitemaps() so numeric IDs stay numeric.
+        // TODO: wrap with makeThenableParams-style Promise when upgrading to Next.js 16
+        // full-Promise param semantics (id becomes Promise<string> in v16).
+        const result = await metaRoute.module.default({ id: matched.id });
+        if (result instanceof Response) return result;
+        return new Response(sitemapToXml(result), {
+          headers: { "Content-Type": metaRoute.contentType },
+        });
+      }
+      // Skip — the base servedUrl is not served when generateSitemaps exists
+      continue;
+    }
     if (cleanPathname === metaRoute.servedUrl) {
       if (metaRoute.isDynamic) {
         // Dynamic metadata route — call the default export and serialize
@@ -9605,8 +9749,8 @@ import { MetadataHead, mergeMetadata, resolveModuleMetadata, ViewportHead, merge
 
 
 import { sitemapToXml, robotsToText, manifestToJson } from "<ROOT>/packages/vinext/src/server/metadata-routes.js";
-import { requestContextFromRequest, matchRedirect, matchRewrite, matchHeaders, isExternalUrl, proxyExternalRequest, sanitizeDestination } from "<ROOT>/packages/vinext/src/config/config-matchers.js";
-import { validateCsrfOrigin, validateImageUrl, guardProtocolRelativeUrl, stripBasePath, normalizeTrailingSlash, processMiddlewareHeaders } from "<ROOT>/packages/vinext/src/server/request-pipeline.js";
+import { requestContextFromRequest, normalizeHost, matchRedirect, matchRewrite, matchHeaders, isExternalUrl, proxyExternalRequest, sanitizeDestination } from "<ROOT>/packages/vinext/src/config/config-matchers.js";
+import { validateCsrfOrigin, validateImageUrl, guardProtocolRelativeUrl, hasBasePath, stripBasePath, normalizeTrailingSlash, processMiddlewareHeaders } from "<ROOT>/packages/vinext/src/server/request-pipeline.js";
 import { _consumeRequestScopedCacheLife, _runWithCacheState } from "next/cache";
 import { runWithFetchCache } from "vinext/fetch-cache";
 import { runWithPrivateCache as _runWithPrivateCache } from "vinext/cache-runtime";
@@ -9839,6 +9983,7 @@ import * as mod_11 from "/tmp/test/app/sitemap.ts";
 const routes = [
   {
     pattern: "/",
+    patternParts: [],
     isDynamic: false,
     params: [],
     page: mod_0,
@@ -9860,6 +10005,7 @@ const routes = [
   },
   {
     pattern: "/about",
+    patternParts: ["about"],
     isDynamic: false,
     params: [],
     page: mod_2,
@@ -9881,6 +10027,7 @@ const routes = [
   },
   {
     pattern: "/blog/:slug",
+    patternParts: ["blog",":slug"],
     isDynamic: true,
     params: ["slug"],
     page: mod_3,
@@ -9902,6 +10049,7 @@ const routes = [
   },
   {
     pattern: "/dashboard",
+    patternParts: ["dashboard"],
     isDynamic: false,
     params: [],
     page: mod_5,
@@ -10199,16 +10347,15 @@ function matchRoute(url, routes) {
    // NOTE: Do NOT decodeURIComponent here. The caller is responsible for decoding
    // the pathname exactly once at the request entry point. Decoding again here
    // would cause inconsistent path matching between middleware and routing.
+  const urlParts = normalizedUrl.split("/").filter(Boolean);
   for (const route of routes) {
-    const params = matchPattern(normalizedUrl, route.pattern);
+    const params = matchPattern(urlParts, route.patternParts);
     if (params !== null) return { route, params };
   }
   return null;
 }
 
-function matchPattern(url, pattern) {
-  const urlParts = url.split("/").filter(Boolean);
-  const patternParts = pattern.split("/").filter(Boolean);
+function matchPattern(urlParts, patternParts) {
   const params = Object.create(null);
   for (let i = 0; i < patternParts.length; i++) {
     const pp = patternParts[i];
@@ -10248,6 +10395,7 @@ for (let ri = 0; ri < routes.length; ri++) {
         sourceRouteIndex: ri,
         slotName,
         targetPattern: intercept.targetPattern,
+        targetPatternParts: intercept.targetPattern.split("/").filter(Boolean),
         page: intercept.page,
         params: intercept.params,
       });
@@ -10260,8 +10408,9 @@ for (let ri = 0; ri < routes.length; ri++) {
  * Returns the match info or null.
  */
 function findIntercept(pathname) {
+  const urlParts = pathname.split("/").filter(Boolean);
   for (const entry of interceptLookup) {
-    const params = matchPattern(pathname, entry.targetPattern);
+    const params = matchPattern(urlParts, entry.targetPatternParts);
     if (params !== null) {
       return { ...entry, matchedParams: params };
     }
@@ -10556,6 +10705,7 @@ async function buildPageElement(route, params, opts, searchParams) {
 
 const __basePath = "";
 const __trailingSlash = false;
+const __i18nConfig = null;
 const __configRedirects = [];
 const __configRewrites = {"beforeFiles":[],"afterFiles":[],"fallback":[]};
 const __configHeaders = [];
@@ -10731,7 +10881,7 @@ function __buildPostMwRequestContext(request) {
     headers: ctx.headers,
     cookies: cookiesRecord,
     query: url.searchParams,
-    host: ctx.headers.get("host") || url.host,
+    host: normalizeHost(ctx.headers.get("host"), url.hostname),
   };
 }
 
@@ -10899,7 +11049,9 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     const __redir = matchRedirect(__redirPathname, __configRedirects, __reqCtx);
     if (__redir) {
       const __redirDest = sanitizeDestination(
-        __basePath && !__redir.destination.startsWith(__basePath)
+        __basePath &&
+          !isExternalUrl(__redir.destination) &&
+          !hasBasePath(__redir.destination, __basePath)
           ? __basePath + __redir.destination
           : __redir.destination
       );
@@ -10950,6 +11102,34 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
 
   // Handle metadata routes (sitemap.xml, robots.txt, manifest.webmanifest, etc.)
   for (const metaRoute of metadataRoutes) {
+    // generateSitemaps() support — paginated sitemaps at /{prefix}/sitemap/{id}.xml
+    // When a sitemap module exports generateSitemaps, the base URL (e.g. /products/sitemap.xml)
+    // is no longer served. Instead, individual sitemaps are served at /products/sitemap/{id}.xml.
+    if (
+      metaRoute.type === "sitemap" &&
+      metaRoute.isDynamic &&
+      typeof metaRoute.module.generateSitemaps === "function"
+    ) {
+      const sitemapPrefix = metaRoute.servedUrl.slice(0, -4); // strip ".xml"
+      // Match exactly /{prefix}/{id}.xml — one segment only (no slashes in id)
+      if (cleanPathname.startsWith(sitemapPrefix + "/") && cleanPathname.endsWith(".xml")) {
+        const rawId = cleanPathname.slice(sitemapPrefix.length + 1, -4);
+        if (rawId.includes("/")) continue; // multi-segment — not a paginated sitemap
+        const sitemaps = await metaRoute.module.generateSitemaps();
+        const matched = sitemaps.find(function(s) { return String(s.id) === rawId; });
+        if (!matched) return new Response("Not Found", { status: 404 });
+        // Pass the original typed id from generateSitemaps() so numeric IDs stay numeric.
+        // TODO: wrap with makeThenableParams-style Promise when upgrading to Next.js 16
+        // full-Promise param semantics (id becomes Promise<string> in v16).
+        const result = await metaRoute.module.default({ id: matched.id });
+        if (result instanceof Response) return result;
+        return new Response(sitemapToXml(result), {
+          headers: { "Content-Type": metaRoute.contentType },
+        });
+      }
+      // Skip — the base servedUrl is not served when generateSitemaps exists
+      continue;
+    }
     if (cleanPathname === metaRoute.servedUrl) {
       if (metaRoute.isDynamic) {
         // Dynamic metadata route — call the default export and serialize
@@ -11907,8 +12087,8 @@ import { MetadataHead, mergeMetadata, resolveModuleMetadata, ViewportHead, merge
 import * as middlewareModule from "/tmp/test/middleware.ts";
 
 
-import { requestContextFromRequest, matchRedirect, matchRewrite, matchHeaders, isExternalUrl, proxyExternalRequest, sanitizeDestination } from "<ROOT>/packages/vinext/src/config/config-matchers.js";
-import { validateCsrfOrigin, validateImageUrl, guardProtocolRelativeUrl, stripBasePath, normalizeTrailingSlash, processMiddlewareHeaders } from "<ROOT>/packages/vinext/src/server/request-pipeline.js";
+import { requestContextFromRequest, normalizeHost, matchRedirect, matchRewrite, matchHeaders, isExternalUrl, proxyExternalRequest, sanitizeDestination } from "<ROOT>/packages/vinext/src/config/config-matchers.js";
+import { validateCsrfOrigin, validateImageUrl, guardProtocolRelativeUrl, hasBasePath, stripBasePath, normalizeTrailingSlash, processMiddlewareHeaders } from "<ROOT>/packages/vinext/src/server/request-pipeline.js";
 import { _consumeRequestScopedCacheLife, _runWithCacheState } from "next/cache";
 import { runWithFetchCache } from "vinext/fetch-cache";
 import { runWithPrivateCache as _runWithPrivateCache } from "vinext/cache-runtime";
@@ -12140,6 +12320,7 @@ import * as mod_10 from "/tmp/test/app/dashboard/not-found.tsx";
 const routes = [
   {
     pattern: "/",
+    patternParts: [],
     isDynamic: false,
     params: [],
     page: mod_0,
@@ -12161,6 +12342,7 @@ const routes = [
   },
   {
     pattern: "/about",
+    patternParts: ["about"],
     isDynamic: false,
     params: [],
     page: mod_2,
@@ -12182,6 +12364,7 @@ const routes = [
   },
   {
     pattern: "/blog/:slug",
+    patternParts: ["blog",":slug"],
     isDynamic: true,
     params: ["slug"],
     page: mod_3,
@@ -12203,6 +12386,7 @@ const routes = [
   },
   {
     pattern: "/dashboard",
+    patternParts: ["dashboard"],
     isDynamic: false,
     params: [],
     page: mod_5,
@@ -12494,16 +12678,15 @@ function matchRoute(url, routes) {
    // NOTE: Do NOT decodeURIComponent here. The caller is responsible for decoding
    // the pathname exactly once at the request entry point. Decoding again here
    // would cause inconsistent path matching between middleware and routing.
+  const urlParts = normalizedUrl.split("/").filter(Boolean);
   for (const route of routes) {
-    const params = matchPattern(normalizedUrl, route.pattern);
+    const params = matchPattern(urlParts, route.patternParts);
     if (params !== null) return { route, params };
   }
   return null;
 }
 
-function matchPattern(url, pattern) {
-  const urlParts = url.split("/").filter(Boolean);
-  const patternParts = pattern.split("/").filter(Boolean);
+function matchPattern(urlParts, patternParts) {
   const params = Object.create(null);
   for (let i = 0; i < patternParts.length; i++) {
     const pp = patternParts[i];
@@ -12543,6 +12726,7 @@ for (let ri = 0; ri < routes.length; ri++) {
         sourceRouteIndex: ri,
         slotName,
         targetPattern: intercept.targetPattern,
+        targetPatternParts: intercept.targetPattern.split("/").filter(Boolean),
         page: intercept.page,
         params: intercept.params,
       });
@@ -12555,8 +12739,9 @@ for (let ri = 0; ri < routes.length; ri++) {
  * Returns the match info or null.
  */
 function findIntercept(pathname) {
+  const urlParts = pathname.split("/").filter(Boolean);
   for (const entry of interceptLookup) {
-    const params = matchPattern(pathname, entry.targetPattern);
+    const params = matchPattern(urlParts, entry.targetPatternParts);
     if (params !== null) {
       return { ...entry, matchedParams: params };
     }
@@ -12848,16 +13033,11 @@ async function buildPageElement(route, params, opts, searchParams) {
 }
 
 
-function matchMiddlewarePattern(pathname, pattern) {
-  // Regex patterns: if the pattern contains "(" or "\\" it's a regex —
-  // pass it through to RegExp directly WITHOUT dot-escaping.
-  // This guard prevents regex pattern corruption from dot-escaping.
+const __mwPatternCache = new Map();
+function __compileMwPattern(pattern) {
   if (pattern.includes("(") || pattern.includes("\\\\")) {
-    const re = __safeRegExp("^" + pattern + "$");
-    if (re) return re.test(pathname);
+    return __safeRegExp("^" + pattern + "$");
   }
-  // Single-pass tokenizer (avoids chained .replace() flagged by CodeQL as
-  // incomplete sanitization — later passes could re-process earlier outputs).
   let regexStr = "";
   const tokenRe = /\\/:([\\w-]+)\\*|\\/:([\\w-]+)\\+|:([\\w-]+)|[.]|[^/:.]+|./g;
   let tok;
@@ -12868,27 +13048,191 @@ function matchMiddlewarePattern(pathname, pattern) {
     else if (tok[0] === ".") { regexStr += "\\\\."; }
     else { regexStr += tok[0]; }
   }
-  const re2 = __safeRegExp("^" + regexStr + "$");
-  return re2 ? re2.test(pathname) : pathname === pattern;
+  return __safeRegExp("^" + regexStr + "$");
+}
+function matchMiddlewarePattern(pathname, pattern) {
+  let cached = __mwPatternCache.get(pattern);
+  if (cached === undefined) {
+    cached = __compileMwPattern(pattern);
+    __mwPatternCache.set(pattern, cached);
+  }
+  return cached ? cached.test(pathname) : pathname === pattern;
 }
 
-function matchesMiddleware(pathname, matcher) {
+const __middlewareConditionRegexCache = new Map();
+// Requestless matcher checks reuse this singleton. Treat it as immutable.
+const __emptyMiddlewareRequestContext = {
+  headers: new Headers(),
+  cookies: {},
+  query: new URLSearchParams(),
+  host: "",
+};
+
+function __normalizeMiddlewareHost(hostHeader, fallbackHostname) {
+  const host = hostHeader ?? fallbackHostname;
+  return host.split(":", 1)[0].toLowerCase();
+}
+
+function __parseMiddlewareCookies(cookieHeader) {
+  if (!cookieHeader) return {};
+  const cookies = {};
+  for (const part of cookieHeader.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq === -1) continue;
+    const key = part.slice(0, eq).trim();
+    const value = part.slice(eq + 1).trim();
+    if (key) cookies[key] = value;
+  }
+  return cookies;
+}
+
+function __middlewareRequestContextFromRequest(request) {
+  if (!request) return __emptyMiddlewareRequestContext;
+  const url = new URL(request.url);
+  return {
+    headers: request.headers,
+    cookies: __parseMiddlewareCookies(request.headers.get("cookie")),
+    query: url.searchParams,
+    host: __normalizeMiddlewareHost(request.headers.get("host"), url.hostname),
+  };
+}
+
+function __stripMiddlewareLocalePrefix(pathname, i18nConfig) {
+  if (pathname === "/") return null;
+  const segments = pathname.split("/");
+  const firstSegment = segments[1];
+  if (!firstSegment || !i18nConfig || !i18nConfig.locales.includes(firstSegment)) {
+    return null;
+  }
+  const stripped = "/" + segments.slice(2).join("/");
+  return stripped === "/" ? "/" : stripped.replace(/\\/+$/, "") || "/";
+}
+
+function __matchMiddlewareMatcherPattern(pathname, pattern, i18nConfig) {
+  if (!i18nConfig) return matchMiddlewarePattern(pathname, pattern);
+  const localeStrippedPathname = __stripMiddlewareLocalePrefix(pathname, i18nConfig);
+  return matchMiddlewarePattern(localeStrippedPathname ?? pathname, pattern);
+}
+
+function __middlewareConditionRegex(value) {
+  if (__middlewareConditionRegexCache.has(value)) {
+    return __middlewareConditionRegexCache.get(value);
+  }
+  const re = __safeRegExp(value);
+  __middlewareConditionRegexCache.set(value, re);
+  return re;
+}
+
+function __checkMiddlewareCondition(condition, ctx) {
+  switch (condition.type) {
+    case "header": {
+      const headerValue = ctx.headers.get(condition.key);
+      if (headerValue === null) return false;
+      if (condition.value !== undefined) {
+        const re = __middlewareConditionRegex(condition.value);
+        if (re) return re.test(headerValue);
+        return headerValue === condition.value;
+      }
+      return true;
+    }
+    case "cookie": {
+      const cookieValue = ctx.cookies[condition.key];
+      if (cookieValue === undefined) return false;
+      if (condition.value !== undefined) {
+        const re = __middlewareConditionRegex(condition.value);
+        if (re) return re.test(cookieValue);
+        return cookieValue === condition.value;
+      }
+      return true;
+    }
+    case "query": {
+      const queryValue = ctx.query.get(condition.key);
+      if (queryValue === null) return false;
+      if (condition.value !== undefined) {
+        const re = __middlewareConditionRegex(condition.value);
+        if (re) return re.test(queryValue);
+        return queryValue === condition.value;
+      }
+      return true;
+    }
+    case "host": {
+      if (condition.value !== undefined) {
+        const re = __middlewareConditionRegex(condition.value);
+        if (re) return re.test(ctx.host);
+        return ctx.host === condition.value;
+      }
+      return ctx.host === condition.key;
+    }
+    default:
+      return false;
+  }
+}
+
+function __checkMiddlewareHasConditions(has, missing, ctx) {
+  if (has) {
+    for (const condition of has) {
+      if (!__checkMiddlewareCondition(condition, ctx)) return false;
+    }
+  }
+  if (missing) {
+    for (const condition of missing) {
+      if (__checkMiddlewareCondition(condition, ctx)) return false;
+    }
+  }
+  return true;
+}
+
+// Keep this in sync with isValidMiddlewareMatcherObject in middleware.ts.
+function __isValidMiddlewareMatcherObject(matcher) {
+  if (!matcher || typeof matcher !== "object" || Array.isArray(matcher)) return false;
+  if (typeof matcher.source !== "string") return false;
+  for (const key of Object.keys(matcher)) {
+    if (key !== "source" && key !== "locale" && key !== "has" && key !== "missing") {
+      return false;
+    }
+  }
+  if ("locale" in matcher && matcher.locale !== undefined && matcher.locale !== false) return false;
+  if ("has" in matcher && matcher.has !== undefined && !Array.isArray(matcher.has)) return false;
+  if ("missing" in matcher && matcher.missing !== undefined && !Array.isArray(matcher.missing)) {
+    return false;
+  }
+  return true;
+}
+
+function __matchMiddlewareObject(pathname, matcher, i18nConfig) {
+  return matcher.locale === false
+    ? matchMiddlewarePattern(pathname, matcher.source)
+    : __matchMiddlewareMatcherPattern(pathname, matcher.source, i18nConfig);
+}
+
+function matchesMiddleware(pathname, matcher, request, i18nConfig) {
   if (!matcher) {
     return true;
   }
-  const patterns = [];
-  if (typeof matcher === "string") { patterns.push(matcher); }
-  else if (Array.isArray(matcher)) {
-    for (const m of matcher) {
-      if (typeof m === "string") patterns.push(m);
-      else if (m && typeof m === "object" && "source" in m) patterns.push(m.source);
+  if (typeof matcher === "string") {
+    return __matchMiddlewareMatcherPattern(pathname, matcher, i18nConfig);
+  }
+  if (!Array.isArray(matcher)) {
+    return false;
+  }
+  const requestContext = __middlewareRequestContextFromRequest(request);
+  for (const m of matcher) {
+    if (typeof m === "string") {
+      if (__matchMiddlewareMatcherPattern(pathname, m, i18nConfig)) return true;
+      continue;
+    }
+    if (__isValidMiddlewareMatcherObject(m)) {
+      if (!__matchMiddlewareObject(pathname, m, i18nConfig)) continue;
+      if (!__checkMiddlewareHasConditions(m.has, m.missing, requestContext)) continue;
+      return true;
     }
   }
-  return patterns.some((p) => { return matchMiddlewarePattern(pathname, p); });
+  return false;
 }
 
 const __basePath = "";
 const __trailingSlash = false;
+const __i18nConfig = null;
 const __configRedirects = [];
 const __configRewrites = {"beforeFiles":[],"afterFiles":[],"fallback":[]};
 const __configHeaders = [];
@@ -13064,7 +13408,7 @@ function __buildPostMwRequestContext(request) {
     headers: ctx.headers,
     cookies: cookiesRecord,
     query: url.searchParams,
-    host: ctx.headers.get("host") || url.host,
+    host: normalizeHost(ctx.headers.get("host"), url.hostname),
   };
 }
 
@@ -13232,7 +13576,9 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     const __redir = matchRedirect(__redirPathname, __configRedirects, __reqCtx);
     if (__redir) {
       const __redirDest = sanitizeDestination(
-        __basePath && !__redir.destination.startsWith(__basePath)
+        __basePath &&
+          !isExternalUrl(__redir.destination) &&
+          !hasBasePath(__redir.destination, __basePath)
           ? __basePath + __redir.destination
           : __redir.destination
       );
@@ -13264,7 +13610,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     throw new Error("The " + _fileType + " file must export a function named \`" + _expectedExport + "\` or a \`default\` function.");
   }
   const middlewareMatcher = middlewareModule.config?.matcher;
-  if (matchesMiddleware(cleanPathname, middlewareMatcher)) {
+  if (matchesMiddleware(cleanPathname, middlewareMatcher, request, __i18nConfig)) {
     try {
       // Wrap in NextRequest so middleware gets .nextUrl, .cookies, .geo, .ip, etc.
        // Always construct a new Request with the fully decoded + normalized pathname
@@ -13365,6 +13711,34 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
 
   // Handle metadata routes (sitemap.xml, robots.txt, manifest.webmanifest, etc.)
   for (const metaRoute of metadataRoutes) {
+    // generateSitemaps() support — paginated sitemaps at /{prefix}/sitemap/{id}.xml
+    // When a sitemap module exports generateSitemaps, the base URL (e.g. /products/sitemap.xml)
+    // is no longer served. Instead, individual sitemaps are served at /products/sitemap/{id}.xml.
+    if (
+      metaRoute.type === "sitemap" &&
+      metaRoute.isDynamic &&
+      typeof metaRoute.module.generateSitemaps === "function"
+    ) {
+      const sitemapPrefix = metaRoute.servedUrl.slice(0, -4); // strip ".xml"
+      // Match exactly /{prefix}/{id}.xml — one segment only (no slashes in id)
+      if (cleanPathname.startsWith(sitemapPrefix + "/") && cleanPathname.endsWith(".xml")) {
+        const rawId = cleanPathname.slice(sitemapPrefix.length + 1, -4);
+        if (rawId.includes("/")) continue; // multi-segment — not a paginated sitemap
+        const sitemaps = await metaRoute.module.generateSitemaps();
+        const matched = sitemaps.find(function(s) { return String(s.id) === rawId; });
+        if (!matched) return new Response("Not Found", { status: 404 });
+        // Pass the original typed id from generateSitemaps() so numeric IDs stay numeric.
+        // TODO: wrap with makeThenableParams-style Promise when upgrading to Next.js 16
+        // full-Promise param semantics (id becomes Promise<string> in v16).
+        const result = await metaRoute.module.default({ id: matched.id });
+        if (result instanceof Response) return result;
+        return new Response(sitemapToXml(result), {
+          headers: { "Content-Type": metaRoute.contentType },
+        });
+      }
+      // Skip — the base servedUrl is not served when generateSitemaps exists
+      continue;
+    }
     if (cleanPathname === metaRoute.servedUrl) {
       if (metaRoute.isDynamic) {
         // Dynamic metadata route — call the default export and serialize
@@ -14767,8 +15141,10 @@ const pageLoaders = {
   "/counter": () => import("<ROOT>/tests/fixtures/pages-basic/pages/counter.tsx"),
   "/dynamic-page": () => import("<ROOT>/tests/fixtures/pages-basic/pages/dynamic-page.tsx"),
   "/dynamic-ssr-false": () => import("<ROOT>/tests/fixtures/pages-basic/pages/dynamic-ssr-false.tsx"),
+  "/header-override-delete": () => import("<ROOT>/tests/fixtures/pages-basic/pages/header-override-delete.tsx"),
   "/isr-test": () => import("<ROOT>/tests/fixtures/pages-basic/pages/isr-test.tsx"),
   "/link-test": () => import("<ROOT>/tests/fixtures/pages-basic/pages/link-test.tsx"),
+  "/mw-object-gated": () => import("<ROOT>/tests/fixtures/pages-basic/pages/mw-object-gated.tsx"),
   "/nav-test": () => import("<ROOT>/tests/fixtures/pages-basic/pages/nav-test.tsx"),
   "/posts/missing": () => import("<ROOT>/tests/fixtures/pages-basic/pages/posts/missing.tsx"),
   "/redirect-xss": () => import("<ROOT>/tests/fixtures/pages-basic/pages/redirect-xss.tsx"),
@@ -14855,6 +15231,7 @@ import { safeJsonStringify } from "vinext/html";
 import { getSSRFontLinks as _getSSRFontLinks, getSSRFontStyles as _getSSRFontStylesGoogle, getSSRFontPreloads as _getSSRFontPreloadsGoogle } from "next/font/google";
 import { getSSRFontStyles as _getSSRFontStylesLocal, getSSRFontPreloads as _getSSRFontPreloadsLocal } from "next/font/local";
 import { parseCookies } from "<ROOT>/packages/vinext/src/config/config-matchers.js";
+import { runWithExecutionContext as _runWithExecutionContext, getRequestExecutionContext as _getRequestExecutionContext } from "<ROOT>/packages/vinext/src/shims/request-context.js";
 import * as _instrumentation from "<ROOT>/tests/fixtures/pages-basic/instrumentation.ts";
 import * as middlewareModule from "<ROOT>/tests/fixtures/pages-basic/middleware.ts";
 import { NextRequest, NextFetchEvent } from "next/server";
@@ -14874,6 +15251,9 @@ if (typeof _instrumentation.onRequestError === "function") {
 // i18n config (embedded at build time)
 const i18nConfig = null;
 
+// Build ID (embedded at build time)
+const buildId = "test-build-id";
+
 // Full resolved config for production server (embedded at build time)
 export const vinextConfig = {"basePath":"","trailingSlash":false,"redirects":[{"source":"/old-about","destination":"/about","permanent":true}],"rewrites":{"beforeFiles":[{"source":"/before-rewrite","destination":"/about"},{"source":"/mw-gated-before","has":[{"type":"cookie","key":"mw-before-user"}],"destination":"/about"}],"afterFiles":[{"source":"/after-rewrite","destination":"/about"},{"source":"/mw-gated-rewrite","has":[{"type":"cookie","key":"mw-user"}],"destination":"/about"}],"fallback":[{"source":"/fallback-rewrite","destination":"/about"}]},"headers":[{"source":"/api/(.*)","headers":[{"key":"X-Custom-Header","value":"vinext"}]},{"source":"/about","has":[{"type":"cookie","key":"logged-in"}],"headers":[{"key":"X-Auth-Only-Header","value":"1"}]},{"source":"/about","missing":[{"type":"cookie","key":"logged-in"}],"headers":[{"key":"X-Guest-Only-Header","value":"1"}]},{"source":"/ssr","headers":[{"key":"Vary","value":"Accept-Language"}]}],"i18n":null,"images":{}};
 
@@ -14889,7 +15269,7 @@ async function isrSet(key, data, revalidateSeconds, tags) {
   await handler.set(key, data, { revalidate: revalidateSeconds, tags: tags || [] });
 }
 const pendingRegenerations = new Map();
-function triggerBackgroundRegeneration(key, renderFn, ctx) {
+function triggerBackgroundRegeneration(key, renderFn) {
   if (pendingRegenerations.has(key)) return;
   const promise = renderFn()
     .catch((err) => console.error("[vinext] ISR regen failed for " + key + ":", err))
@@ -14897,6 +15277,7 @@ function triggerBackgroundRegeneration(key, renderFn, ctx) {
   pendingRegenerations.set(key, promise);
   // Register with the Workers ExecutionContext so the isolate is kept alive
   // until the regeneration finishes, even after the Response has been sent.
+  const ctx = _getRequestExecutionContext();
   if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(promise);
 }
 
@@ -14917,24 +15298,26 @@ import * as page_7 from "<ROOT>/tests/fixtures/pages-basic/pages/config-test.tsx
 import * as page_8 from "<ROOT>/tests/fixtures/pages-basic/pages/counter.tsx";
 import * as page_9 from "<ROOT>/tests/fixtures/pages-basic/pages/dynamic-page.tsx";
 import * as page_10 from "<ROOT>/tests/fixtures/pages-basic/pages/dynamic-ssr-false.tsx";
-import * as page_11 from "<ROOT>/tests/fixtures/pages-basic/pages/isr-test.tsx";
-import * as page_12 from "<ROOT>/tests/fixtures/pages-basic/pages/link-test.tsx";
-import * as page_13 from "<ROOT>/tests/fixtures/pages-basic/pages/nav-test.tsx";
-import * as page_14 from "<ROOT>/tests/fixtures/pages-basic/pages/posts/missing.tsx";
-import * as page_15 from "<ROOT>/tests/fixtures/pages-basic/pages/redirect-xss.tsx";
-import * as page_16 from "<ROOT>/tests/fixtures/pages-basic/pages/router-events-test.tsx";
-import * as page_17 from "<ROOT>/tests/fixtures/pages-basic/pages/script-test.tsx";
-import * as page_18 from "<ROOT>/tests/fixtures/pages-basic/pages/shallow-test.tsx";
-import * as page_19 from "<ROOT>/tests/fixtures/pages-basic/pages/ssr.tsx";
-import * as page_20 from "<ROOT>/tests/fixtures/pages-basic/pages/ssr-headers.tsx";
-import * as page_21 from "<ROOT>/tests/fixtures/pages-basic/pages/ssr-res-end.tsx";
-import * as page_22 from "<ROOT>/tests/fixtures/pages-basic/pages/suspense-test.tsx";
-import * as page_23 from "<ROOT>/tests/fixtures/pages-basic/pages/articles/[id].tsx";
-import * as page_24 from "<ROOT>/tests/fixtures/pages-basic/pages/blog/[slug].tsx";
-import * as page_25 from "<ROOT>/tests/fixtures/pages-basic/pages/posts/[id].tsx";
-import * as page_26 from "<ROOT>/tests/fixtures/pages-basic/pages/products/[pid].tsx";
-import * as page_27 from "<ROOT>/tests/fixtures/pages-basic/pages/docs/[...slug].tsx";
-import * as page_28 from "<ROOT>/tests/fixtures/pages-basic/pages/sign-up/[[...sign-up]]/index.tsx";
+import * as page_11 from "<ROOT>/tests/fixtures/pages-basic/pages/header-override-delete.tsx";
+import * as page_12 from "<ROOT>/tests/fixtures/pages-basic/pages/isr-test.tsx";
+import * as page_13 from "<ROOT>/tests/fixtures/pages-basic/pages/link-test.tsx";
+import * as page_14 from "<ROOT>/tests/fixtures/pages-basic/pages/mw-object-gated.tsx";
+import * as page_15 from "<ROOT>/tests/fixtures/pages-basic/pages/nav-test.tsx";
+import * as page_16 from "<ROOT>/tests/fixtures/pages-basic/pages/posts/missing.tsx";
+import * as page_17 from "<ROOT>/tests/fixtures/pages-basic/pages/redirect-xss.tsx";
+import * as page_18 from "<ROOT>/tests/fixtures/pages-basic/pages/router-events-test.tsx";
+import * as page_19 from "<ROOT>/tests/fixtures/pages-basic/pages/script-test.tsx";
+import * as page_20 from "<ROOT>/tests/fixtures/pages-basic/pages/shallow-test.tsx";
+import * as page_21 from "<ROOT>/tests/fixtures/pages-basic/pages/ssr.tsx";
+import * as page_22 from "<ROOT>/tests/fixtures/pages-basic/pages/ssr-headers.tsx";
+import * as page_23 from "<ROOT>/tests/fixtures/pages-basic/pages/ssr-res-end.tsx";
+import * as page_24 from "<ROOT>/tests/fixtures/pages-basic/pages/suspense-test.tsx";
+import * as page_25 from "<ROOT>/tests/fixtures/pages-basic/pages/articles/[id].tsx";
+import * as page_26 from "<ROOT>/tests/fixtures/pages-basic/pages/blog/[slug].tsx";
+import * as page_27 from "<ROOT>/tests/fixtures/pages-basic/pages/posts/[id].tsx";
+import * as page_28 from "<ROOT>/tests/fixtures/pages-basic/pages/products/[pid].tsx";
+import * as page_29 from "<ROOT>/tests/fixtures/pages-basic/pages/docs/[...slug].tsx";
+import * as page_30 from "<ROOT>/tests/fixtures/pages-basic/pages/sign-up/[[...sign-up]]/index.tsx";
 import * as api_0 from "<ROOT>/tests/fixtures/pages-basic/pages/api/binary.ts";
 import * as api_1 from "<ROOT>/tests/fixtures/pages-basic/pages/api/error-route.ts";
 import * as api_2 from "<ROOT>/tests/fixtures/pages-basic/pages/api/hello.ts";
@@ -14947,45 +15330,47 @@ import { default as AppComponent } from "<ROOT>/tests/fixtures/pages-basic/pages
 import { default as DocumentComponent } from "<ROOT>/tests/fixtures/pages-basic/pages/_document.tsx";
 
 const pageRoutes = [
-  { pattern: "/", isDynamic: false, params: [], module: page_0, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/index.tsx" },
-  { pattern: "/404", isDynamic: false, params: [], module: page_1, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/404.tsx" },
-  { pattern: "/about", isDynamic: false, params: [], module: page_2, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/about.tsx" },
-  { pattern: "/alias-test", isDynamic: false, params: [], module: page_3, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/alias-test.tsx" },
-  { pattern: "/before-pop-state-test", isDynamic: false, params: [], module: page_4, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/before-pop-state-test.tsx" },
-  { pattern: "/cjs/basic", isDynamic: false, params: [], module: page_5, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/cjs/basic.tsx" },
-  { pattern: "/cjs/random", isDynamic: false, params: [], module: page_6, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/cjs/random.ts" },
-  { pattern: "/config-test", isDynamic: false, params: [], module: page_7, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/config-test.tsx" },
-  { pattern: "/counter", isDynamic: false, params: [], module: page_8, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/counter.tsx" },
-  { pattern: "/dynamic-page", isDynamic: false, params: [], module: page_9, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/dynamic-page.tsx" },
-  { pattern: "/dynamic-ssr-false", isDynamic: false, params: [], module: page_10, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/dynamic-ssr-false.tsx" },
-  { pattern: "/isr-test", isDynamic: false, params: [], module: page_11, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/isr-test.tsx" },
-  { pattern: "/link-test", isDynamic: false, params: [], module: page_12, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/link-test.tsx" },
-  { pattern: "/nav-test", isDynamic: false, params: [], module: page_13, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/nav-test.tsx" },
-  { pattern: "/posts/missing", isDynamic: false, params: [], module: page_14, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/posts/missing.tsx" },
-  { pattern: "/redirect-xss", isDynamic: false, params: [], module: page_15, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/redirect-xss.tsx" },
-  { pattern: "/router-events-test", isDynamic: false, params: [], module: page_16, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/router-events-test.tsx" },
-  { pattern: "/script-test", isDynamic: false, params: [], module: page_17, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/script-test.tsx" },
-  { pattern: "/shallow-test", isDynamic: false, params: [], module: page_18, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/shallow-test.tsx" },
-  { pattern: "/ssr", isDynamic: false, params: [], module: page_19, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/ssr.tsx" },
-  { pattern: "/ssr-headers", isDynamic: false, params: [], module: page_20, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/ssr-headers.tsx" },
-  { pattern: "/ssr-res-end", isDynamic: false, params: [], module: page_21, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/ssr-res-end.tsx" },
-  { pattern: "/suspense-test", isDynamic: false, params: [], module: page_22, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/suspense-test.tsx" },
-  { pattern: "/articles/:id", isDynamic: true, params: ["id"], module: page_23, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/articles/[id].tsx" },
-  { pattern: "/blog/:slug", isDynamic: true, params: ["slug"], module: page_24, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/blog/[slug].tsx" },
-  { pattern: "/posts/:id", isDynamic: true, params: ["id"], module: page_25, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/posts/[id].tsx" },
-  { pattern: "/products/:pid", isDynamic: true, params: ["pid"], module: page_26, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/products/[pid].tsx" },
-  { pattern: "/docs/:slug+", isDynamic: true, params: ["slug"], module: page_27, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/docs/[...slug].tsx" },
-  { pattern: "/sign-up/:sign-up*", isDynamic: true, params: ["sign-up"], module: page_28, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/sign-up/[[...sign-up]]/index.tsx" }
+  { pattern: "/", patternParts: [], isDynamic: false, params: [], module: page_0, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/index.tsx" },
+  { pattern: "/404", patternParts: ["404"], isDynamic: false, params: [], module: page_1, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/404.tsx" },
+  { pattern: "/about", patternParts: ["about"], isDynamic: false, params: [], module: page_2, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/about.tsx" },
+  { pattern: "/alias-test", patternParts: ["alias-test"], isDynamic: false, params: [], module: page_3, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/alias-test.tsx" },
+  { pattern: "/before-pop-state-test", patternParts: ["before-pop-state-test"], isDynamic: false, params: [], module: page_4, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/before-pop-state-test.tsx" },
+  { pattern: "/cjs/basic", patternParts: ["cjs","basic"], isDynamic: false, params: [], module: page_5, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/cjs/basic.tsx" },
+  { pattern: "/cjs/random", patternParts: ["cjs","random"], isDynamic: false, params: [], module: page_6, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/cjs/random.ts" },
+  { pattern: "/config-test", patternParts: ["config-test"], isDynamic: false, params: [], module: page_7, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/config-test.tsx" },
+  { pattern: "/counter", patternParts: ["counter"], isDynamic: false, params: [], module: page_8, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/counter.tsx" },
+  { pattern: "/dynamic-page", patternParts: ["dynamic-page"], isDynamic: false, params: [], module: page_9, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/dynamic-page.tsx" },
+  { pattern: "/dynamic-ssr-false", patternParts: ["dynamic-ssr-false"], isDynamic: false, params: [], module: page_10, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/dynamic-ssr-false.tsx" },
+  { pattern: "/header-override-delete", patternParts: ["header-override-delete"], isDynamic: false, params: [], module: page_11, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/header-override-delete.tsx" },
+  { pattern: "/isr-test", patternParts: ["isr-test"], isDynamic: false, params: [], module: page_12, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/isr-test.tsx" },
+  { pattern: "/link-test", patternParts: ["link-test"], isDynamic: false, params: [], module: page_13, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/link-test.tsx" },
+  { pattern: "/mw-object-gated", patternParts: ["mw-object-gated"], isDynamic: false, params: [], module: page_14, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/mw-object-gated.tsx" },
+  { pattern: "/nav-test", patternParts: ["nav-test"], isDynamic: false, params: [], module: page_15, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/nav-test.tsx" },
+  { pattern: "/posts/missing", patternParts: ["posts","missing"], isDynamic: false, params: [], module: page_16, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/posts/missing.tsx" },
+  { pattern: "/redirect-xss", patternParts: ["redirect-xss"], isDynamic: false, params: [], module: page_17, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/redirect-xss.tsx" },
+  { pattern: "/router-events-test", patternParts: ["router-events-test"], isDynamic: false, params: [], module: page_18, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/router-events-test.tsx" },
+  { pattern: "/script-test", patternParts: ["script-test"], isDynamic: false, params: [], module: page_19, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/script-test.tsx" },
+  { pattern: "/shallow-test", patternParts: ["shallow-test"], isDynamic: false, params: [], module: page_20, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/shallow-test.tsx" },
+  { pattern: "/ssr", patternParts: ["ssr"], isDynamic: false, params: [], module: page_21, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/ssr.tsx" },
+  { pattern: "/ssr-headers", patternParts: ["ssr-headers"], isDynamic: false, params: [], module: page_22, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/ssr-headers.tsx" },
+  { pattern: "/ssr-res-end", patternParts: ["ssr-res-end"], isDynamic: false, params: [], module: page_23, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/ssr-res-end.tsx" },
+  { pattern: "/suspense-test", patternParts: ["suspense-test"], isDynamic: false, params: [], module: page_24, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/suspense-test.tsx" },
+  { pattern: "/articles/:id", patternParts: ["articles",":id"], isDynamic: true, params: ["id"], module: page_25, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/articles/[id].tsx" },
+  { pattern: "/blog/:slug", patternParts: ["blog",":slug"], isDynamic: true, params: ["slug"], module: page_26, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/blog/[slug].tsx" },
+  { pattern: "/posts/:id", patternParts: ["posts",":id"], isDynamic: true, params: ["id"], module: page_27, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/posts/[id].tsx" },
+  { pattern: "/products/:pid", patternParts: ["products",":pid"], isDynamic: true, params: ["pid"], module: page_28, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/products/[pid].tsx" },
+  { pattern: "/docs/:slug+", patternParts: ["docs",":slug+"], isDynamic: true, params: ["slug"], module: page_29, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/docs/[...slug].tsx" },
+  { pattern: "/sign-up/:sign-up*", patternParts: ["sign-up",":sign-up*"], isDynamic: true, params: ["sign-up"], module: page_30, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/sign-up/[[...sign-up]]/index.tsx" }
 ];
 
 const apiRoutes = [
-  { pattern: "/api/binary", isDynamic: false, params: [], module: api_0 },
-  { pattern: "/api/error-route", isDynamic: false, params: [], module: api_1 },
-  { pattern: "/api/hello", isDynamic: false, params: [], module: api_2 },
-  { pattern: "/api/instrumentation-test", isDynamic: false, params: [], module: api_3 },
-  { pattern: "/api/middleware-test", isDynamic: false, params: [], module: api_4 },
-  { pattern: "/api/no-content-type", isDynamic: false, params: [], module: api_5 },
-  { pattern: "/api/users/:id", isDynamic: true, params: ["id"], module: api_6 }
+  { pattern: "/api/binary", patternParts: ["api","binary"], isDynamic: false, params: [], module: api_0 },
+  { pattern: "/api/error-route", patternParts: ["api","error-route"], isDynamic: false, params: [], module: api_1 },
+  { pattern: "/api/hello", patternParts: ["api","hello"], isDynamic: false, params: [], module: api_2 },
+  { pattern: "/api/instrumentation-test", patternParts: ["api","instrumentation-test"], isDynamic: false, params: [], module: api_3 },
+  { pattern: "/api/middleware-test", patternParts: ["api","middleware-test"], isDynamic: false, params: [], module: api_4 },
+  { pattern: "/api/no-content-type", patternParts: ["api","no-content-type"], isDynamic: false, params: [], module: api_5 },
+  { pattern: "/api/users/:id", patternParts: ["api","users",":id"], isDynamic: true, params: ["id"], module: api_6 }
 ];
 
 function matchRoute(url, routes) {
@@ -14993,16 +15378,15 @@ function matchRoute(url, routes) {
   let normalizedUrl = pathname === "/" ? "/" : pathname.replace(/\\/$/, "");
   // NOTE: Do NOT decodeURIComponent here. The pathname is already decoded at
   // the entry point. Decoding again would create a double-decode vector.
+  const urlParts = normalizedUrl.split("/").filter(Boolean);
   for (const route of routes) {
-    const params = matchPattern(normalizedUrl, route.pattern);
+    const params = matchPattern(urlParts, route.patternParts);
     if (params !== null) return { route, params };
   }
   return null;
 }
 
-function matchPattern(url, pattern) {
-  const urlParts = url.split("/").filter(Boolean);
-  const patternParts = pattern.split("/").filter(Boolean);
+function matchPattern(urlParts, patternParts) {
   const params = Object.create(null);
   for (let i = 0; i < patternParts.length; i++) {
     const pp = patternParts[i];
@@ -15319,6 +15703,11 @@ async function readBodyWithLimit(request, maxBytes) {
 }
 
 export async function renderPage(request, url, manifest, ctx) {
+  if (ctx) return _runWithExecutionContext(ctx, () => _renderPage(request, url, manifest));
+  return _renderPage(request, url, manifest);
+}
+
+async function _renderPage(request, url, manifest) {
   const localeInfo = extractLocale(url);
   const locale = localeInfo.locale;
   const routeUrl = localeInfo.url;
@@ -15464,7 +15853,7 @@ export async function renderPage(request, url, manifest, ctx) {
           if (freshResult && freshResult.props && typeof freshResult.revalidate === "number" && freshResult.revalidate > 0) {
             await isrSet(cacheKey, { kind: "PAGES", html: cached.value.value.html, pageData: freshResult.props, headers: undefined, status: undefined }, freshResult.revalidate);
           }
-        }, ctx);
+        });
         var _staleHeaders = {
           "Content-Type": "text/html", "X-Vinext-Cache": "STALE",
           "Cache-Control": "s-maxage=0, stale-while-revalidate",
@@ -15525,7 +15914,7 @@ export async function renderPage(request, url, manifest, ctx) {
     const pageModuleIds = route.filePath ? [route.filePath] : [];
     const assetTags = collectAssetTags(manifest, pageModuleIds);
     const nextDataPayload = {
-      props: { pageProps }, page: patternToNextFormat(route.pattern), query: params, isFallback: false,
+      props: { pageProps }, page: patternToNextFormat(route.pattern), query: params, buildId, isFallback: false,
     };
     if (i18nConfig) {
       nextDataPayload.locale = locale;
@@ -15798,16 +16187,11 @@ function __safeRegExp(pattern, flags) {
   try { return new RegExp(pattern, flags); } catch { return null; }
 }
 
-function matchMiddlewarePattern(pathname, pattern) {
-  // Regex patterns: if the pattern contains "(" or "\\" it's a regex —
-  // pass it through to RegExp directly WITHOUT dot-escaping.
-  // This guard prevents regex pattern corruption from dot-escaping.
+var __mwPatternCache = new Map();
+function __compileMwPattern(pattern) {
   if (pattern.includes("(") || pattern.includes("\\\\")) {
-    var re = __safeRegExp("^" + pattern + "$");
-    if (re) return re.test(pathname);
+    return __safeRegExp("^" + pattern + "$");
   }
-  // Single-pass tokenizer (avoids chained .replace() flagged by CodeQL as
-  // incomplete sanitization — later passes could re-process earlier outputs).
   var regexStr = "";
   var tokenRe = /\\/:([\\w-]+)\\*|\\/:([\\w-]+)\\+|:([\\w-]+)|[.]|[^/:.]+|./g;
   var tok;
@@ -15818,26 +16202,194 @@ function matchMiddlewarePattern(pathname, pattern) {
     else if (tok[0] === ".") { regexStr += "\\\\."; }
     else { regexStr += tok[0]; }
   }
-  var re2 = __safeRegExp("^" + regexStr + "$");
-  return re2 ? re2.test(pathname) : pathname === pattern;
+  return __safeRegExp("^" + regexStr + "$");
+}
+function matchMiddlewarePattern(pathname, pattern) {
+  var cached = __mwPatternCache.get(pattern);
+  if (cached === undefined) {
+    cached = __compileMwPattern(pattern);
+    __mwPatternCache.set(pattern, cached);
+  }
+  return cached ? cached.test(pathname) : pathname === pattern;
 }
 
-function matchesMiddleware(pathname, matcher) {
+var __middlewareConditionRegexCache = new Map();
+// Requestless matcher checks reuse this singleton. Treat it as immutable.
+var __emptyMiddlewareRequestContext = {
+  headers: new Headers(),
+  cookies: {},
+  query: new URLSearchParams(),
+  host: "",
+};
+
+function __normalizeMiddlewareHost(hostHeader, fallbackHostname) {
+  var host = hostHeader ?? fallbackHostname;
+  return host.split(":", 1)[0].toLowerCase();
+}
+
+function __parseMiddlewareCookies(cookieHeader) {
+  if (!cookieHeader) return {};
+  var cookies = {};
+  for (var part of cookieHeader.split(";")) {
+    var eq = part.indexOf("=");
+    if (eq === -1) continue;
+    var key = part.slice(0, eq).trim();
+    var value = part.slice(eq + 1).trim();
+    if (key) cookies[key] = value;
+  }
+  return cookies;
+}
+
+function __middlewareRequestContextFromRequest(request) {
+  if (!request) return __emptyMiddlewareRequestContext;
+  var url = new URL(request.url);
+  return {
+    headers: request.headers,
+    cookies: __parseMiddlewareCookies(request.headers.get("cookie")),
+    query: url.searchParams,
+    host: __normalizeMiddlewareHost(request.headers.get("host"), url.hostname),
+  };
+}
+
+function __stripMiddlewareLocalePrefix(pathname, i18nConfig) {
+  if (pathname === "/") return null;
+  var segments = pathname.split("/");
+  var firstSegment = segments[1];
+  if (!firstSegment || !i18nConfig || !i18nConfig.locales.includes(firstSegment)) {
+    return null;
+  }
+  var stripped = "/" + segments.slice(2).join("/");
+  return stripped === "/" ? "/" : stripped.replace(/\\/+$/, "") || "/";
+}
+
+function __matchMiddlewareMatcherPattern(pathname, pattern, i18nConfig) {
+  if (!i18nConfig) return matchMiddlewarePattern(pathname, pattern);
+  var localeStrippedPathname = __stripMiddlewareLocalePrefix(pathname, i18nConfig);
+  return matchMiddlewarePattern(localeStrippedPathname ?? pathname, pattern);
+}
+
+function __middlewareConditionRegex(value) {
+  if (__middlewareConditionRegexCache.has(value)) {
+    return __middlewareConditionRegexCache.get(value);
+  }
+  var re = __safeRegExp(value);
+  __middlewareConditionRegexCache.set(value, re);
+  return re;
+}
+
+function __checkMiddlewareCondition(condition, ctx) {
+  switch (condition.type) {
+    case "header": {
+      var headerValue = ctx.headers.get(condition.key);
+      if (headerValue === null) return false;
+      if (condition.value !== undefined) {
+        var re = __middlewareConditionRegex(condition.value);
+        if (re) return re.test(headerValue);
+        return headerValue === condition.value;
+      }
+      return true;
+    }
+    case "cookie": {
+      var cookieValue = ctx.cookies[condition.key];
+      if (cookieValue === undefined) return false;
+      if (condition.value !== undefined) {
+        var re = __middlewareConditionRegex(condition.value);
+        if (re) return re.test(cookieValue);
+        return cookieValue === condition.value;
+      }
+      return true;
+    }
+    case "query": {
+      var queryValue = ctx.query.get(condition.key);
+      if (queryValue === null) return false;
+      if (condition.value !== undefined) {
+        var re = __middlewareConditionRegex(condition.value);
+        if (re) return re.test(queryValue);
+        return queryValue === condition.value;
+      }
+      return true;
+    }
+    case "host": {
+      if (condition.value !== undefined) {
+        var re = __middlewareConditionRegex(condition.value);
+        if (re) return re.test(ctx.host);
+        return ctx.host === condition.value;
+      }
+      return ctx.host === condition.key;
+    }
+    default:
+      return false;
+  }
+}
+
+function __checkMiddlewareHasConditions(has, missing, ctx) {
+  if (has) {
+    for (var condition of has) {
+      if (!__checkMiddlewareCondition(condition, ctx)) return false;
+    }
+  }
+  if (missing) {
+    for (var condition of missing) {
+      if (__checkMiddlewareCondition(condition, ctx)) return false;
+    }
+  }
+  return true;
+}
+
+// Keep this in sync with isValidMiddlewareMatcherObject in middleware.ts.
+function __isValidMiddlewareMatcherObject(matcher) {
+  if (!matcher || typeof matcher !== "object" || Array.isArray(matcher)) return false;
+  if (typeof matcher.source !== "string") return false;
+  for (var key of Object.keys(matcher)) {
+    if (key !== "source" && key !== "locale" && key !== "has" && key !== "missing") {
+      return false;
+    }
+  }
+  if ("locale" in matcher && matcher.locale !== undefined && matcher.locale !== false) return false;
+  if ("has" in matcher && matcher.has !== undefined && !Array.isArray(matcher.has)) return false;
+  if ("missing" in matcher && matcher.missing !== undefined && !Array.isArray(matcher.missing)) {
+    return false;
+  }
+  return true;
+}
+
+function __matchMiddlewareObject(pathname, matcher, i18nConfig) {
+  return matcher.locale === false
+    ? matchMiddlewarePattern(pathname, matcher.source)
+    : __matchMiddlewareMatcherPattern(pathname, matcher.source, i18nConfig);
+}
+
+function matchesMiddleware(pathname, matcher, request, i18nConfig) {
   if (!matcher) {
     return true;
   }
-  var patterns = [];
-  if (typeof matcher === "string") { patterns.push(matcher); }
-  else if (Array.isArray(matcher)) {
-    for (var m of matcher) {
-      if (typeof m === "string") patterns.push(m);
-      else if (m && typeof m === "object" && "source" in m) patterns.push(m.source);
+  if (typeof matcher === "string") {
+    return __matchMiddlewareMatcherPattern(pathname, matcher, i18nConfig);
+  }
+  if (!Array.isArray(matcher)) {
+    return false;
+  }
+  var requestContext = __middlewareRequestContextFromRequest(request);
+  for (var m of matcher) {
+    if (typeof m === "string") {
+      if (__matchMiddlewareMatcherPattern(pathname, m, i18nConfig)) return true;
+      continue;
+    }
+    if (__isValidMiddlewareMatcherObject(m)) {
+      if (!__matchMiddlewareObject(pathname, m, i18nConfig)) continue;
+      if (!__checkMiddlewareHasConditions(m.has, m.missing, requestContext)) continue;
+      return true;
     }
   }
-  return patterns.some(function(p) { return matchMiddlewarePattern(pathname, p); });
+  return false;
 }
 
 export async function runMiddleware(request, ctx) {
+  if (ctx) return _runWithExecutionContext(ctx, () => _runMiddleware(request));
+  return _runMiddleware(request);
+}
+
+async function _runMiddleware(request) {
   var isProxy = false;
   var middlewareFn = isProxy
     ? (middlewareModule.proxy ?? middlewareModule.default)
@@ -15860,7 +16412,7 @@ export async function runMiddleware(request, ctx) {
   }
   var normalizedPathname = __normalizePath(decodedPathname);
 
-  if (!matchesMiddleware(normalizedPathname, matcher)) return { continue: true };
+  if (!matchesMiddleware(normalizedPathname, matcher, request, i18nConfig)) return { continue: true };
 
    // Construct a new Request with the decoded + normalized pathname so middleware
    // always sees the same canonical path that the router uses.
@@ -15878,7 +16430,8 @@ export async function runMiddleware(request, ctx) {
     console.error("[vinext] Middleware error:", e);
     return { continue: false, response: new Response("Internal Server Error", { status: 500 }) };
   }
-  if (ctx && typeof ctx.waitUntil === "function") { ctx.waitUntil(fetchEvent.drainWaitUntil()); } else { fetchEvent.drainWaitUntil(); }
+  var _mwCtx = _getRequestExecutionContext();
+  if (_mwCtx && typeof _mwCtx.waitUntil === "function") { _mwCtx.waitUntil(fetchEvent.drainWaitUntil()); } else { fetchEvent.drainWaitUntil(); }
 
   if (!response) return { continue: true };
 
@@ -15890,6 +16443,7 @@ export async function runMiddleware(request, ctx) {
       // from the final client response.
       if (
         !key.startsWith("x-middleware-") ||
+        key === "x-middleware-override-headers" ||
         key.startsWith("x-middleware-request-")
       ) rHeaders.append(key, value);
     }
@@ -15911,7 +16465,7 @@ export async function runMiddleware(request, ctx) {
   if (rewriteUrl) {
     var rwHeaders = new Headers();
     for (var [k, v] of response.headers) {
-      if (!k.startsWith("x-middleware-") || k.startsWith("x-middleware-request-")) rwHeaders.append(k, v);
+      if (!k.startsWith("x-middleware-") || k === "x-middleware-override-headers" || k.startsWith("x-middleware-request-")) rwHeaders.append(k, v);
     }
     var rewritePath;
     try { var parsed = new URL(rewriteUrl, request.url); rewritePath = parsed.pathname + parsed.search; }
