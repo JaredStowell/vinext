@@ -10,6 +10,7 @@
  */
 
 import { encodeMiddlewareRequestHeaders } from "../server/middleware-request-headers.js";
+import { parseCookieHeader } from "./internal/parse-cookie-header.js";
 
 // ---------------------------------------------------------------------------
 // NextRequest
@@ -287,29 +288,6 @@ export class NextURL {
 interface CookieEntry {
   name: string;
   value: string;
-}
-
-function parseCookieHeader(cookieHeader: string): Map<string, string> {
-  const cookies = new Map<string, string>();
-  for (const pair of cookieHeader.split(/; */)) {
-    if (!pair) continue;
-
-    const splitAt = pair.indexOf("=");
-    if (splitAt === -1) {
-      cookies.set(pair, "true");
-      continue;
-    }
-
-    const name = pair.slice(0, splitAt).trim();
-    if (!name) continue;
-
-    try {
-      cookies.set(name, decodeURIComponent(pair.slice(splitAt + 1).trim()));
-    } catch {
-      // Match Next.js/@edge-runtime behavior: ignore malformed cookie values.
-    }
-  }
-  return cookies;
 }
 
 export class RequestCookies {

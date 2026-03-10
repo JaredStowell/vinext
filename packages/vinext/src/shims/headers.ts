@@ -10,6 +10,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { buildRequestHeadersFromMiddlewareResponse } from "../server/middleware-request-headers.js";
+import { parseCookieHeader } from "./internal/parse-cookie-header.js";
 
 // ---------------------------------------------------------------------------
 // Request context
@@ -18,29 +19,6 @@ import { buildRequestHeadersFromMiddlewareResponse } from "../server/middleware-
 interface HeadersContext {
   headers: Headers;
   cookies: Map<string, string>;
-}
-
-function parseCookieHeader(cookieHeader: string): Map<string, string> {
-  const cookies = new Map<string, string>();
-  for (const pair of cookieHeader.split(/; */)) {
-    if (!pair) continue;
-
-    const splitAt = pair.indexOf("=");
-    if (splitAt === -1) {
-      cookies.set(pair, "true");
-      continue;
-    }
-
-    const key = pair.slice(0, splitAt).trim();
-    if (!key) continue;
-
-    try {
-      cookies.set(key, decodeURIComponent(pair.slice(splitAt + 1).trim()));
-    } catch {
-      // Match Next.js/@edge-runtime behavior: ignore malformed cookie values.
-    }
-  }
-  return cookies;
 }
 
 type VinextHeadersShimState = {

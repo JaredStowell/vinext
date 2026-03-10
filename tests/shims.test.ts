@@ -343,6 +343,27 @@ describe("next/headers shim", () => {
     });
   });
 
+  it("cookies() preserves whitespace exactly like the Next.js parser", async () => {
+    const { headersContextFromRequest, runWithHeadersContext, cookies } =
+      await import("../packages/vinext/src/shims/headers.js");
+
+    const ctx = headersContextFromRequest(
+      new Request("https://example.com", {
+        headers: { cookie: "a= 1 ; a =2" },
+      }),
+    );
+
+    await runWithHeadersContext(ctx, async () => {
+      const jar = await cookies();
+      expect(jar.get("a")).toEqual({ name: "a", value: " 1 " });
+      expect(jar.get("a ")).toEqual({ name: "a ", value: "2" });
+      expect(jar.getAll()).toEqual([
+        { name: "a", value: " 1 " },
+        { name: "a ", value: "2" },
+      ]);
+    });
+  });
+
   it("headersContextFromRequest returns mutable headers (not the immutable Request.headers)", async () => {
     // In Cloudflare Workers, Request.headers is immutable. applyMiddlewareRequestHeaders
     // needs ctx.headers.set() after middleware runs, so the context must hold a mutable
@@ -2536,6 +2557,19 @@ describe("RequestCookies API", () => {
     expect(cookies.getAll()).toEqual([
       { name: "empty", value: "" },
       { name: "flag", value: "true" },
+    ]);
+  });
+
+  it("preserves whitespace exactly like the Next.js parser", async () => {
+    const { RequestCookies } = await import("../packages/vinext/src/shims/server.js");
+    const headers = new Headers({ cookie: "a= 1 ; a =2" });
+    const cookies = new RequestCookies(headers);
+
+    expect(cookies.get("a")).toEqual({ name: "a", value: " 1 " });
+    expect(cookies.get("a ")).toEqual({ name: "a ", value: "2" });
+    expect(cookies.getAll()).toEqual([
+      { name: "a", value: " 1 " },
+      { name: "a ", value: "2" },
     ]);
   });
 
