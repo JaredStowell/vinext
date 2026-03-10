@@ -1743,14 +1743,22 @@ describe("middleware matcher patterns", () => {
     const { matchesMiddleware } = await import("../packages/vinext/src/server/middleware.js");
     expect(matchesMiddleware("/about", "/about")).toBe(true);
     expect(matchesMiddleware("/other", "/about")).toBe(false);
+    // Ported from Next.js: test/e2e/middleware-custom-matchers-i18n/test/index.test.ts
+    // https://github.com/vercel/next.js/blob/canary/test/e2e/middleware-custom-matchers-i18n/test/index.test.ts
     expect(
       matchesMiddleware("/about", "/about", undefined, {
         locales: ["en", "fr"],
         defaultLocale: "en",
       }),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       matchesMiddleware("/fr/about", "/about", undefined, {
+        locales: ["en", "fr"],
+        defaultLocale: "en",
+      }),
+    ).toBe(true);
+    expect(
+      matchesMiddleware("/", "/", undefined, {
         locales: ["en", "fr"],
         defaultLocale: "en",
       }),
@@ -1835,15 +1843,17 @@ describe("middleware matcher patterns", () => {
     expect(matchesMiddleware("/about", matcher)).toBe(false);
   });
 
-  it("matchesMiddleware: requires a locale-prefixed pathname unless locale is false", async () => {
+  it("matchesMiddleware: matches default-locale and locale-prefixed paths unless locale is false", async () => {
     const { matchesMiddleware } = await import("../packages/vinext/src/server/middleware.js");
     const i18nConfig = {
       locales: ["en", "fr"],
       defaultLocale: "en",
     };
 
+    // Ported from Next.js: test/e2e/middleware-custom-matchers-i18n/test/index.test.ts
+    // https://github.com/vercel/next.js/blob/canary/test/e2e/middleware-custom-matchers-i18n/test/index.test.ts
     expect(matchesMiddleware("/dashboard", { source: "/dashboard" }, undefined, i18nConfig)).toBe(
-      false,
+      true,
     );
     expect(
       matchesMiddleware("/fr/dashboard", { source: "/dashboard" }, undefined, i18nConfig),
@@ -1962,14 +1972,24 @@ describe("middleware codegen parity", () => {
     // Exact match
     expect(matchMiddlewarePattern("/about", "/about")).toBe(true);
     expect(matchMiddlewarePattern("/other", "/about")).toBe(false);
+    // Ported from Next.js: test/e2e/middleware-custom-matchers-i18n/test/index.test.ts
+    // https://github.com/vercel/next.js/blob/canary/test/e2e/middleware-custom-matchers-i18n/test/index.test.ts
     expect(
       matchesMiddleware("/about", "/about", undefined, {
         locales: ["en", "fr"],
         defaultLocale: "en",
       }),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       matchesMiddleware("/fr/about", "/about", undefined, {
+        locales: ["en", "fr"],
+        defaultLocale: "en",
+      }),
+    ).toBe(true);
+    // Ported from Next.js: test/e2e/middleware-matcher/index.test.ts
+    // https://github.com/vercel/next.js/blob/canary/test/e2e/middleware-matcher/index.test.ts
+    expect(
+      matchesMiddleware("/", "/", undefined, {
         locales: ["en", "fr"],
         defaultLocale: "en",
       }),
@@ -2016,7 +2036,7 @@ describe("middleware codegen parity", () => {
         locales: ["en", "fr"],
         defaultLocale: "en",
       }),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       matchesMiddleware("/fr/dashboard", { source: "/dashboard" }, undefined, {
         locales: ["en", "fr"],
