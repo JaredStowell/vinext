@@ -227,6 +227,46 @@ describe("next/headers shim", () => {
     setHeadersContext(null);
   });
 
+  it("headers() supports the legacy sync access pattern", async () => {
+    // Next.js docs: headers() temporarily supports sync property access in v15.
+    const { setHeadersContext, headers } = await import("../packages/vinext/src/shims/headers.js");
+    setHeadersContext({
+      headers: new Headers({ "x-sync-header": "sync-value" }),
+      cookies: new Map(),
+    });
+
+    const headerStore = headers();
+    expect(typeof headerStore.get).toBe("function");
+    expect(headerStore.get("x-sync-header")).toBe("sync-value");
+
+    const awaited = await headerStore;
+    expect(awaited.get("x-sync-header")).toBe("sync-value");
+    setHeadersContext(null);
+  });
+
+  it("headers() is read-only for both sync and awaited access", async () => {
+    // Ported from Next.js:
+    // packages/next/src/server/web/spec-extension/adapters/headers.test.ts
+    // https://github.com/vercel/next.js/blob/canary/packages/next/src/server/web/spec-extension/adapters/headers.test.ts
+    const { setHeadersContext, headers } = await import("../packages/vinext/src/shims/headers.js");
+    setHeadersContext({
+      headers: new Headers({ foo: "original" }),
+      cookies: new Map(),
+    });
+
+    const syncHeaders = headers();
+    expect(() => syncHeaders.set("foo", "mutated")).toThrow(/Headers cannot be modified/);
+    expect(() => syncHeaders.append("foo", "mutated")).toThrow(/Headers cannot be modified/);
+    expect(() => syncHeaders.delete("foo")).toThrow(/Headers cannot be modified/);
+    expect(syncHeaders.get("foo")).toBe("original");
+
+    const awaitedHeaders = await headers();
+    expect(() => awaitedHeaders.set("foo", "mutated")).toThrow(/Headers cannot be modified/);
+    expect(awaitedHeaders.get("foo")).toBe("original");
+    expect((await headers()).get("foo")).toBe("original");
+    setHeadersContext(null);
+  });
+
   it("cookies() returns parsed cookies from context", async () => {
     const { setHeadersContext, cookies } = await import("../packages/vinext/src/shims/headers.js");
     setHeadersContext({
@@ -243,6 +283,56 @@ describe("next/headers shim", () => {
     expect(c.has("session")).toBe(true);
     expect(c.has("missing")).toBe(false);
     expect(c.size).toBe(2);
+    setHeadersContext(null);
+  });
+
+  it("cookies() supports the legacy sync access pattern", async () => {
+    // Next.js docs: cookies() temporarily supports sync property access in v15.
+    const { setHeadersContext, cookies } = await import("../packages/vinext/src/shims/headers.js");
+    setHeadersContext({
+      headers: new Headers(),
+      cookies: new Map([["session", "sync-cookie"]]),
+    });
+
+    const cookieStore = cookies();
+    expect(typeof cookieStore.get).toBe("function");
+    expect(cookieStore.get("session")).toEqual({ name: "session", value: "sync-cookie" });
+
+    const awaited = await cookieStore;
+    expect(awaited.get("session")).toEqual({ name: "session", value: "sync-cookie" });
+    setHeadersContext(null);
+  });
+
+  it("cookies() is read-only during render for both sync and awaited access", async () => {
+    // Ported from Next.js:
+    // packages/next/src/server/web/spec-extension/adapters/request-cookies.test.ts
+    // https://github.com/vercel/next.js/blob/canary/packages/next/src/server/web/spec-extension/adapters/request-cookies.test.ts
+    const { setHeadersContext, cookies, getAndClearPendingCookies } =
+      await import("../packages/vinext/src/shims/headers.js");
+    setHeadersContext({
+      headers: new Headers(),
+      cookies: new Map([["session", "abc123"]]),
+    });
+
+    const syncCookies = cookies();
+    expect(() => syncCookies.set("session", "mutated")).toThrow(
+      /Cookies can only be modified in a Server Action or Route Handler/,
+    );
+    expect(() => syncCookies.delete("session")).toThrow(
+      /Cookies can only be modified in a Server Action or Route Handler/,
+    );
+    expect(syncCookies.get("session")).toEqual({ name: "session", value: "abc123" });
+
+    const awaitedCookies = await cookies();
+    expect(() => awaitedCookies.set("session", "mutated")).toThrow(
+      /Cookies can only be modified in a Server Action or Route Handler/,
+    );
+    expect(() => awaitedCookies.delete("session")).toThrow(
+      /Cookies can only be modified in a Server Action or Route Handler/,
+    );
+
+    expect(getAndClearPendingCookies()).toEqual([]);
+    expect((await cookies()).get("session")).toEqual({ name: "session", value: "abc123" });
     setHeadersContext(null);
   });
 
@@ -432,71 +522,135 @@ describe("next/headers shim", () => {
   });
 });
 
-describe("next/headers writable cookies", () => {
-  it("cookies().set() updates the cookie map and accumulates Set-Cookie headers", async () => {
-    const { setHeadersContext, cookies, getAndClearPendingCookies } =
+describe("next/headers phase-aware cookies", () => {
+  it("cookies().set() works in the route-handler phase and accumulates Set-Cookie headers", async () => {
+    const { setHeadersContext, setHeadersAccessPhase, cookies, getAndClearPendingCookies } =
       await import("../packages/vinext/src/shims/headers.js");
     setHeadersContext({
       headers: new Headers(),
       cookies: new Map(),
     });
 
-    const c = await cookies();
-    c.set("token", "xyz", { path: "/", httpOnly: true, secure: true });
+    const previousPhase = setHeadersAccessPhase("route-handler");
+    try {
+      const c = await cookies();
+      c.set("token", "xyz", { path: "/", httpOnly: true, secure: true });
 
-    // Cookie should now be readable
-    expect(c.get("token")).toEqual({ name: "token", value: "xyz" });
-    expect(c.has("token")).toBe(true);
+      expect(c.get("token")).toEqual({ name: "token", value: "xyz" });
+      expect(c.has("token")).toBe(true);
 
-    // Pending Set-Cookie headers should be accumulated
-    const pending = getAndClearPendingCookies();
-    expect(pending.length).toBe(1);
-    expect(pending[0]).toContain("token=xyz");
-    expect(pending[0]).toContain("Path=/");
-    expect(pending[0]).toContain("HttpOnly");
-    expect(pending[0]).toContain("Secure");
-
-    // After clearing, should be empty
-    expect(getAndClearPendingCookies().length).toBe(0);
-    setHeadersContext(null);
+      const pending = getAndClearPendingCookies();
+      expect(pending.length).toBe(1);
+      expect(pending[0]).toContain("token=xyz");
+      expect(pending[0]).toContain("Path=/");
+      expect(pending[0]).toContain("HttpOnly");
+      expect(pending[0]).toContain("Secure");
+      expect(getAndClearPendingCookies().length).toBe(0);
+    } finally {
+      setHeadersAccessPhase(previousPhase);
+      setHeadersContext(null);
+    }
   });
 
-  it("cookies().delete() removes from map and adds Max-Age=0 header", async () => {
-    const { setHeadersContext, cookies, getAndClearPendingCookies } =
+  it("cookies().set() supports legacy sync access in the route-handler phase", async () => {
+    const { setHeadersContext, setHeadersAccessPhase, cookies, getAndClearPendingCookies } =
+      await import("../packages/vinext/src/shims/headers.js");
+    setHeadersContext({
+      headers: new Headers(),
+      cookies: new Map(),
+    });
+
+    const previousPhase = setHeadersAccessPhase("route-handler");
+    try {
+      const cookieStore = cookies();
+      cookieStore.set("token", "sync-token", { httpOnly: true });
+
+      expect(cookieStore.get("token")).toEqual({ name: "token", value: "sync-token" });
+      expect(getAndClearPendingCookies()).toEqual([expect.stringContaining("token=sync-token")]);
+    } finally {
+      setHeadersAccessPhase(previousPhase);
+      setHeadersContext(null);
+    }
+  });
+
+  it("cookies().delete() works in the route-handler phase", async () => {
+    const { setHeadersContext, setHeadersAccessPhase, cookies, getAndClearPendingCookies } =
       await import("../packages/vinext/src/shims/headers.js");
     setHeadersContext({
       headers: new Headers(),
       cookies: new Map([["session", "abc"]]),
     });
 
-    const c = await cookies();
-    expect(c.has("session")).toBe(true);
-    c.delete("session");
-    expect(c.has("session")).toBe(false);
+    const previousPhase = setHeadersAccessPhase("route-handler");
+    try {
+      const c = await cookies();
+      expect(c.has("session")).toBe(true);
+      c.delete("session");
+      expect(c.has("session")).toBe(false);
 
-    const pending = getAndClearPendingCookies();
-    expect(pending.length).toBe(1);
-    expect(pending[0]).toContain("session=");
-    expect(pending[0]).toContain("Max-Age=0");
-    setHeadersContext(null);
+      const pending = getAndClearPendingCookies();
+      expect(pending.length).toBe(1);
+      expect(pending[0]).toContain("session=");
+      expect(pending[0]).toContain("Max-Age=0");
+    } finally {
+      setHeadersAccessPhase(previousPhase);
+      setHeadersContext(null);
+    }
   });
 
-  it("cookies().set() with object syntax works", async () => {
-    const { setHeadersContext, cookies, getAndClearPendingCookies } =
+  it("cookies().set() with object syntax works in the action phase", async () => {
+    const { setHeadersContext, setHeadersAccessPhase, cookies, getAndClearPendingCookies } =
       await import("../packages/vinext/src/shims/headers.js");
     setHeadersContext({
       headers: new Headers(),
       cookies: new Map(),
     });
 
-    const c = await cookies();
-    c.set({ name: "pref", value: "dark", sameSite: "Lax" });
-    expect(c.get("pref")?.value).toBe("dark");
+    const previousPhase = setHeadersAccessPhase("action");
+    try {
+      const c = await cookies();
+      c.set({ name: "pref", value: "dark", sameSite: "Lax" });
+      expect(c.get("pref")?.value).toBe("dark");
 
-    const pending = getAndClearPendingCookies();
-    expect(pending[0]).toContain("pref=dark");
-    expect(pending[0]).toContain("SameSite=Lax");
-    setHeadersContext(null);
+      const pending = getAndClearPendingCookies();
+      expect(pending[0]).toContain("pref=dark");
+      expect(pending[0]).toContain("SameSite=Lax");
+    } finally {
+      setHeadersAccessPhase(previousPhase);
+      setHeadersContext(null);
+    }
+  });
+
+  it("mutable cookie references stop accepting writes after the phase returns to render", async () => {
+    // Ported from Next.js:
+    // packages/next/src/server/web/spec-extension/adapters/request-cookies.test.ts
+    // https://github.com/vercel/next.js/blob/canary/packages/next/src/server/web/spec-extension/adapters/request-cookies.test.ts
+    const { setHeadersContext, setHeadersAccessPhase, cookies, getAndClearPendingCookies } =
+      await import("../packages/vinext/src/shims/headers.js");
+    setHeadersContext({
+      headers: new Headers(),
+      cookies: new Map(),
+    });
+
+    const previousPhase = setHeadersAccessPhase("action");
+    try {
+      const c = await cookies();
+      c.set("session", "abc123");
+      expect(c.get("session")?.value).toBe("abc123");
+
+      setHeadersAccessPhase("render");
+      expect(() => c.set("session", "mutated")).toThrow(
+        /Cookies can only be modified in a Server Action or Route Handler/,
+      );
+      expect(() => c.delete("session")).toThrow(
+        /Cookies can only be modified in a Server Action or Route Handler/,
+      );
+      expect(c.get("session")?.value).toBe("abc123");
+      expect(getAndClearPendingCookies()).toEqual([expect.stringContaining("session=abc123")]);
+    } finally {
+      setHeadersAccessPhase(previousPhase);
+      setHeadersContext(null);
+    }
   });
 });
 
@@ -2508,56 +2662,91 @@ describe("cookie name validation", () => {
   it("RequestCookies.set() rejects names with = (injection)", async () => {
     const headersModule = await import("../packages/vinext/src/shims/headers.js");
     headersModule.setHeadersContext({ headers: new Headers(), cookies: new Map() });
-    const jar = await headersModule.cookies();
-    expect(() => jar.set("foo=bar; Path=/; Domain=evil.com", "val")).toThrow("Invalid cookie name");
+    const previousPhase = headersModule.setHeadersAccessPhase("route-handler");
+    try {
+      const jar = await headersModule.cookies();
+      expect(() => jar.set("foo=bar; Path=/; Domain=evil.com", "val")).toThrow("Invalid cookie name");
+    } finally {
+      headersModule.setHeadersAccessPhase(previousPhase);
+    }
   });
 
   it("RequestCookies.set() rejects names with semicolons", async () => {
     const headersModule = await import("../packages/vinext/src/shims/headers.js");
     headersModule.setHeadersContext({ headers: new Headers(), cookies: new Map() });
-    const jar = await headersModule.cookies();
-    expect(() => jar.set("foo; HttpOnly", "val")).toThrow("Invalid cookie name");
+    const previousPhase = headersModule.setHeadersAccessPhase("route-handler");
+    try {
+      const jar = await headersModule.cookies();
+      expect(() => jar.set("foo; HttpOnly", "val")).toThrow("Invalid cookie name");
+    } finally {
+      headersModule.setHeadersAccessPhase(previousPhase);
+    }
   });
 
   it("RequestCookies.set() rejects names with newlines", async () => {
     const headersModule = await import("../packages/vinext/src/shims/headers.js");
     headersModule.setHeadersContext({ headers: new Headers(), cookies: new Map() });
-    const jar = await headersModule.cookies();
-    expect(() => jar.set("foo\r\nSet-Cookie: evil=1", "val")).toThrow("Invalid cookie name");
+    const previousPhase = headersModule.setHeadersAccessPhase("route-handler");
+    try {
+      const jar = await headersModule.cookies();
+      expect(() => jar.set("foo\r\nSet-Cookie: evil=1", "val")).toThrow("Invalid cookie name");
+    } finally {
+      headersModule.setHeadersAccessPhase(previousPhase);
+    }
   });
 
   it("RequestCookies.set() rejects empty names", async () => {
     const headersModule = await import("../packages/vinext/src/shims/headers.js");
     headersModule.setHeadersContext({ headers: new Headers(), cookies: new Map() });
-    const jar = await headersModule.cookies();
-    expect(() => jar.set("", "val")).toThrow("Invalid cookie name");
+    const previousPhase = headersModule.setHeadersAccessPhase("route-handler");
+    try {
+      const jar = await headersModule.cookies();
+      expect(() => jar.set("", "val")).toThrow("Invalid cookie name");
+    } finally {
+      headersModule.setHeadersAccessPhase(previousPhase);
+    }
   });
 
   it("RequestCookies.set() accepts valid cookie names", async () => {
     const headersModule = await import("../packages/vinext/src/shims/headers.js");
     headersModule.setHeadersContext({ headers: new Headers(), cookies: new Map() });
-    const jar = await headersModule.cookies();
-    // These should not throw
-    jar.set("valid-name", "value");
-    jar.set("__Host-token", "value");
-    jar.set("session_id", "value");
-    jar.set("CSRF.Token", "value");
+    const previousPhase = headersModule.setHeadersAccessPhase("route-handler");
+    try {
+      const jar = await headersModule.cookies();
+      // These should not throw
+      jar.set("valid-name", "value");
+      jar.set("__Host-token", "value");
+      jar.set("session_id", "value");
+      jar.set("CSRF.Token", "value");
+    } finally {
+      headersModule.setHeadersAccessPhase(previousPhase);
+    }
   });
 
   it("RequestCookies.delete() rejects invalid names", async () => {
     const headersModule = await import("../packages/vinext/src/shims/headers.js");
     headersModule.setHeadersContext({ headers: new Headers(), cookies: new Map() });
-    const jar = await headersModule.cookies();
-    expect(() => jar.delete("foo=bar")).toThrow("Invalid cookie name");
+    const previousPhase = headersModule.setHeadersAccessPhase("route-handler");
+    try {
+      const jar = await headersModule.cookies();
+      expect(() => jar.delete("foo=bar")).toThrow("Invalid cookie name");
+    } finally {
+      headersModule.setHeadersAccessPhase(previousPhase);
+    }
   });
 
   it("RequestCookies.set() rejects path with semicolons", async () => {
     const headersModule = await import("../packages/vinext/src/shims/headers.js");
     headersModule.setHeadersContext({ headers: new Headers(), cookies: new Map() });
-    const jar = await headersModule.cookies();
-    expect(() => jar.set("name", "val", { path: "/; Domain=evil.com" })).toThrow(
-      "Invalid cookie Path",
-    );
+    const previousPhase = headersModule.setHeadersAccessPhase("route-handler");
+    try {
+      const jar = await headersModule.cookies();
+      expect(() => jar.set("name", "val", { path: "/; Domain=evil.com" })).toThrow(
+        "Invalid cookie Path",
+      );
+    } finally {
+      headersModule.setHeadersAccessPhase(previousPhase);
+    }
   });
 
   it("ResponseCookies.set() rejects names with = (injection)", async () => {
