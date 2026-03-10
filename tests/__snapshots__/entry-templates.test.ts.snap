@@ -17508,6 +17508,7 @@ import { runWithPrivateCache } from "vinext/cache-runtime";
 import { runWithRouterState } from "vinext/router-state";
 import { runWithHeadState } from "vinext/head-state";
 import { safeJsonStringify } from "vinext/html";
+import { decode as decodeQueryString } from "node:querystring";
 import { getSSRFontLinks as _getSSRFontLinks, getSSRFontStyles as _getSSRFontStylesGoogle, getSSRFontPreloads as _getSSRFontPreloadsGoogle } from "next/font/google";
 import { getSSRFontStyles as _getSSRFontStylesLocal, getSSRFontPreloads as _getSSRFontPreloadsLocal } from "next/font/local";
 import { parseCookies } from "<ROOT>/packages/vinext/src/config/config-matchers.js";
@@ -17536,6 +17537,13 @@ const buildId = "test-build-id";
 
 // Full resolved config for production server (embedded at build time)
 export const vinextConfig = {"basePath":"","trailingSlash":false,"redirects":[{"source":"/old-about","destination":"/about","permanent":true}],"rewrites":{"beforeFiles":[{"source":"/before-rewrite","destination":"/about"},{"source":"/mw-gated-before","has":[{"type":"cookie","key":"mw-before-user"}],"destination":"/about"}],"afterFiles":[{"source":"/after-rewrite","destination":"/about"},{"source":"/mw-gated-rewrite","has":[{"type":"cookie","key":"mw-user"}],"destination":"/about"}],"fallback":[{"source":"/fallback-rewrite","destination":"/about"}]},"headers":[{"source":"/api/(.*)","headers":[{"key":"X-Custom-Header","value":"vinext"}]},{"source":"/about","has":[{"type":"cookie","key":"logged-in"}],"headers":[{"key":"X-Auth-Only-Header","value":"1"}]},{"source":"/about","missing":[{"type":"cookie","key":"logged-in"}],"headers":[{"key":"X-Guest-Only-Header","value":"1"}]},{"source":"/ssr","headers":[{"key":"Vary","value":"Accept-Language"}]}],"i18n":null,"images":{}};
+
+class ApiBodyParseError extends Error {
+  constructor(message, statusCode) {
+    super(message);
+    this.statusCode = statusCode;
+  }
+}
 
 // ISR cache helpers (inlined for the server entry)
 async function isrGet(key) {
@@ -17622,12 +17630,14 @@ import * as page_28 from "<ROOT>/tests/fixtures/pages-basic/pages/products/[pid]
 import * as page_29 from "<ROOT>/tests/fixtures/pages-basic/pages/docs/[...slug].tsx";
 import * as page_30 from "<ROOT>/tests/fixtures/pages-basic/pages/sign-up/[[...sign-up]]/index.tsx";
 import * as api_0 from "<ROOT>/tests/fixtures/pages-basic/pages/api/binary.ts";
-import * as api_1 from "<ROOT>/tests/fixtures/pages-basic/pages/api/error-route.ts";
-import * as api_2 from "<ROOT>/tests/fixtures/pages-basic/pages/api/hello.ts";
-import * as api_3 from "<ROOT>/tests/fixtures/pages-basic/pages/api/instrumentation-test.ts";
-import * as api_4 from "<ROOT>/tests/fixtures/pages-basic/pages/api/middleware-test.ts";
-import * as api_5 from "<ROOT>/tests/fixtures/pages-basic/pages/api/no-content-type.ts";
-import * as api_6 from "<ROOT>/tests/fixtures/pages-basic/pages/api/users/[id].ts";
+import * as api_1 from "<ROOT>/tests/fixtures/pages-basic/pages/api/echo-body.ts";
+import * as api_2 from "<ROOT>/tests/fixtures/pages-basic/pages/api/error-route.ts";
+import * as api_3 from "<ROOT>/tests/fixtures/pages-basic/pages/api/hello.ts";
+import * as api_4 from "<ROOT>/tests/fixtures/pages-basic/pages/api/instrumentation-test.ts";
+import * as api_5 from "<ROOT>/tests/fixtures/pages-basic/pages/api/middleware-test.ts";
+import * as api_6 from "<ROOT>/tests/fixtures/pages-basic/pages/api/no-content-type.ts";
+import * as api_7 from "<ROOT>/tests/fixtures/pages-basic/pages/api/send-buffer.ts";
+import * as api_8 from "<ROOT>/tests/fixtures/pages-basic/pages/api/users/[id].ts";
 
 import { default as AppComponent } from "<ROOT>/tests/fixtures/pages-basic/pages/_app.tsx";
 import { default as DocumentComponent } from "<ROOT>/tests/fixtures/pages-basic/pages/_document.tsx";
@@ -17668,12 +17678,14 @@ const pageRoutes = [
 
 const apiRoutes = [
   { pattern: "/api/binary", patternParts: ["api","binary"], isDynamic: false, params: [], module: api_0 },
-  { pattern: "/api/error-route", patternParts: ["api","error-route"], isDynamic: false, params: [], module: api_1 },
-  { pattern: "/api/hello", patternParts: ["api","hello"], isDynamic: false, params: [], module: api_2 },
-  { pattern: "/api/instrumentation-test", patternParts: ["api","instrumentation-test"], isDynamic: false, params: [], module: api_3 },
-  { pattern: "/api/middleware-test", patternParts: ["api","middleware-test"], isDynamic: false, params: [], module: api_4 },
-  { pattern: "/api/no-content-type", patternParts: ["api","no-content-type"], isDynamic: false, params: [], module: api_5 },
-  { pattern: "/api/users/:id", patternParts: ["api","users",":id"], isDynamic: true, params: ["id"], module: api_6 }
+  { pattern: "/api/echo-body", patternParts: ["api","echo-body"], isDynamic: false, params: [], module: api_1 },
+  { pattern: "/api/error-route", patternParts: ["api","error-route"], isDynamic: false, params: [], module: api_2 },
+  { pattern: "/api/hello", patternParts: ["api","hello"], isDynamic: false, params: [], module: api_3 },
+  { pattern: "/api/instrumentation-test", patternParts: ["api","instrumentation-test"], isDynamic: false, params: [], module: api_4 },
+  { pattern: "/api/middleware-test", patternParts: ["api","middleware-test"], isDynamic: false, params: [], module: api_5 },
+  { pattern: "/api/no-content-type", patternParts: ["api","no-content-type"], isDynamic: false, params: [], module: api_6 },
+  { pattern: "/api/send-buffer", patternParts: ["api","send-buffer"], isDynamic: false, params: [], module: api_7 },
+  { pattern: "/api/users/:id", patternParts: ["api","users",":id"], isDynamic: true, params: ["id"], module: api_8 }
 ];
 
 function matchRoute(url, routes) {
@@ -17963,8 +17975,15 @@ function createReqRes(request, url, query, body) {
       res.end(JSON.stringify(data));
     },
     send: function(data) {
-      if (typeof data === "object" && data !== null) { res.json(data); }
-      else { if (!resHeaders["content-type"]) resHeaders["content-type"] = "text/plain"; res.end(String(data)); }
+      if (Buffer.isBuffer(data)) {
+        if (!resHeaders["content-type"]) resHeaders["content-type"] = "application/octet-stream";
+        res.end(data);
+      } else if (typeof data === "object" && data !== null) {
+        res.json(data);
+      } else {
+        if (!resHeaders["content-type"]) resHeaders["content-type"] = "text/plain";
+        res.end(String(data));
+      }
     },
     redirect: function(statusOrUrl, url2) {
       if (typeof statusOrUrl === "string") { res.writeHead(307, { Location: statusOrUrl }); }
@@ -18370,28 +18389,32 @@ export async function handleApiRoute(request, url) {
   if (contentLength > 1 * 1024 * 1024) {
     return new Response("Request body too large", { status: 413 });
   }
-  let body;
-  const ct = request.headers.get("content-type") || "";
-  let rawBody;
-  try { rawBody = await readBodyWithLimit(request, 1 * 1024 * 1024); }
-  catch { return new Response("Request body too large", { status: 413 }); }
-  if (!rawBody) {
-    body = undefined;
-  } else if (ct.includes("application/json")) {
-    try { body = JSON.parse(rawBody); } catch { body = rawBody; }
-  } else {
-    body = rawBody;
-  }
-
-  const { req, res, responsePromise } = createReqRes(request, url, query, body);
-
   try {
+    let body;
+    const ct = request.headers.get("content-type") || "";
+    let rawBody;
+    try { rawBody = await readBodyWithLimit(request, 1 * 1024 * 1024); }
+    catch { return new Response("Request body too large", { status: 413 }); }
+    if (!rawBody) {
+      body = undefined;
+    } else if (ct.includes("application/json")) {
+      try { body = JSON.parse(rawBody); } catch { throw new ApiBodyParseError("Invalid JSON", 400); }
+    } else if (ct.includes("application/x-www-form-urlencoded")) {
+      body = decodeQueryString(rawBody);
+    } else {
+      body = rawBody;
+    }
+
+    const { req, res, responsePromise } = createReqRes(request, url, query, body);
     await handler(req, res);
     // If handler didn't call res.end(), end it now.
     // The end() method is idempotent — safe to call twice.
     res.end();
     return await responsePromise;
   } catch (e) {
+    if (e instanceof ApiBodyParseError) {
+      return new Response(e.message, { status: e.statusCode });
+    }
     console.error("[vinext] API error:", e);
     return new Response("Internal Server Error", { status: 500 });
   }
