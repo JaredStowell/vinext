@@ -358,9 +358,12 @@ function fileToAppRoute(
   const params: string[] = [];
   let isDynamic = false;
 
-  // Convert segments to URL pattern, stripping route groups and parallel slots
+  // Convert segments to URL pattern, stripping route groups and parallel slots.
+  // Catch-all segments are only valid in terminal URL position.
   const urlSegments: string[] = [];
-  for (const segment of segments) {
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
+
     // Route groups: (group) -> skip (transparent in URL)
     if (segment.startsWith("(") && segment.endsWith(")")) {
       continue;
@@ -374,6 +377,7 @@ function fileToAppRoute(
     // Catch-all: [...slug] (param names may contain hyphens, e.g. [...sign-in])
     const catchAllMatch = segment.match(/^\[\.\.\.([\w-]+)\]$/);
     if (catchAllMatch) {
+      if (hasRemainingVisibleSegments(segments, i + 1)) return null;
       isDynamic = true;
       params.push(catchAllMatch[1]);
       urlSegments.push(`:${catchAllMatch[1]}+`);
@@ -383,6 +387,7 @@ function fileToAppRoute(
     // Optional catch-all: [[...slug]] (param names may contain hyphens, e.g. [[...sign-in]])
     const optionalCatchAllMatch = segment.match(/^\[\[\.\.\.([\w-]+)\]\]$/);
     if (optionalCatchAllMatch) {
+      if (hasRemainingVisibleSegments(segments, i + 1)) return null;
       isDynamic = true;
       params.push(optionalCatchAllMatch[1]);
       urlSegments.push(`:${optionalCatchAllMatch[1]}*`);
@@ -964,6 +969,17 @@ function findFile(dir: string, name: string, matcher: ValidFileMatcher): string 
   return null;
 }
 
+function hasRemainingVisibleSegments(segments: string[], startIndex: number): boolean {
+  for (let i = startIndex; i < segments.length; i++) {
+    const segment = segments[i];
+    if (segment.startsWith("(") && segment.endsWith(")")) continue;
+    if (segment.startsWith("@")) continue;
+    return true;
+  }
+
+  return false;
+}
+
 /**
  * Match a URL against App Router routes.
  */
@@ -999,6 +1015,7 @@ function matchPattern(url: string, pattern: string): Record<string, string | str
     const pp = patternParts[i];
 
     if (pp.endsWith("+")) {
+      if (i !== patternParts.length - 1) return null;
       const paramName = pp.slice(1, -1);
       const remaining = urlParts.slice(i);
       if (remaining.length === 0) return null;
@@ -1007,6 +1024,7 @@ function matchPattern(url: string, pattern: string): Record<string, string | str
     }
 
     if (pp.endsWith("*")) {
+      if (i !== patternParts.length - 1) return null;
       const paramName = pp.slice(1, -1);
       const remaining = urlParts.slice(i);
       params[paramName] = remaining;
