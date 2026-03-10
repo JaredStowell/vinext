@@ -452,6 +452,7 @@ describe("appRouter - route discovery", () => {
       await mkdir(path.join(appDir, "feed", "@modal", "(...)photos", "[...slug]", "edit"), {
         recursive: true,
       });
+      await mkdir(path.join(appDir, "photos", "[id]"), { recursive: true });
       await writeFile(path.join(appDir, "feed", "page.tsx"), EMPTY_PAGE);
       await writeFile(path.join(appDir, "photos", "[id]", "page.tsx"), EMPTY_PAGE);
       await writeFile(
@@ -475,6 +476,7 @@ describe("appRouter - route discovery", () => {
       await mkdir(path.join(appDir, "feed", "@modal", "(...)photos", "[[...slug]]", "edit"), {
         recursive: true,
       });
+      await mkdir(path.join(appDir, "photos", "[id]"), { recursive: true });
       await writeFile(path.join(appDir, "feed", "page.tsx"), EMPTY_PAGE);
       await writeFile(path.join(appDir, "photos", "[id]", "page.tsx"), EMPTY_PAGE);
       await writeFile(
@@ -498,6 +500,7 @@ describe("appRouter - route discovery", () => {
       await mkdir(path.join(appDir, "feed", "@modal", "(...)photos", "[...slug]", "(admin)"), {
         recursive: true,
       });
+      await mkdir(path.join(appDir, "photos", "[id]"), { recursive: true });
       await writeFile(path.join(appDir, "feed", "page.tsx"), EMPTY_PAGE);
       await writeFile(path.join(appDir, "photos", "[id]", "page.tsx"), EMPTY_PAGE);
       await writeFile(
