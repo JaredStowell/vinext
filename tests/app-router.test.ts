@@ -2587,6 +2587,28 @@ describe("App Router middleware with NextRequest", () => {
     expect(res.headers.get("x-mw-has-session")).toBe("true");
   });
 
+  it("object-form matcher requires has and missing conditions", async () => {
+    const noHeaderRes = await fetch(`${baseUrl}/mw-object-gated`);
+    expect(noHeaderRes.status).toBe(200);
+    expect(noHeaderRes.headers.get("x-mw-ran")).toBeNull();
+
+    const blockedRes = await fetch(`${baseUrl}/mw-object-gated`, {
+      headers: {
+        "x-mw-allow": "1",
+        Cookie: "mw-blocked=1",
+      },
+    });
+    expect(blockedRes.status).toBe(200);
+    expect(blockedRes.headers.get("x-mw-ran")).toBeNull();
+
+    const allowedRes = await fetch(`${baseUrl}/mw-object-gated`, {
+      headers: { "x-mw-allow": "1" },
+    });
+    expect(allowedRes.status).toBe(200);
+    expect(allowedRes.headers.get("x-mw-ran")).toBe("true");
+    expect(allowedRes.headers.get("x-mw-pathname")).toBe("/mw-object-gated");
+  });
+
   it("middleware can redirect using NextRequest", async () => {
     const res = await fetch(`${baseUrl}/middleware-redirect`, { redirect: "manual" });
     expect(res.status).toBe(307);

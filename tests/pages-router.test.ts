@@ -428,6 +428,27 @@ describe("Pages Router integration", () => {
     expect(text).toContain("Access Denied");
   });
 
+  it("object-form matcher requires has and missing conditions", async () => {
+    const noHeaderRes = await fetch(`${baseUrl}/mw-object-gated`);
+    expect(noHeaderRes.status).toBe(200);
+    expect(noHeaderRes.headers.get("x-custom-middleware")).toBeNull();
+
+    const blockedRes = await fetch(`${baseUrl}/mw-object-gated`, {
+      headers: {
+        "x-mw-allow": "1",
+        Cookie: "mw-blocked=1",
+      },
+    });
+    expect(blockedRes.status).toBe(200);
+    expect(blockedRes.headers.get("x-custom-middleware")).toBeNull();
+
+    const allowedRes = await fetch(`${baseUrl}/mw-object-gated`, {
+      headers: { "x-mw-allow": "1" },
+    });
+    expect(allowedRes.status).toBe(200);
+    expect(allowedRes.headers.get("x-custom-middleware")).toBe("active");
+  });
+
   // --- Hydration ---
 
   it("hydration proxy script is fetchable", async () => {
@@ -1473,6 +1494,27 @@ describe("Production server middleware (Pages Router)", () => {
     expect(res.status).toBe(200);
     // Middleware matcher excludes /api, so no x-custom-middleware header
     expect(res.headers.get("x-custom-middleware")).toBeNull();
+  });
+
+  it("production object-form matcher requires has and missing conditions", async () => {
+    const noHeaderRes = await fetch(`${prodUrl}/mw-object-gated`);
+    expect(noHeaderRes.status).toBe(200);
+    expect(noHeaderRes.headers.get("x-custom-middleware")).toBeNull();
+
+    const blockedRes = await fetch(`${prodUrl}/mw-object-gated`, {
+      headers: {
+        "x-mw-allow": "1",
+        Cookie: "mw-blocked=1",
+      },
+    });
+    expect(blockedRes.status).toBe(200);
+    expect(blockedRes.headers.get("x-custom-middleware")).toBeNull();
+
+    const allowedRes = await fetch(`${prodUrl}/mw-object-gated`, {
+      headers: { "x-mw-allow": "1" },
+    });
+    expect(allowedRes.status).toBe(200);
+    expect(allowedRes.headers.get("x-custom-middleware")).toBe("active");
   });
 
   it("preserves binary API response bytes", async () => {

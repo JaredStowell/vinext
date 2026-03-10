@@ -1762,6 +1762,37 @@ describe("middleware matcher patterns", () => {
     expect(matchesMiddleware("/other", matcher)).toBe(false);
   });
 
+  it("matchesMiddleware: object matchers respect has and missing conditions", async () => {
+    const { matchesMiddleware } = await import("../packages/vinext/src/server/middleware.js");
+    const matcher = [
+      {
+        source: "/dashboard",
+        has: [{ type: "header", key: "x-user-tier", value: "pro" }],
+        missing: [{ type: "cookie", key: "blocked" }],
+      },
+    ] as const;
+
+    expect(matchesMiddleware("/dashboard", matcher)).toBe(false);
+    expect(
+      matchesMiddleware(
+        "/dashboard",
+        matcher,
+        new Request("https://example.com/dashboard", {
+          headers: { "x-user-tier": "pro" },
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      matchesMiddleware(
+        "/dashboard",
+        matcher,
+        new Request("https://example.com/dashboard", {
+          headers: { "x-user-tier": "free", cookie: "blocked=1" },
+        }),
+      ),
+    ).toBe(false);
+  });
+
   it("matchesMiddleware: mixed array of strings and objects", async () => {
     const { matchesMiddleware } = await import("../packages/vinext/src/server/middleware.js");
     const matcher = ["/about", { source: "/api/:path+" }] as any;
@@ -1877,6 +1908,31 @@ describe("middleware codegen parity", () => {
     // Wildcard
     expect(matchMiddlewarePattern("/dashboard/settings", "/dashboard/:path*")).toBe(true);
     expect(matchMiddlewarePattern("/dashboard", "/dashboard/:path*")).toBe(true);
+
+    const gatedMatcher = [
+      {
+        source: "/dashboard",
+        has: [{ type: "query", key: "preview", value: "1" }],
+        missing: [{ type: "header", key: "x-blocked" }],
+      },
+    ];
+    expect(matchesMiddleware("/dashboard", gatedMatcher)).toBe(false);
+    expect(
+      matchesMiddleware(
+        "/dashboard",
+        gatedMatcher,
+        new Request("https://example.com/dashboard?preview=1"),
+      ),
+    ).toBe(true);
+    expect(
+      matchesMiddleware(
+        "/dashboard",
+        gatedMatcher,
+        new Request("https://example.com/dashboard?preview=1", {
+          headers: { "x-blocked": "1" },
+        }),
+      ),
+    ).toBe(false);
   });
 
   it("generateMiddlewareMatcherCode('es5') produces working matchesMiddleware", async () => {
@@ -1893,6 +1949,23 @@ describe("middleware codegen parity", () => {
     // Regex guard (must not corrupt regex patterns via dot-escaping)
     expect(matchMiddlewarePattern("/about", "/((?!api|_next|favicon\\.ico).*)")).toBe(true);
     expect(matchMiddlewarePattern("/api/hello", "/((?!api|_next|favicon\\.ico).*)")).toBe(false);
+
+    const headerMatcher = [
+      {
+        source: "/dashboard",
+        has: [{ type: "header", key: "x-user-tier", value: "pro" }],
+      },
+    ];
+    expect(matchesMiddleware("/dashboard", headerMatcher)).toBe(false);
+    expect(
+      matchesMiddleware(
+        "/dashboard",
+        headerMatcher,
+        new Request("https://example.com/dashboard", {
+          headers: { "x-user-tier": "pro" },
+        }),
+      ),
+    ).toBe(true);
   });
 
   it("generateNormalizePathCode produces working __normalizePath", async () => {

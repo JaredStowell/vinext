@@ -12867,19 +12867,128 @@ function matchMiddlewarePattern(pathname, pattern) {
   return re2 ? re2.test(pathname) : pathname === pattern;
 }
 
-function matchesMiddleware(pathname, matcher) {
+const __middlewareConditionRegexCache = new Map();
+const __emptyMiddlewareRequestContext = {
+  headers: new Headers(),
+  cookies: {},
+  query: new URLSearchParams(),
+  host: "",
+};
+
+function __parseMiddlewareCookies(cookieHeader) {
+  if (!cookieHeader) return {};
+  const cookies = {};
+  for (const part of cookieHeader.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq === -1) continue;
+    const key = part.slice(0, eq).trim();
+    const value = part.slice(eq + 1).trim();
+    if (key) cookies[key] = value;
+  }
+  return cookies;
+}
+
+function __middlewareRequestContextFromRequest(request) {
+  if (!request) return __emptyMiddlewareRequestContext;
+  const url = new URL(request.url);
+  return {
+    headers: request.headers,
+    cookies: __parseMiddlewareCookies(request.headers.get("cookie")),
+    query: url.searchParams,
+    host: request.headers.get("host") || url.host,
+  };
+}
+
+function __middlewareConditionRegex(value) {
+  if (__middlewareConditionRegexCache.has(value)) {
+    return __middlewareConditionRegexCache.get(value);
+  }
+  const re = __safeRegExp(value);
+  __middlewareConditionRegexCache.set(value, re);
+  return re;
+}
+
+function __checkMiddlewareCondition(condition, ctx) {
+  switch (condition.type) {
+    case "header": {
+      const headerValue = ctx.headers.get(condition.key);
+      if (headerValue === null) return false;
+      if (condition.value !== undefined) {
+        const re = __middlewareConditionRegex(condition.value);
+        if (re) return re.test(headerValue);
+        return headerValue === condition.value;
+      }
+      return true;
+    }
+    case "cookie": {
+      const cookieValue = ctx.cookies[condition.key];
+      if (cookieValue === undefined) return false;
+      if (condition.value !== undefined) {
+        const re = __middlewareConditionRegex(condition.value);
+        if (re) return re.test(cookieValue);
+        return cookieValue === condition.value;
+      }
+      return true;
+    }
+    case "query": {
+      const queryValue = ctx.query.get(condition.key);
+      if (queryValue === null) return false;
+      if (condition.value !== undefined) {
+        const re = __middlewareConditionRegex(condition.value);
+        if (re) return re.test(queryValue);
+        return queryValue === condition.value;
+      }
+      return true;
+    }
+    case "host": {
+      if (condition.value !== undefined) {
+        const re = __middlewareConditionRegex(condition.value);
+        if (re) return re.test(ctx.host);
+        return ctx.host === condition.value;
+      }
+      return ctx.host === condition.key;
+    }
+    default:
+      return false;
+  }
+}
+
+function __checkMiddlewareHasConditions(has, missing, ctx) {
+  if (has) {
+    for (const condition of has) {
+      if (!__checkMiddlewareCondition(condition, ctx)) return false;
+    }
+  }
+  if (missing) {
+    for (const condition of missing) {
+      if (__checkMiddlewareCondition(condition, ctx)) return false;
+    }
+  }
+  return true;
+}
+
+function matchesMiddleware(pathname, matcher, request) {
   if (!matcher) {
     return true;
   }
-  const patterns = [];
-  if (typeof matcher === "string") { patterns.push(matcher); }
-  else if (Array.isArray(matcher)) {
+  if (typeof matcher === "string") {
+    return matchMiddlewarePattern(pathname, matcher);
+  }
+  const requestContext = __middlewareRequestContextFromRequest(request);
+  if (Array.isArray(matcher)) {
     for (const m of matcher) {
-      if (typeof m === "string") patterns.push(m);
-      else if (m && typeof m === "object" && "source" in m) patterns.push(m.source);
+      if (typeof m === "string") {
+        if (matchMiddlewarePattern(pathname, m)) return true;
+        continue;
+      }
+      if (m && typeof m === "object" && "source" in m) {
+        if (!matchMiddlewarePattern(pathname, m.source)) continue;
+        if (!__checkMiddlewareHasConditions(m.has, m.missing, requestContext)) continue;
+        return true;
+      }
     }
   }
-  return patterns.some((p) => { return matchMiddlewarePattern(pathname, p); });
+  return false;
 }
 
 const __basePath = "";
@@ -13259,7 +13368,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     throw new Error("The " + _fileType + " file must export a function named \`" + _expectedExport + "\` or a \`default\` function.");
   }
   const middlewareMatcher = middlewareModule.config?.matcher;
-  if (matchesMiddleware(cleanPathname, middlewareMatcher)) {
+  if (matchesMiddleware(cleanPathname, middlewareMatcher, request)) {
     try {
       // Wrap in NextRequest so middleware gets .nextUrl, .cookies, .geo, .ip, etc.
        // Always construct a new Request with the fully decoded + normalized pathname
@@ -14763,6 +14872,7 @@ const pageLoaders = {
   "/dynamic-ssr-false": () => import("<ROOT>/tests/fixtures/pages-basic/pages/dynamic-ssr-false.tsx"),
   "/isr-test": () => import("<ROOT>/tests/fixtures/pages-basic/pages/isr-test.tsx"),
   "/link-test": () => import("<ROOT>/tests/fixtures/pages-basic/pages/link-test.tsx"),
+  "/mw-object-gated": () => import("<ROOT>/tests/fixtures/pages-basic/pages/mw-object-gated.tsx"),
   "/nav-test": () => import("<ROOT>/tests/fixtures/pages-basic/pages/nav-test.tsx"),
   "/posts/missing": () => import("<ROOT>/tests/fixtures/pages-basic/pages/posts/missing.tsx"),
   "/redirect-xss": () => import("<ROOT>/tests/fixtures/pages-basic/pages/redirect-xss.tsx"),
@@ -14913,22 +15023,23 @@ import * as page_9 from "<ROOT>/tests/fixtures/pages-basic/pages/dynamic-page.ts
 import * as page_10 from "<ROOT>/tests/fixtures/pages-basic/pages/dynamic-ssr-false.tsx";
 import * as page_11 from "<ROOT>/tests/fixtures/pages-basic/pages/isr-test.tsx";
 import * as page_12 from "<ROOT>/tests/fixtures/pages-basic/pages/link-test.tsx";
-import * as page_13 from "<ROOT>/tests/fixtures/pages-basic/pages/nav-test.tsx";
-import * as page_14 from "<ROOT>/tests/fixtures/pages-basic/pages/posts/missing.tsx";
-import * as page_15 from "<ROOT>/tests/fixtures/pages-basic/pages/redirect-xss.tsx";
-import * as page_16 from "<ROOT>/tests/fixtures/pages-basic/pages/router-events-test.tsx";
-import * as page_17 from "<ROOT>/tests/fixtures/pages-basic/pages/script-test.tsx";
-import * as page_18 from "<ROOT>/tests/fixtures/pages-basic/pages/shallow-test.tsx";
-import * as page_19 from "<ROOT>/tests/fixtures/pages-basic/pages/ssr.tsx";
-import * as page_20 from "<ROOT>/tests/fixtures/pages-basic/pages/ssr-headers.tsx";
-import * as page_21 from "<ROOT>/tests/fixtures/pages-basic/pages/ssr-res-end.tsx";
-import * as page_22 from "<ROOT>/tests/fixtures/pages-basic/pages/suspense-test.tsx";
-import * as page_23 from "<ROOT>/tests/fixtures/pages-basic/pages/articles/[id].tsx";
-import * as page_24 from "<ROOT>/tests/fixtures/pages-basic/pages/blog/[slug].tsx";
-import * as page_25 from "<ROOT>/tests/fixtures/pages-basic/pages/posts/[id].tsx";
-import * as page_26 from "<ROOT>/tests/fixtures/pages-basic/pages/products/[pid].tsx";
-import * as page_27 from "<ROOT>/tests/fixtures/pages-basic/pages/docs/[...slug].tsx";
-import * as page_28 from "<ROOT>/tests/fixtures/pages-basic/pages/sign-up/[[...sign-up]]/index.tsx";
+import * as page_13 from "<ROOT>/tests/fixtures/pages-basic/pages/mw-object-gated.tsx";
+import * as page_14 from "<ROOT>/tests/fixtures/pages-basic/pages/nav-test.tsx";
+import * as page_15 from "<ROOT>/tests/fixtures/pages-basic/pages/posts/missing.tsx";
+import * as page_16 from "<ROOT>/tests/fixtures/pages-basic/pages/redirect-xss.tsx";
+import * as page_17 from "<ROOT>/tests/fixtures/pages-basic/pages/router-events-test.tsx";
+import * as page_18 from "<ROOT>/tests/fixtures/pages-basic/pages/script-test.tsx";
+import * as page_19 from "<ROOT>/tests/fixtures/pages-basic/pages/shallow-test.tsx";
+import * as page_20 from "<ROOT>/tests/fixtures/pages-basic/pages/ssr.tsx";
+import * as page_21 from "<ROOT>/tests/fixtures/pages-basic/pages/ssr-headers.tsx";
+import * as page_22 from "<ROOT>/tests/fixtures/pages-basic/pages/ssr-res-end.tsx";
+import * as page_23 from "<ROOT>/tests/fixtures/pages-basic/pages/suspense-test.tsx";
+import * as page_24 from "<ROOT>/tests/fixtures/pages-basic/pages/articles/[id].tsx";
+import * as page_25 from "<ROOT>/tests/fixtures/pages-basic/pages/blog/[slug].tsx";
+import * as page_26 from "<ROOT>/tests/fixtures/pages-basic/pages/posts/[id].tsx";
+import * as page_27 from "<ROOT>/tests/fixtures/pages-basic/pages/products/[pid].tsx";
+import * as page_28 from "<ROOT>/tests/fixtures/pages-basic/pages/docs/[...slug].tsx";
+import * as page_29 from "<ROOT>/tests/fixtures/pages-basic/pages/sign-up/[[...sign-up]]/index.tsx";
 import * as api_0 from "<ROOT>/tests/fixtures/pages-basic/pages/api/binary.ts";
 import * as api_1 from "<ROOT>/tests/fixtures/pages-basic/pages/api/error-route.ts";
 import * as api_2 from "<ROOT>/tests/fixtures/pages-basic/pages/api/hello.ts";
@@ -14954,22 +15065,23 @@ const pageRoutes = [
   { pattern: "/dynamic-ssr-false", isDynamic: false, params: [], module: page_10, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/dynamic-ssr-false.tsx" },
   { pattern: "/isr-test", isDynamic: false, params: [], module: page_11, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/isr-test.tsx" },
   { pattern: "/link-test", isDynamic: false, params: [], module: page_12, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/link-test.tsx" },
-  { pattern: "/nav-test", isDynamic: false, params: [], module: page_13, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/nav-test.tsx" },
-  { pattern: "/posts/missing", isDynamic: false, params: [], module: page_14, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/posts/missing.tsx" },
-  { pattern: "/redirect-xss", isDynamic: false, params: [], module: page_15, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/redirect-xss.tsx" },
-  { pattern: "/router-events-test", isDynamic: false, params: [], module: page_16, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/router-events-test.tsx" },
-  { pattern: "/script-test", isDynamic: false, params: [], module: page_17, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/script-test.tsx" },
-  { pattern: "/shallow-test", isDynamic: false, params: [], module: page_18, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/shallow-test.tsx" },
-  { pattern: "/ssr", isDynamic: false, params: [], module: page_19, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/ssr.tsx" },
-  { pattern: "/ssr-headers", isDynamic: false, params: [], module: page_20, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/ssr-headers.tsx" },
-  { pattern: "/ssr-res-end", isDynamic: false, params: [], module: page_21, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/ssr-res-end.tsx" },
-  { pattern: "/suspense-test", isDynamic: false, params: [], module: page_22, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/suspense-test.tsx" },
-  { pattern: "/articles/:id", isDynamic: true, params: ["id"], module: page_23, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/articles/[id].tsx" },
-  { pattern: "/blog/:slug", isDynamic: true, params: ["slug"], module: page_24, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/blog/[slug].tsx" },
-  { pattern: "/posts/:id", isDynamic: true, params: ["id"], module: page_25, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/posts/[id].tsx" },
-  { pattern: "/products/:pid", isDynamic: true, params: ["pid"], module: page_26, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/products/[pid].tsx" },
-  { pattern: "/docs/:slug+", isDynamic: true, params: ["slug"], module: page_27, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/docs/[...slug].tsx" },
-  { pattern: "/sign-up/:sign-up*", isDynamic: true, params: ["sign-up"], module: page_28, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/sign-up/[[...sign-up]]/index.tsx" }
+  { pattern: "/mw-object-gated", isDynamic: false, params: [], module: page_13, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/mw-object-gated.tsx" },
+  { pattern: "/nav-test", isDynamic: false, params: [], module: page_14, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/nav-test.tsx" },
+  { pattern: "/posts/missing", isDynamic: false, params: [], module: page_15, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/posts/missing.tsx" },
+  { pattern: "/redirect-xss", isDynamic: false, params: [], module: page_16, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/redirect-xss.tsx" },
+  { pattern: "/router-events-test", isDynamic: false, params: [], module: page_17, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/router-events-test.tsx" },
+  { pattern: "/script-test", isDynamic: false, params: [], module: page_18, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/script-test.tsx" },
+  { pattern: "/shallow-test", isDynamic: false, params: [], module: page_19, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/shallow-test.tsx" },
+  { pattern: "/ssr", isDynamic: false, params: [], module: page_20, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/ssr.tsx" },
+  { pattern: "/ssr-headers", isDynamic: false, params: [], module: page_21, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/ssr-headers.tsx" },
+  { pattern: "/ssr-res-end", isDynamic: false, params: [], module: page_22, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/ssr-res-end.tsx" },
+  { pattern: "/suspense-test", isDynamic: false, params: [], module: page_23, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/suspense-test.tsx" },
+  { pattern: "/articles/:id", isDynamic: true, params: ["id"], module: page_24, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/articles/[id].tsx" },
+  { pattern: "/blog/:slug", isDynamic: true, params: ["slug"], module: page_25, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/blog/[slug].tsx" },
+  { pattern: "/posts/:id", isDynamic: true, params: ["id"], module: page_26, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/posts/[id].tsx" },
+  { pattern: "/products/:pid", isDynamic: true, params: ["pid"], module: page_27, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/products/[pid].tsx" },
+  { pattern: "/docs/:slug+", isDynamic: true, params: ["slug"], module: page_28, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/docs/[...slug].tsx" },
+  { pattern: "/sign-up/:sign-up*", isDynamic: true, params: ["sign-up"], module: page_29, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/sign-up/[[...sign-up]]/index.tsx" }
 ];
 
 const apiRoutes = [
@@ -15816,19 +15928,128 @@ function matchMiddlewarePattern(pathname, pattern) {
   return re2 ? re2.test(pathname) : pathname === pattern;
 }
 
-function matchesMiddleware(pathname, matcher) {
+var __middlewareConditionRegexCache = new Map();
+var __emptyMiddlewareRequestContext = {
+  headers: new Headers(),
+  cookies: {},
+  query: new URLSearchParams(),
+  host: "",
+};
+
+function __parseMiddlewareCookies(cookieHeader) {
+  if (!cookieHeader) return {};
+  var cookies = {};
+  for (var part of cookieHeader.split(";")) {
+    var eq = part.indexOf("=");
+    if (eq === -1) continue;
+    var key = part.slice(0, eq).trim();
+    var value = part.slice(eq + 1).trim();
+    if (key) cookies[key] = value;
+  }
+  return cookies;
+}
+
+function __middlewareRequestContextFromRequest(request) {
+  if (!request) return __emptyMiddlewareRequestContext;
+  var url = new URL(request.url);
+  return {
+    headers: request.headers,
+    cookies: __parseMiddlewareCookies(request.headers.get("cookie")),
+    query: url.searchParams,
+    host: request.headers.get("host") || url.host,
+  };
+}
+
+function __middlewareConditionRegex(value) {
+  if (__middlewareConditionRegexCache.has(value)) {
+    return __middlewareConditionRegexCache.get(value);
+  }
+  var re = __safeRegExp(value);
+  __middlewareConditionRegexCache.set(value, re);
+  return re;
+}
+
+function __checkMiddlewareCondition(condition, ctx) {
+  switch (condition.type) {
+    case "header": {
+      var headerValue = ctx.headers.get(condition.key);
+      if (headerValue === null) return false;
+      if (condition.value !== undefined) {
+        var re = __middlewareConditionRegex(condition.value);
+        if (re) return re.test(headerValue);
+        return headerValue === condition.value;
+      }
+      return true;
+    }
+    case "cookie": {
+      var cookieValue = ctx.cookies[condition.key];
+      if (cookieValue === undefined) return false;
+      if (condition.value !== undefined) {
+        var re = __middlewareConditionRegex(condition.value);
+        if (re) return re.test(cookieValue);
+        return cookieValue === condition.value;
+      }
+      return true;
+    }
+    case "query": {
+      var queryValue = ctx.query.get(condition.key);
+      if (queryValue === null) return false;
+      if (condition.value !== undefined) {
+        var re = __middlewareConditionRegex(condition.value);
+        if (re) return re.test(queryValue);
+        return queryValue === condition.value;
+      }
+      return true;
+    }
+    case "host": {
+      if (condition.value !== undefined) {
+        var re = __middlewareConditionRegex(condition.value);
+        if (re) return re.test(ctx.host);
+        return ctx.host === condition.value;
+      }
+      return ctx.host === condition.key;
+    }
+    default:
+      return false;
+  }
+}
+
+function __checkMiddlewareHasConditions(has, missing, ctx) {
+  if (has) {
+    for (var condition of has) {
+      if (!__checkMiddlewareCondition(condition, ctx)) return false;
+    }
+  }
+  if (missing) {
+    for (var condition of missing) {
+      if (__checkMiddlewareCondition(condition, ctx)) return false;
+    }
+  }
+  return true;
+}
+
+function matchesMiddleware(pathname, matcher, request) {
   if (!matcher) {
     return true;
   }
-  var patterns = [];
-  if (typeof matcher === "string") { patterns.push(matcher); }
-  else if (Array.isArray(matcher)) {
+  if (typeof matcher === "string") {
+    return matchMiddlewarePattern(pathname, matcher);
+  }
+  var requestContext = __middlewareRequestContextFromRequest(request);
+  if (Array.isArray(matcher)) {
     for (var m of matcher) {
-      if (typeof m === "string") patterns.push(m);
-      else if (m && typeof m === "object" && "source" in m) patterns.push(m.source);
+      if (typeof m === "string") {
+        if (matchMiddlewarePattern(pathname, m)) return true;
+        continue;
+      }
+      if (m && typeof m === "object" && "source" in m) {
+        if (!matchMiddlewarePattern(pathname, m.source)) continue;
+        if (!__checkMiddlewareHasConditions(m.has, m.missing, requestContext)) continue;
+        return true;
+      }
     }
   }
-  return patterns.some(function(p) { return matchMiddlewarePattern(pathname, p); });
+  return false;
 }
 
 export async function runMiddleware(request, ctx) {
@@ -15854,7 +16075,7 @@ export async function runMiddleware(request, ctx) {
   }
   var normalizedPathname = __normalizePath(decodedPathname);
 
-  if (!matchesMiddleware(normalizedPathname, matcher)) return { continue: true };
+  if (!matchesMiddleware(normalizedPathname, matcher, request)) return { continue: true };
 
    // Construct a new Request with the decoded + normalized pathname so middleware
    // always sees the same canonical path that the router uses.

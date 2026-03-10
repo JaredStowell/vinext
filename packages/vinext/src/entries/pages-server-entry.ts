@@ -165,7 +165,7 @@ export async function runMiddleware(request, ctx) {
   }
   var normalizedPathname = __normalizePath(decodedPathname);
 
-  if (!matchesMiddleware(normalizedPathname, matcher)) return { continue: true };
+  if (!matchesMiddleware(normalizedPathname, matcher, request)) return { continue: true };
 
    // Construct a new Request with the decoded + normalized pathname so middleware
    // always sees the same canonical path that the router uses.

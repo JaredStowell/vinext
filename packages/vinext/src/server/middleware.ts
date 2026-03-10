@@ -21,8 +21,9 @@
 import type { ModuleRunner } from "vite/module-runner";
 import fs from "node:fs";
 import path from "node:path";
+import { checkHasConditions, requestContextFromRequest, safeRegExp, type RequestContext } from "../config/config-matchers.js";
+import type { HasCondition } from "../config/next-config.js";
 import { NextRequest, NextFetchEvent } from "../shims/server.js";
-import { safeRegExp } from "../config/config-matchers.js";
 import { normalizePath } from "./normalize-path.js";
 
 /**
@@ -118,37 +119,69 @@ export function findMiddlewareFile(root: string): string | null {
 }
 
 /** Matcher pattern from middleware config export. */
-type MatcherConfig =
-  | string
-  | string[]
-  | { source: string; regexp?: string; locale?: boolean; has?: any[]; missing?: any[] }[];
+type MiddlewareMatcherObject = {
+  source: string;
+  regexp?: string;
+  locale?: boolean;
+  has?: HasCondition[];
+  missing?: HasCondition[];
+};
+
+type MatcherConfig = string | string[] | MiddlewareMatcherObject[];
+
+const EMPTY_MIDDLEWARE_REQUEST_CONTEXT: RequestContext = {
+  headers: new Headers(),
+  cookies: {},
+  query: new URLSearchParams(),
+  host: "",
+};
 
 /**
  * Check if a pathname matches the middleware matcher config.
  * If no matcher is configured, middleware runs on all paths
  * except static files and internal Next.js paths.
  */
-export function matchesMiddleware(pathname: string, matcher: MatcherConfig | undefined): boolean {
+export function matchesMiddleware(
+  pathname: string,
+  matcher: MatcherConfig | undefined,
+  request?: Request,
+): boolean {
   if (!matcher) {
     // Next.js default: middleware runs on ALL paths when no matcher is configured.
     // Users opt out of specific paths by configuring a matcher pattern.
     return true;
   }
 
-  const patterns: string[] = [];
   if (typeof matcher === "string") {
-    patterns.push(matcher);
-  } else if (Array.isArray(matcher)) {
+    return matchPattern(pathname, matcher);
+  }
+
+  const requestContext = request ? requestContextFromRequest(request) : EMPTY_MIDDLEWARE_REQUEST_CONTEXT;
+
+  if (Array.isArray(matcher)) {
     for (const m of matcher) {
       if (typeof m === "string") {
-        patterns.push(m);
-      } else if (m && typeof m === "object" && "source" in m) {
-        patterns.push(m.source);
+        if (matchPattern(pathname, m)) {
+          return true;
+        }
+        continue;
+      }
+
+      if (m && typeof m === "object" && "source" in m) {
+        if (!matchPattern(pathname, m.source)) {
+          continue;
+        }
+
+        if (!checkHasConditions(m.has, m.missing, requestContext)) {
+          continue;
+        }
+
+        return true;
       }
     }
   }
 
-  return patterns.some((pattern) => matchPattern(pathname, pattern));
+  return false;
 }
 
 /**
@@ -256,7 +289,7 @@ export async function runMiddleware(
   }
   const normalizedPathname = normalizePath(decodedPathname);
 
-  if (!matchesMiddleware(normalizedPathname, matcher)) {
+  if (!matchesMiddleware(normalizedPathname, matcher, request)) {
     return { continue: true };
   }
 

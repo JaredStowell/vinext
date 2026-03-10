@@ -131,7 +131,7 @@ function __normalizePath(pathname) {
  *
  * This includes:
  * - `matchMiddlewarePattern(pathname, pattern)` — matches a single pattern
- * - `matchesMiddleware(pathname, matcher)` — matches the full matcher config
+ * - `matchesMiddleware(pathname, matcher, request)` — matches the full matcher config
  *
  * The generated code depends on `__safeRegExp` being defined in the same scope
  * (use `generateSafeRegExpCode` to emit it).
@@ -141,10 +141,6 @@ function __normalizePath(pathname) {
 export function generateMiddlewareMatcherCode(style: "modern" | "es5" = "modern"): string {
   const v = style === "modern" ? "const" : "var";
   const l = style === "modern" ? "let" : "var";
-  const fn =
-    style === "modern"
-      ? (params: string, body: string) => `(${params}) => { ${body} }`
-      : (params: string, body: string) => `function(${params}) { ${body} }`;
 
   // The pattern matching logic must be identical to matchPattern() in
   // packages/vinext/src/server/middleware.ts. Any changes here must be
@@ -174,18 +170,127 @@ function matchMiddlewarePattern(pathname, pattern) {
   return re2 ? re2.test(pathname) : pathname === pattern;
 }
 
-function matchesMiddleware(pathname, matcher) {
+${v} __middlewareConditionRegexCache = new Map();
+${v} __emptyMiddlewareRequestContext = {
+  headers: new Headers(),
+  cookies: {},
+  query: new URLSearchParams(),
+  host: "",
+};
+
+function __parseMiddlewareCookies(cookieHeader) {
+  if (!cookieHeader) return {};
+  ${v} cookies = {};
+  for (${v} part of cookieHeader.split(";")) {
+    ${v} eq = part.indexOf("=");
+    if (eq === -1) continue;
+    ${v} key = part.slice(0, eq).trim();
+    ${v} value = part.slice(eq + 1).trim();
+    if (key) cookies[key] = value;
+  }
+  return cookies;
+}
+
+function __middlewareRequestContextFromRequest(request) {
+  if (!request) return __emptyMiddlewareRequestContext;
+  ${v} url = new URL(request.url);
+  return {
+    headers: request.headers,
+    cookies: __parseMiddlewareCookies(request.headers.get("cookie")),
+    query: url.searchParams,
+    host: request.headers.get("host") || url.host,
+  };
+}
+
+function __middlewareConditionRegex(value) {
+  if (__middlewareConditionRegexCache.has(value)) {
+    return __middlewareConditionRegexCache.get(value);
+  }
+  ${v} re = __safeRegExp(value);
+  __middlewareConditionRegexCache.set(value, re);
+  return re;
+}
+
+function __checkMiddlewareCondition(condition, ctx) {
+  switch (condition.type) {
+    case "header": {
+      ${v} headerValue = ctx.headers.get(condition.key);
+      if (headerValue === null) return false;
+      if (condition.value !== undefined) {
+        ${v} re = __middlewareConditionRegex(condition.value);
+        if (re) return re.test(headerValue);
+        return headerValue === condition.value;
+      }
+      return true;
+    }
+    case "cookie": {
+      ${v} cookieValue = ctx.cookies[condition.key];
+      if (cookieValue === undefined) return false;
+      if (condition.value !== undefined) {
+        ${v} re = __middlewareConditionRegex(condition.value);
+        if (re) return re.test(cookieValue);
+        return cookieValue === condition.value;
+      }
+      return true;
+    }
+    case "query": {
+      ${v} queryValue = ctx.query.get(condition.key);
+      if (queryValue === null) return false;
+      if (condition.value !== undefined) {
+        ${v} re = __middlewareConditionRegex(condition.value);
+        if (re) return re.test(queryValue);
+        return queryValue === condition.value;
+      }
+      return true;
+    }
+    case "host": {
+      if (condition.value !== undefined) {
+        ${v} re = __middlewareConditionRegex(condition.value);
+        if (re) return re.test(ctx.host);
+        return ctx.host === condition.value;
+      }
+      return ctx.host === condition.key;
+    }
+    default:
+      return false;
+  }
+}
+
+function __checkMiddlewareHasConditions(has, missing, ctx) {
+  if (has) {
+    for (${v} condition of has) {
+      if (!__checkMiddlewareCondition(condition, ctx)) return false;
+    }
+  }
+  if (missing) {
+    for (${v} condition of missing) {
+      if (__checkMiddlewareCondition(condition, ctx)) return false;
+    }
+  }
+  return true;
+}
+
+function matchesMiddleware(pathname, matcher, request) {
   if (!matcher) {
     return true;
   }
-  ${v} patterns = [];
-  if (typeof matcher === "string") { patterns.push(matcher); }
-  else if (Array.isArray(matcher)) {
+  if (typeof matcher === "string") {
+    return matchMiddlewarePattern(pathname, matcher);
+  }
+  ${v} requestContext = __middlewareRequestContextFromRequest(request);
+  if (Array.isArray(matcher)) {
     for (${v} m of matcher) {
-      if (typeof m === "string") patterns.push(m);
-      else if (m && typeof m === "object" && "source" in m) patterns.push(m.source);
+      if (typeof m === "string") {
+        if (matchMiddlewarePattern(pathname, m)) return true;
+        continue;
+      }
+      if (m && typeof m === "object" && "source" in m) {
+        if (!matchMiddlewarePattern(pathname, m.source)) continue;
+        if (!__checkMiddlewareHasConditions(m.has, m.missing, requestContext)) continue;
+        return true;
+      }
     }
   }
-  return patterns.some(${fn("p", "return matchMiddlewarePattern(pathname, p);")});
+  return false;
 }`;
 }

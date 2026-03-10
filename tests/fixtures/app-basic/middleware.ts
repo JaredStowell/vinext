@@ -128,5 +128,10 @@ export const config = {
     "/",
     "/mw-gated-before",
     "/mw-gated-fallback",
+    {
+      source: "/mw-object-gated",
+      has: [{ type: "header", key: "x-mw-allow", value: "1" }],
+      missing: [{ type: "cookie", key: "mw-blocked" }],
+    },
   ],
 };
