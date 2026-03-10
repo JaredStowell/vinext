@@ -579,6 +579,18 @@ function normalizeManifestFile(file: string): string {
   return file.startsWith("/") ? file.slice(1) : file;
 }
 
+function manifestFileWithBase(file: string, base: string): string {
+  const normalizedFile = normalizeManifestFile(file);
+  if (!base || base === "/") return normalizedFile;
+
+  // Vite's SSR manifest stores base-prefixed paths without a leading slash,
+  // e.g. "docs/assets/app.js" for base "/docs/".
+  const normalizedBase = normalizeManifestFile(base).replace(/\/+$/, "");
+  if (!normalizedBase) return normalizedFile;
+  if (normalizedFile.startsWith(normalizedBase + "/")) return normalizedFile;
+  return normalizedBase + "/" + normalizedFile;
+}
+
 type BundleBackfillChunk = {
   type: "chunk";
   fileName: string;
@@ -592,6 +604,13 @@ type BundleBackfillChunk = {
 
 function normalizeManifestModuleId(moduleId: string, root: string): string {
   const normalizedId = moduleId.replace(/\\/g, "/");
+  const isWindowsAbsolute = /^[a-zA-Z]:[\\/]/.test(moduleId) || moduleId.startsWith("\\\\");
+  if (isWindowsAbsolute) {
+    const relativeId = path.win32.relative(root, moduleId).replace(/\\/g, "/");
+    if (!relativeId || relativeId.startsWith("../")) return normalizedId;
+    return relativeId;
+  }
+
   if (!path.isAbsolute(moduleId)) return normalizedId;
 
   const relativeId = path.relative(root, moduleId).replace(/\\/g, "/");
@@ -603,6 +622,7 @@ function augmentSsrManifestFromBundle(
   ssrManifest: Record<string, string[]>,
   bundle: Record<string, BundleBackfillChunk | { type: string }>,
   root: string,
+  base = "/",
 ): Record<string, string[]> {
   const nextManifest = Object.fromEntries(
     Object.entries(ssrManifest).map(([key, files]) => [
@@ -616,15 +636,15 @@ function augmentSsrManifestFromBundle(
     const chunk = item as BundleBackfillChunk;
 
     const files = new Set<string>();
-    files.add(normalizeManifestFile(chunk.fileName));
+    files.add(manifestFileWithBase(chunk.fileName, base));
     for (const importedFile of chunk.imports ?? []) {
-      files.add(normalizeManifestFile(importedFile));
+      files.add(manifestFileWithBase(importedFile, base));
     }
     for (const cssFile of chunk.viteMetadata?.importedCss ?? []) {
-      files.add(normalizeManifestFile(cssFile));
+      files.add(manifestFileWithBase(cssFile, base));
     }
     for (const assetFile of chunk.viteMetadata?.importedAssets ?? []) {
-      files.add(normalizeManifestFile(assetFile));
+      files.add(manifestFileWithBase(assetFile, base));
     }
 
     for (const moduleId of Object.keys(chunk.modules ?? {})) {
@@ -2962,10 +2982,12 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
               fs.readFileSync(ssrManifestPath, "utf-8"),
             ) as Record<string, string[]>;
             const buildRoot = this.environment?.config.root ?? process.cwd();
+            const buildBase = this.environment?.config.base ?? "/";
             const augmentedManifest = augmentSsrManifestFromBundle(
               ssrManifest,
               bundle as Record<string, BundleBackfillChunk | { type: string }>,
               buildRoot,
+              buildBase,
             );
             fs.writeFileSync(ssrManifestPath, JSON.stringify(augmentedManifest, null, 2));
           } catch {

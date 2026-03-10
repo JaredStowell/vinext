@@ -830,6 +830,30 @@ describe("augmentSsrManifestFromBundle", () => {
     ]);
   });
 
+  it("preserves the configured base prefix and normalizes Windows paths", () => {
+    const bundle = {
+      "assets/counter.js": {
+        type: "chunk" as const,
+        fileName: "assets/counter.js",
+        imports: ["assets/framework.js"],
+        modules: {
+          "C:\\app\\pages\\counter.tsx": {},
+        },
+        viteMetadata: {
+          importedCss: new Set(["assets/counter.css"]),
+        },
+      },
+    };
+
+    const augmented = _augmentSsrManifestFromBundle({}, bundle, "C:\\app", "/docs/");
+
+    expect(augmented["pages/counter.tsx"]).toEqual([
+      "docs/assets/counter.js",
+      "docs/assets/framework.js",
+      "docs/assets/counter.css",
+    ]);
+  });
+
   it("preserves existing SSR manifest files while normalizing leading slashes", () => {
     const bundle = {
       "assets/about.js": {
