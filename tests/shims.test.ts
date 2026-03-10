@@ -1845,9 +1845,9 @@ describe("middleware matcher patterns", () => {
     expect(matchesMiddleware("/dashboard", { source: "/dashboard" }, undefined, i18nConfig)).toBe(
       false,
     );
-    expect(matchesMiddleware("/fr/dashboard", { source: "/dashboard" }, undefined, i18nConfig)).toBe(
-      true,
-    );
+    expect(
+      matchesMiddleware("/fr/dashboard", { source: "/dashboard" }, undefined, i18nConfig),
+    ).toBe(true);
     expect(
       matchesMiddleware(
         "/fr/dashboard",
@@ -2012,20 +2012,16 @@ describe("middleware codegen parity", () => {
     ).toBe(false);
 
     expect(
-      matchesMiddleware(
-        "/dashboard",
-        { source: "/dashboard" },
-        undefined,
-        { locales: ["en", "fr"], defaultLocale: "en" },
-      ),
+      matchesMiddleware("/dashboard", { source: "/dashboard" }, undefined, {
+        locales: ["en", "fr"],
+        defaultLocale: "en",
+      }),
     ).toBe(false);
     expect(
-      matchesMiddleware(
-        "/fr/dashboard",
-        { source: "/dashboard" },
-        undefined,
-        { locales: ["en", "fr"], defaultLocale: "en" },
-      ),
+      matchesMiddleware("/fr/dashboard", { source: "/dashboard" }, undefined, {
+        locales: ["en", "fr"],
+        defaultLocale: "en",
+      }),
     ).toBe(true);
   });
 

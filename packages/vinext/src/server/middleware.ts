@@ -21,7 +21,12 @@
 import type { ModuleRunner } from "vite/module-runner";
 import fs from "node:fs";
 import path from "node:path";
-import { checkHasConditions, requestContextFromRequest, safeRegExp, type RequestContext } from "../config/config-matchers.js";
+import {
+  checkHasConditions,
+  requestContextFromRequest,
+  safeRegExp,
+  type RequestContext,
+} from "../config/config-matchers.js";
 import type { HasCondition, NextI18nConfig } from "../config/next-config.js";
 import { NextRequest, NextFetchEvent } from "../shims/server.js";
 import { normalizePath } from "./normalize-path.js";
@@ -158,7 +163,9 @@ export function matchesMiddleware(
     return matchMatcherPattern(pathname, matcher, i18nConfig);
   }
 
-  const requestContext = request ? requestContextFromRequest(request) : EMPTY_MIDDLEWARE_REQUEST_CONTEXT;
+  const requestContext = request
+    ? requestContextFromRequest(request)
+    : EMPTY_MIDDLEWARE_REQUEST_CONTEXT;
   const matchers = Array.isArray(matcher) ? matcher : [matcher];
 
   for (const m of matchers) {

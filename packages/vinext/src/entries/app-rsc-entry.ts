@@ -11,7 +11,12 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { AppRoute } from "../routing/app-router.js";
 import type { MetadataFileRoute } from "../server/metadata-routes.js";
-import type { NextRedirect, NextRewrite, NextHeader, NextI18nConfig } from "../config/next-config.js";
+import type {
+  NextRedirect,
+  NextRewrite,
+  NextHeader,
+  NextI18nConfig,
+} from "../config/next-config.js";
 import { generateDevOriginCheckCode } from "../server/dev-origin-check.js";
 import {
   generateSafeRegExpCode,
