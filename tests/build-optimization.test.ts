@@ -872,10 +872,7 @@ describe("augmentSsrManifestFromBundle", () => {
 
     const augmented = _augmentSsrManifestFromBundle(ssrManifest, bundle, "/app");
 
-    expect(augmented["pages/about.tsx"]).toEqual([
-      "assets/about.js",
-      "assets/about.css",
-    ]);
+    expect(augmented["pages/about.tsx"]).toEqual(["assets/about.js", "assets/about.css"]);
   });
 });
 
@@ -1079,11 +1076,17 @@ describe("collectAssetTags lazy chunk filtering", () => {
     };
 
     const lazyChunks = computeLazyChunks(buildManifest).map((file) => `docs/${file}`);
-    const ssrFiles = ["docs/assets/entry.js", "docs/assets/framework.js", "docs/assets/page-index.js"];
+    const ssrFiles = [
+      "docs/assets/entry.js",
+      "docs/assets/framework.js",
+      "docs/assets/page-index.js",
+    ];
     const tags = simulateAssetTagFiltering(ssrFiles, lazyChunks);
 
     expect(tags).toContain('<link rel="modulepreload" href="/docs/assets/entry.js" />');
-    expect(tags).toContain('<script type="module" src="/docs/assets/entry.js" crossorigin></script>');
+    expect(tags).toContain(
+      '<script type="module" src="/docs/assets/entry.js" crossorigin></script>',
+    );
     expect(tags).toContain('<link rel="modulepreload" href="/docs/assets/framework.js" />');
     expect(tags.join("\n")).not.toContain("page-index.js");
   });

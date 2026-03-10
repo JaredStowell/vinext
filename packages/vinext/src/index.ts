@@ -2982,9 +2982,10 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
           if (!fs.existsSync(ssrManifestPath)) return;
 
           try {
-            const ssrManifest = JSON.parse(
-              fs.readFileSync(ssrManifestPath, "utf-8"),
-            ) as Record<string, string[]>;
+            const ssrManifest = JSON.parse(fs.readFileSync(ssrManifestPath, "utf-8")) as Record<
+              string,
+              string[]
+            >;
             const buildRoot = this.environment?.config.root ?? process.cwd();
             const buildBase = this.environment?.config.base ?? "/";
             const augmentedManifest = augmentSsrManifestFromBundle(

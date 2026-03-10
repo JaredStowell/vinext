@@ -1639,7 +1639,9 @@ describe("Cloudflare closeBundle lazy chunk injection", () => {
     if (fs.existsSync(buildManifestPath)) {
       try {
         const buildManifest = JSON.parse(fs.readFileSync(buildManifestPath, "utf-8"));
-        const lazy = computeLazyChunks(buildManifest).map((file) => manifestFileWithBase(file, base));
+        const lazy = computeLazyChunks(buildManifest).map((file) =>
+          manifestFileWithBase(file, base),
+        );
         if (lazy.length > 0) lazyChunksData = lazy;
       } catch {
         /* ignore */
@@ -1715,7 +1717,9 @@ describe("Cloudflare closeBundle lazy chunk injection", () => {
             break;
           }
         }
-        const lazy = computeLazyChunks(buildManifest).map((file) => manifestFileWithBase(file, base));
+        const lazy = computeLazyChunks(buildManifest).map((file) =>
+          manifestFileWithBase(file, base),
+        );
         if (lazy.length > 0) lazyChunksData = lazy;
       } catch {
         /* ignore */

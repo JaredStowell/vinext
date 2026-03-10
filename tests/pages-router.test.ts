@@ -1125,7 +1125,7 @@ export const config = { matcher: ["/protected"] };
     const manifestPath = path.join(outDir, "client", ".vite", "ssr-manifest.json");
     expect(fs.existsSync(manifestPath)).toBe(true);
 
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as Record<string, string[]>;
     // Manifest should have entries (module IDs -> asset URLs)
     expect(Object.keys(manifest).length).toBeGreaterThan(0);
 
@@ -1216,14 +1216,20 @@ export default function CounterPage() {
       });
 
       const buildManifestPath = path.join(fixtureOutDir, "client", ".vite", "manifest.json");
-      const buildManifest = JSON.parse(fs.readFileSync(buildManifestPath, "utf-8"));
+      const buildManifest = JSON.parse(fs.readFileSync(buildManifestPath, "utf-8")) as Record<
+        string,
+        unknown
+      >;
       const counterBuildManifestEntries = Object.keys(buildManifest).filter(
         (key) => key.endsWith("/pages/counter.tsx") || key === "pages/counter.tsx",
       );
       expect(counterBuildManifestEntries).toEqual([]);
 
       const manifestPath = path.join(fixtureOutDir, "client", ".vite", "ssr-manifest.json");
-      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as Record<
+        string,
+        string[]
+      >;
       const counterManifestEntry = Object.entries(manifest).find(
         ([key]) => key.endsWith("/pages/counter.tsx") || key === "pages/counter.tsx",
       );
@@ -1314,14 +1320,20 @@ export default function CounterPage() {
       });
 
       const buildManifestPath = path.join(fixtureOutDir, "client", ".vite", "manifest.json");
-      const buildManifest = JSON.parse(fs.readFileSync(buildManifestPath, "utf-8"));
+      const buildManifest = JSON.parse(fs.readFileSync(buildManifestPath, "utf-8")) as Record<
+        string,
+        unknown
+      >;
       const counterBuildManifestEntries = Object.keys(buildManifest).filter(
         (key) => key.endsWith("/pages/counter.tsx") || key === "pages/counter.tsx",
       );
       expect(counterBuildManifestEntries).toEqual([]);
 
       const manifestPath = path.join(fixtureOutDir, "client", ".vite", "ssr-manifest.json");
-      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as Record<
+        string,
+        string[]
+      >;
       const counterManifestEntries = Object.entries(manifest).filter(
         ([key]) => key.endsWith("/pages/counter.tsx") || key === "pages/counter.tsx",
       );
@@ -1330,7 +1342,9 @@ export default function CounterPage() {
         files.some((file: string) => file.endsWith(".css")),
       );
       expect(populatedCounterManifestEntry).toBeDefined();
-      const cssFile = populatedCounterManifestEntry?.[1].find((file: string) => file.endsWith(".css"));
+      const cssFile = populatedCounterManifestEntry?.[1].find((file: string) =>
+        file.endsWith(".css"),
+      );
       expect(cssFile).toBeDefined();
       const cssContent = fs.readFileSync(path.join(fixtureOutDir, "client", cssFile!), "utf-8");
       expect(cssContent).toContain("url(");
