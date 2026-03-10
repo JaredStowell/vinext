@@ -6429,6 +6429,82 @@ describe("next/compat/router shim", () => {
     expect((captured as any).asPath).toBe("/posts/42?tab=comments");
     expect((captured as any).query.id).toBe("42");
   });
+
+  it("preserves array query values from SSR context", async () => {
+    const React = await import("react");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { useRouter: useCompatRouter } =
+      await import("../packages/vinext/src/shims/compat-router.js");
+    const { wrapWithRouterContext, setSSRContext } =
+      await import("../packages/vinext/src/shims/router.js");
+
+    setSSRContext({
+      pathname: "/docs/a/b",
+      query: { slug: ["a", "b"] },
+      asPath: "/docs/a/b",
+    });
+
+    let captured: unknown = "NOT_SET";
+    function Probe() {
+      captured = useCompatRouter();
+      return React.createElement("div", null, "probe");
+    }
+
+    const element = wrapWithRouterContext(React.createElement(Probe));
+    renderToStaticMarkup(element);
+
+    setSSRContext(null);
+
+    expect(captured).not.toBeNull();
+    expect((captured as any).query.slug).toEqual(["a", "b"]);
+  });
+
+  it("preserves route param arrays, repeated search params, and hash in client router state", async () => {
+    const React = await import("react");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { useRouter: useCompatRouter } =
+      await import("../packages/vinext/src/shims/compat-router.js");
+    const { wrapWithRouterContext } = await import("../packages/vinext/src/shims/router.js");
+
+    const previousWindow = (globalThis as any).window;
+    (globalThis as any).window = {
+      location: {
+        pathname: "/docs/a/b",
+        search: "?tag=a&tag=b",
+        hash: "#section",
+      },
+      __NEXT_DATA__: {
+        page: "/docs/[...slug]",
+        query: { slug: ["a", "b"] },
+        isFallback: false,
+      },
+      __VINEXT_LOCALE__: undefined,
+      __VINEXT_LOCALES__: undefined,
+      __VINEXT_DEFAULT_LOCALE__: undefined,
+    };
+
+    try {
+      let captured: unknown = "NOT_SET";
+      function Probe() {
+        captured = useCompatRouter();
+        return React.createElement("div", null, "probe");
+      }
+
+      const element = wrapWithRouterContext(React.createElement(Probe));
+      renderToStaticMarkup(element);
+
+      expect(captured).not.toBeNull();
+      expect((captured as any).query.slug).toEqual(["a", "b"]);
+      expect((captured as any).query.tag).toEqual(["a", "b"]);
+      expect((captured as any).asPath).toBe("/docs/a/b?tag=a&tag=b#section");
+    } finally {
+      if (previousWindow === undefined) {
+        delete (globalThis as any).window;
+      } else {
+        (globalThis as any).window = previousWindow;
+      }
+    }
+  });
 });
 
 describe("Pages Router router helpers", () => {
