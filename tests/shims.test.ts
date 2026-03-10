@@ -5073,6 +5073,20 @@ describe("matchRewrite with external URLs", () => {
     const result = matchRewrite("/post/123", rewrites, emptyCtx);
     expect(result).toBe("/api/123/123");
   });
+
+  it("replaces adjacent params separated by literal characters", async () => {
+    const { matchRewrite } = await import("../packages/vinext/src/config/config-matchers.js");
+    const rewrites = [{ source: "/legacy/:year/:month", destination: "/archive/:year-:month" }];
+    const result = matchRewrite("/legacy/2024/06", rewrites, emptyCtx);
+    expect(result).toBe("/archive/2024-06");
+  });
+
+  it("replaces hyphenated param names without truncating them", async () => {
+    const { matchRewrite } = await import("../packages/vinext/src/config/config-matchers.js");
+    const rewrites = [{ source: "/auth/:auth-method", destination: "/signin/:auth-method" }];
+    const result = matchRewrite("/auth/google", rewrites, emptyCtx);
+    expect(result).toBe("/signin/google");
+  });
 });
 
 describe("matchRedirect destination param substitution", () => {
@@ -5088,6 +5102,15 @@ describe("matchRedirect destination param substitution", () => {
     const redirects = [{ source: "/post/:id", destination: "/api/:id/:id", permanent: false }];
     const result = matchRedirect("/post/123", redirects, emptyCtx);
     expect(result).toEqual({ destination: "/api/123/123", permanent: false });
+  });
+
+  it("replaces adjacent params separated by literal characters in redirect destinations", async () => {
+    const { matchRedirect } = await import("../packages/vinext/src/config/config-matchers.js");
+    const redirects = [
+      { source: "/legacy/:year/:month", destination: "/archive/:year-:month", permanent: true },
+    ];
+    const result = matchRedirect("/legacy/2024/06", redirects, emptyCtx);
+    expect(result).toEqual({ destination: "/archive/2024-06", permanent: true });
   });
 
   it("replaces repeated locale params in locale-static redirect destinations", async () => {

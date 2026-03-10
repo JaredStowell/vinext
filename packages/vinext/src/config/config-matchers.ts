@@ -877,9 +877,19 @@ export function matchRewrite(
  * (`:path*`, `:path+`) in a single pass. Unknown params are left intact.
  */
 function substituteDestinationParams(destination: string, params: Record<string, string>): string {
-  return destination.replace(/:([\w-]+)([+*])?/g, (token, key: string) =>
-    Object.hasOwn(params, key) ? params[key] : token,
-  );
+  const keys = Object.keys(params);
+  if (keys.length === 0) return destination;
+
+  // Match only the concrete param keys captured from the source pattern.
+  // Sorting longest-first ensures hyphenated names like `auth-method`
+  // win over shorter prefixes like `auth`.
+  const paramAlternation = keys
+    .sort((a, b) => b.length - a.length)
+    .map((key) => key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("|");
+  const paramRe = new RegExp(`:(${paramAlternation})([+*])?(?![A-Za-z0-9_])`, "g");
+
+  return destination.replace(paramRe, (_token, key: string) => params[key]);
 }
 
 /**
