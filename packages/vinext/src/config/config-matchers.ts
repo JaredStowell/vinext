@@ -773,8 +773,9 @@ export function matchRedirect(
           if (!checkHasConditions(redirect.has, redirect.missing, ctx)) continue;
         }
         // Locale was omitted (the `?` made it optional) — param value is "".
-        let dest = redirect.destination;
-        dest = dest.replace(`:${entry.paramName}`, "");
+        let dest = substituteDestinationParams(redirect.destination, {
+          [entry.paramName]: "",
+        });
         dest = sanitizeDestination(dest);
         localeMatch = { destination: dest, permanent: redirect.permanent };
         localeMatchIndex = entry.originalIndex;
@@ -799,8 +800,9 @@ export function matchRedirect(
           if (redirect.has || redirect.missing) {
             if (!checkHasConditions(redirect.has, redirect.missing, ctx)) continue;
           }
-          let dest = redirect.destination;
-          dest = dest.replace(`:${entry.paramName}`, localePart);
+          let dest = substituteDestinationParams(redirect.destination, {
+            [entry.paramName]: localePart,
+          });
           dest = sanitizeDestination(dest);
           localeMatch = { destination: dest, permanent: redirect.permanent };
           localeMatchIndex = entry.originalIndex;
@@ -827,14 +829,7 @@ export function matchRedirect(
           continue;
         }
       }
-      let dest = redirect.destination;
-      for (const [key, value] of Object.entries(params)) {
-        // Replace :param*, :param+, and :param forms in the destination.
-        // The catch-all suffixes (* and +) must be stripped along with the param name.
-        dest = dest.replace(`:${key}*`, value);
-        dest = dest.replace(`:${key}+`, value);
-        dest = dest.replace(`:${key}`, value);
-      }
+      let dest = substituteDestinationParams(redirect.destination, params);
       // Collapse protocol-relative URLs (e.g. //evil.com from decoded %2F in catch-all params).
       dest = sanitizeDestination(dest);
       return { destination: dest, permanent: redirect.permanent };
@@ -866,20 +861,25 @@ export function matchRewrite(
           continue;
         }
       }
-      let dest = rewrite.destination;
-      for (const [key, value] of Object.entries(params)) {
-        // Replace :param*, :param+, and :param forms in the destination.
-        // The catch-all suffixes (* and +) must be stripped along with the param name.
-        dest = dest.replace(`:${key}*`, value);
-        dest = dest.replace(`:${key}+`, value);
-        dest = dest.replace(`:${key}`, value);
-      }
+      let dest = substituteDestinationParams(rewrite.destination, params);
       // Collapse protocol-relative URLs (e.g. //evil.com from decoded %2F in catch-all params).
       dest = sanitizeDestination(dest);
       return dest;
     }
   }
   return null;
+}
+
+/**
+ * Substitute all matched route params into a redirect/rewrite destination.
+ *
+ * Handles repeated params (e.g. `/api/:id/:id`) and catch-all suffix forms
+ * (`:path*`, `:path+`) in a single pass. Unknown params are left intact.
+ */
+function substituteDestinationParams(destination: string, params: Record<string, string>): string {
+  return destination.replace(/:([\w-]+)([+*])?/g, (token, key: string) =>
+    Object.hasOwn(params, key) ? params[key] : token,
+  );
 }
 
 /**
@@ -931,13 +931,14 @@ export async function proxyExternalRequest(
   // Build the full external URL, preserving query parameters from the original request
   const originalUrl = new URL(request.url);
   const targetUrl = new URL(externalUrl);
+  const destinationKeys = new Set(targetUrl.searchParams.keys());
 
   // If the rewrite destination already has query params, merge them.
   // Destination params take precedence — original request params are only added
   // when the destination doesn't already specify that key.
   for (const [key, value] of originalUrl.searchParams) {
-    if (!targetUrl.searchParams.has(key)) {
-      targetUrl.searchParams.set(key, value);
+    if (!destinationKeys.has(key)) {
+      targetUrl.searchParams.append(key, value);
     }
   }
 

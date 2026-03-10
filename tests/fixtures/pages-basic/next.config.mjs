@@ -11,6 +11,11 @@ const nextConfig = {
         destination: "/about",
         permanent: true,
       },
+      {
+        source: "/repeat-redirect/:id",
+        destination: "/docs/:id/:id",
+        permanent: false,
+      },
     ];
   },
   async rewrites() {
@@ -19,6 +24,10 @@ const nextConfig = {
         {
           source: "/before-rewrite",
           destination: "/about",
+        },
+        {
+          source: "/repeat-rewrite/:id",
+          destination: "/docs/:id/:id",
         },
         // Used by Vitest: pages-router.test.ts — beforeFiles rewrite gated on
         // a cookie injected by middleware. Middleware injects mw-before-user=1

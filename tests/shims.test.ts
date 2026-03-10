@@ -4820,6 +4820,60 @@ describe("proxyExternalRequest", () => {
     }
   });
 
+  it("preserves repeated original query params when the destination does not define that key", async () => {
+    const { proxyExternalRequest } =
+      await import("../packages/vinext/src/config/config-matchers.js");
+
+    const request = new Request("http://localhost:3000/test?a=1&a=2&b=3", {
+      method: "GET",
+    });
+
+    const originalFetch = globalThis.fetch;
+    let capturedEntries: Array<[string, string]> | undefined;
+    globalThis.fetch = async (url: any, _init: any) => {
+      capturedEntries = [...new URL(typeof url === "string" ? url : url.toString()).searchParams];
+      return new Response("ok", { status: 200 });
+    };
+
+    try {
+      await proxyExternalRequest(request, "https://api.example.com/v1");
+      expect(capturedEntries).toEqual([
+        ["a", "1"],
+        ["a", "2"],
+        ["b", "3"],
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("keeps destination query params authoritative while preserving repeated values for other keys", async () => {
+    const { proxyExternalRequest } =
+      await import("../packages/vinext/src/config/config-matchers.js");
+
+    const request = new Request("http://localhost:3000/test?a=1&a=2&b=3&b=4", {
+      method: "GET",
+    });
+
+    const originalFetch = globalThis.fetch;
+    let capturedEntries: Array<[string, string]> | undefined;
+    globalThis.fetch = async (url: any, _init: any) => {
+      capturedEntries = [...new URL(typeof url === "string" ? url : url.toString()).searchParams];
+      return new Response("ok", { status: 200 });
+    };
+
+    try {
+      await proxyExternalRequest(request, "https://api.example.com/v1?a=dest");
+      expect(capturedEntries).toEqual([
+        ["a", "dest"],
+        ["b", "3"],
+        ["b", "4"],
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("strips hop-by-hop headers from upstream response", async () => {
     const { proxyExternalRequest } =
       await import("../packages/vinext/src/config/config-matchers.js");
@@ -5011,6 +5065,42 @@ describe("matchRewrite with external URLs", () => {
     const result = matchRewrite("/posts/hello", rewrites, emptyCtx);
     expect(result).toBe("/blog/hello");
     expect(isExternalUrl(result!)).toBe(false);
+  });
+
+  it("replaces repeated params in rewrite destinations", async () => {
+    const { matchRewrite } = await import("../packages/vinext/src/config/config-matchers.js");
+    const rewrites = [{ source: "/post/:id", destination: "/api/:id/:id" }];
+    const result = matchRewrite("/post/123", rewrites, emptyCtx);
+    expect(result).toBe("/api/123/123");
+  });
+});
+
+describe("matchRedirect destination param substitution", () => {
+  const emptyCtx = {
+    headers: new Headers(),
+    cookies: {},
+    query: new URLSearchParams(),
+    host: "localhost",
+  };
+
+  it("replaces repeated params in redirect destinations", async () => {
+    const { matchRedirect } = await import("../packages/vinext/src/config/config-matchers.js");
+    const redirects = [{ source: "/post/:id", destination: "/api/:id/:id", permanent: false }];
+    const result = matchRedirect("/post/123", redirects, emptyCtx);
+    expect(result).toEqual({ destination: "/api/123/123", permanent: false });
+  });
+
+  it("replaces repeated locale params in locale-static redirect destinations", async () => {
+    const { matchRedirect } = await import("../packages/vinext/src/config/config-matchers.js");
+    const redirects = [
+      {
+        source: "/:locale(en|fr)?/docs",
+        destination: "/:locale/:locale/docs",
+        permanent: false,
+      },
+    ];
+    const result = matchRedirect("/en/docs", redirects, emptyCtx);
+    expect(result).toEqual({ destination: "/en/en/docs", permanent: false });
   });
 });
 

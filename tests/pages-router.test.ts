@@ -253,6 +253,12 @@ describe("Pages Router integration", () => {
     expect(res.headers.get("location")).toBe("/about");
   });
 
+  it("applies redirects with repeated dynamic params in the destination", async () => {
+    const res = await fetch(`${baseUrl}/repeat-redirect/hello`, { redirect: "manual" });
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toBe("/docs/hello/hello");
+  });
+
   it("applies custom headers from next.config.js", async () => {
     const res = await fetch(`${baseUrl}/api/hello`);
     expect(res.headers.get("x-custom-header")).toBe("vinext");
@@ -278,6 +284,13 @@ describe("Pages Router integration", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("About");
+  });
+
+  it("applies rewrites with repeated dynamic params in the destination", async () => {
+    const res = await fetch(`${baseUrl}/repeat-rewrite/hello`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("hello/hello");
   });
 
   it("applies afterFiles rewrites from next.config.js", async () => {
@@ -1899,11 +1912,24 @@ describe("Production server next.config.js features (Pages Router)", () => {
     expect(res.headers.get("location")).toContain("/about");
   });
 
+  it("applies redirects with repeated dynamic params in production", async () => {
+    const res = await fetch(`${prodUrl}/repeat-redirect/hello`, { redirect: "manual" });
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toBe("/docs/hello/hello");
+  });
+
   it("applies beforeFiles rewrites from next.config.js (/before-rewrite -> /about)", async () => {
     const res = await fetch(`${prodUrl}/before-rewrite`);
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("About");
+  });
+
+  it("applies rewrites with repeated dynamic params in production", async () => {
+    const res = await fetch(`${prodUrl}/repeat-rewrite/hello`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("hello/hello");
   });
 
   it("applies afterFiles rewrites from next.config.js (/after-rewrite -> /about)", async () => {

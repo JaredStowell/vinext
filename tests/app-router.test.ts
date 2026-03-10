@@ -2017,11 +2017,25 @@ describe("App Router next.config.js features (dev server integration)", () => {
     expect(res.headers.get("location")).toContain("/blog/hello");
   });
 
+  it("applies redirects with repeated dynamic params in the destination", async () => {
+    const res = await fetch(`${baseUrl}/repeat-redirect/hello`, { redirect: "manual" });
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toContain("/blog/hello/hello");
+  });
+
   it("applies beforeFiles rewrites from next.config.js", async () => {
     const res = await fetch(`${baseUrl}/rewrite-about`);
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("About");
+  });
+
+  it("applies rewrites with repeated dynamic params in the destination", async () => {
+    const res = await fetch(`${baseUrl}/repeat-rewrite/hello`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("hello/hello");
+    expect(html).toMatch(/Segments:.*2/);
   });
 
   it("applies afterFiles rewrites from next.config.js", async () => {
@@ -3069,6 +3083,7 @@ describe("App Router external rewrite proxy credential stripping", () => {
   let mockServer: import("node:http").Server;
   let mockPort: number;
   let capturedHeaders: import("node:http").IncomingHttpHeaders | null = null;
+  let capturedUrl: URL | null = null;
   let mockResponseMode: "plain" | "gzipHeaderAndBody" = "plain";
   let server: ViteDevServer;
   let baseUrl: string;
@@ -3078,6 +3093,7 @@ describe("App Router external rewrite proxy credential stripping", () => {
     const http = await import("node:http");
     mockServer = http.createServer((req, res) => {
       capturedHeaders = req.headers;
+      capturedUrl = new URL(req.url ?? "/", `http://localhost:${mockPort || 80}`);
       if (mockResponseMode === "gzipHeaderAndBody") {
         const payload = "proxied gzipped body";
         const gzipped = zlib.gzipSync(Buffer.from(payload));
@@ -3113,6 +3129,7 @@ describe("App Router external rewrite proxy credential stripping", () => {
   it("forwards credential headers through proxied requests to external rewrite targets", async () => {
     mockResponseMode = "plain";
     capturedHeaders = null;
+    capturedUrl = null;
 
     await fetch(`${baseUrl}/proxy-external-test/some-path`, {
       headers: {
@@ -3135,6 +3152,21 @@ describe("App Router external rewrite proxy credential stripping", () => {
     expect(capturedHeaders!["x-middleware-next"]).toBeUndefined();
     // Non-sensitive headers must be preserved
     expect(capturedHeaders!["x-custom-safe"]).toBe("keep-me");
+  });
+
+  it("preserves repeated query params when proxying to external rewrite targets", async () => {
+    mockResponseMode = "plain";
+    capturedHeaders = null;
+    capturedUrl = null;
+
+    const response = await fetch(`${baseUrl}/proxy-external-test/some-path?a=1&a=2&b=3`);
+    expect(response.status).toBe(200);
+    expect(capturedUrl).not.toBeNull();
+    expect([...capturedUrl!.searchParams.entries()]).toEqual([
+      ["a", "1"],
+      ["a", "2"],
+      ["b", "3"],
+    ]);
   });
 
   it("strips content-encoding and content-length for Node fetch auto-decompression", async () => {
