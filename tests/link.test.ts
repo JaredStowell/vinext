@@ -141,6 +141,28 @@ describe("Link resolveHref", () => {
     expect(html).toMatch(/href="\/items\?page=2&(?:amp;)?sort=name"/);
   });
 
+  it("object href preserves an existing query string in pathname", () => {
+    const html = ReactDOMServer.renderToString(
+      React.createElement(
+        Link,
+        { href: { pathname: "/items?lang=en", query: { page: "2", sort: "name" } } },
+        "x",
+      ),
+    );
+    expect(html).toMatch(/href="\/items\?lang=en&(?:amp;)?page=2&(?:amp;)?sort=name"/);
+  });
+
+  it("object href preserves hash fragments when pathname already has a query string", () => {
+    const html = ReactDOMServer.renderToString(
+      React.createElement(
+        Link,
+        { href: { pathname: "/items?lang=en#results", query: { page: "2" } } },
+        "x",
+      ),
+    );
+    expect(html).toContain('href="/items?lang=en&amp;page=2#results"');
+  });
+
   it("object href with only pathname", () => {
     const html = ReactDOMServer.renderToString(
       React.createElement(Link, { href: { pathname: "/dashboard" } }, "x"),

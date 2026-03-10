@@ -45,3 +45,25 @@ export function parseQueryString(url: string): Record<string, string | string[]>
   }
   return query;
 }
+
+/**
+ * Append query parameters to a URL while preserving any existing query string
+ * and fragment identifier.
+ */
+export function appendSearchParamsToUrl(url: string, params: Iterable<[string, string]>): string {
+  const hashIndex = url.indexOf("#");
+  const beforeHash = hashIndex === -1 ? url : url.slice(0, hashIndex);
+  const hash = hashIndex === -1 ? "" : url.slice(hashIndex);
+
+  const queryIndex = beforeHash.indexOf("?");
+  const base = queryIndex === -1 ? beforeHash : beforeHash.slice(0, queryIndex);
+  const existingQuery = queryIndex === -1 ? "" : beforeHash.slice(queryIndex + 1);
+
+  const merged = new URLSearchParams(existingQuery);
+  for (const [key, value] of params) {
+    merged.append(key, value);
+  }
+
+  const search = merged.toString();
+  return `${base}${search ? `?${search}` : ""}${hash}`;
+}

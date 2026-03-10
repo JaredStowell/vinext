@@ -10,7 +10,7 @@ import { RouterContext } from "./internal/router-context.js";
 import { isValidModulePath } from "../client/validate-module-path.js";
 import { toSameOriginPath } from "./url-utils.js";
 import { stripBasePath } from "../utils/base-path.js";
-import { addQueryParam } from "../utils/query.js";
+import { addQueryParam, appendSearchParamsToUrl } from "../utils/query.js";
 
 /** basePath from next.config.js, injected by the plugin at build time */
 const __basePath: string = process.env.__NEXT_ROUTER_BASEPATH ?? "";
@@ -113,7 +113,7 @@ function resolveUrl(url: string | UrlObject): string {
   let result = url.pathname ?? "/";
   if (url.query) {
     const params = new URLSearchParams(url.query);
-    result += `?${params.toString()}`;
+    result = appendSearchParamsToUrl(result, params);
   }
   return result;
 }

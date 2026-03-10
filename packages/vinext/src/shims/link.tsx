@@ -23,6 +23,7 @@ import React, {
 import { toRscUrl, getPrefetchedUrls, storePrefetchResponse } from "./navigation.js";
 import { isDangerousScheme } from "./url-safety.js";
 import { toSameOriginPath } from "./url-utils.js";
+import { appendSearchParamsToUrl } from "../utils/query.js";
 import type { VinextNextData } from "../client/vinext-next-data.js";
 
 interface NavigateEvent {
@@ -79,7 +80,7 @@ function resolveHref(href: LinkProps["href"]): string {
   let url = href.pathname ?? "/";
   if (href.query) {
     const params = new URLSearchParams(href.query);
-    url += `?${params.toString()}`;
+    url = appendSearchParamsToUrl(url, params);
   }
   return url;
 }
