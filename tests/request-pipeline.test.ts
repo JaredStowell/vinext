@@ -41,12 +41,22 @@ describe("stripBasePath", () => {
     expect(stripBasePath("/docs", "/docs")).toBe("/");
   });
 
+  it("strips when the next character is a path separator", () => {
+    expect(stripBasePath("/docs/about/team", "/docs")).toBe("/about/team");
+  });
+
   it("returns pathname unchanged when basePath is empty", () => {
     expect(stripBasePath("/about", "")).toBe("/about");
   });
 
   it("returns pathname unchanged when it doesn't start with basePath", () => {
     expect(stripBasePath("/other/page", "/docs")).toBe("/other/page");
+  });
+
+  it("does not strip when pathname only shares a string prefix with basePath", () => {
+    expect(stripBasePath("/application/about", "/app")).toBe("/application/about");
+    expect(stripBasePath("/app2", "/app")).toBe("/app2");
+    expect(stripBasePath("/apple", "/app")).toBe("/apple");
   });
 });
 

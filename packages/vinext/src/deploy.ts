@@ -517,6 +517,14 @@ const imageConfig: ImageConfig | undefined = vinextConfig?.images ? {
   contentSecurityPolicy: vinextConfig.images.contentSecurityPolicy,
 } : undefined;
 
+function stripBasePath(pathname: string, basePath: string): string {
+  if (!basePath) return pathname;
+  if (pathname === basePath || pathname.startsWith(basePath + "/")) {
+    return pathname.slice(basePath.length) || "/";
+  }
+  return pathname;
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     try {
@@ -532,10 +540,12 @@ export default {
       }
 
       // ── 1. Strip basePath ─────────────────────────────────────────
-      if (basePath && pathname.startsWith(basePath)) {
-        const stripped = pathname.slice(basePath.length) || "/";
-        urlWithQuery = stripped + url.search;
-        pathname = stripped;
+      {
+        const stripped = stripBasePath(pathname, basePath);
+        if (stripped !== pathname) {
+          urlWithQuery = stripped + url.search;
+          pathname = stripped;
+        }
       }
 
       // ── Image optimization via Cloudflare Images binding ──────────

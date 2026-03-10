@@ -511,7 +511,9 @@ describe("generatePagesRouterWorkerEntry", () => {
   it("handles basePath stripping and creates a new request with stripped URL for middleware", () => {
     const content = generatePagesRouterWorkerEntry();
     expect(content).toContain("basePath");
-    expect(content).toContain("pathname.startsWith(basePath)");
+    expect(content).toContain("function stripBasePath(pathname: string, basePath: string): string");
+    expect(content).toContain('pathname === basePath || pathname.startsWith(basePath + "/")');
+    expect(content).toContain("const stripped = stripBasePath(pathname, basePath);");
     // After stripping, a new request with the stripped URL must be created
     // so middleware matchers see the basePath-free pathname (matching prod-server)
     expect(content).toContain("strippedUrl.pathname = pathname");
@@ -636,7 +638,7 @@ describe("generatePagesRouterWorkerEntry", () => {
 
   it("checks image optimization after basePath stripping", () => {
     const content = generatePagesRouterWorkerEntry();
-    const basePathPos = content.indexOf("pathname.startsWith(basePath)");
+    const basePathPos = content.indexOf("const stripped = stripBasePath(pathname, basePath);");
     const imagePos = content.indexOf('pathname === "/_vinext/image"');
     expect(basePathPos).toBeGreaterThan(-1);
     expect(imagePos).toBeGreaterThan(-1);

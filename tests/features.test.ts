@@ -1305,6 +1305,17 @@ export default function Home() {
 `,
     );
 
+    // Collision route used to verify that shared string prefixes outside the
+    // basePath do not get stripped and misrouted into a valid page.
+    await fsp.mkdir(path.join(tmpDir, "pages", "lication"), { recursive: true });
+    await fsp.writeFile(
+      path.join(tmpDir, "pages", "lication", "about.tsx"),
+      `export default function Collision() {
+  return <h1>Collision Route</h1>;
+}
+`,
+    );
+
     // API route
     await fsp.mkdir(path.join(tmpDir, "pages", "api"), { recursive: true });
     await fsp.writeFile(
@@ -1380,6 +1391,16 @@ export default function Home() {
     // Without basePath prefix, the Pages Router middleware should not match.
     // The response should be a 404 or Vite's default fallback.
     expect(res.status).not.toBe(200);
+  });
+
+  it("does not strip shared string prefixes outside basePath", async () => {
+    const valid = await fetch(`${bpBaseUrl}/app/lication/about`);
+    expect(valid.status).toBe(200);
+    expect(await valid.text()).toContain("Collision Route");
+
+    const outside = await fetch(`${bpBaseUrl}/application/about`);
+    expect(outside.status).not.toBe(200);
+    expect(await outside.text()).not.toContain("Collision Route");
   });
 
   it("GET /app/api/hello serves the API route", async () => {
