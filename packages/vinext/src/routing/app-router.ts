@@ -235,7 +235,11 @@ function discoverSlotSubRoutes(
       const convertedSubRoute = convertSegmentsToRouteParts(subSegments);
       if (!convertedSubRoute) continue;
 
-      const { urlSegments: urlParts, params: subParams, isDynamic: subIsDynamic } = convertedSubRoute;
+      const {
+        urlSegments: urlParts,
+        params: subParams,
+        isDynamic: subIsDynamic,
+      } = convertedSubRoute;
 
       const subUrlPath = urlParts.join("/");
       const pattern =
@@ -842,43 +846,10 @@ function computeInterceptTarget(
   const nestedParts = path.relative(interceptRoot, currentDir).split(path.sep).filter(Boolean);
   const allSegments = [...baseParts, interceptSegment, ...nestedParts];
 
-  // Convert segments to URL pattern
-  const urlSegments: string[] = [];
-  const params: string[] = [];
+  const convertedTarget = convertSegmentsToRouteParts(allSegments);
+  if (!convertedTarget) return null;
 
-  for (const segment of allSegments) {
-    if (segment === ".") continue;
-    // Route groups and @ slots are transparent
-    if (segment.startsWith("(") && segment.endsWith(")")) continue;
-    if (segment.startsWith("@")) continue;
-
-    // Dynamic segments
-    const catchAllMatch = segment.match(/^\[\.\.\.([\w-]+)\]$/);
-    if (catchAllMatch) {
-      params.push(catchAllMatch[1]);
-      urlSegments.push(`:${catchAllMatch[1]}+`);
-      continue;
-    }
-    const optionalCatchAllMatch = segment.match(/^\[\[\.\.\.([\w-]+)\]\]$/);
-    if (optionalCatchAllMatch) {
-      params.push(optionalCatchAllMatch[1]);
-      urlSegments.push(`:${optionalCatchAllMatch[1]}*`);
-      continue;
-    }
-    const dynamicMatch = segment.match(/^\[([\w-]+)\]$/);
-    if (dynamicMatch) {
-      params.push(dynamicMatch[1]);
-      urlSegments.push(`:${dynamicMatch[1]}`);
-      continue;
-    }
-
-    // Decode URL-encoded directory names (e.g., %5Fsites -> _sites)
-    try {
-      urlSegments.push(decodeURIComponent(segment));
-    } catch {
-      urlSegments.push(segment);
-    }
-  }
+  const { urlSegments, params } = convertedTarget;
 
   const pattern = "/" + urlSegments.join("/");
   return { pattern: pattern === "/" ? "/" : pattern, params };
@@ -905,6 +876,8 @@ function convertSegmentsToRouteParts(
 
   for (let i = 0; i < segments.length; i++) {
     const segment = segments[i];
+
+    if (segment === ".") continue;
 
     // Route groups are transparent in the URL.
     if (segment.startsWith("(") && segment.endsWith(")")) continue;

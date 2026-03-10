@@ -445,6 +445,78 @@ describe("appRouter - route discovery", () => {
       expect(match!.params.slug).toEqual(["a", "b"]);
     });
   });
+
+  it("rejects non-terminal catch-all intercept targets", async () => {
+    await withTempDir("vinext-app-intercept-nonterminal-catchall-", async (tmpDir) => {
+      const appDir = path.join(tmpDir, "app");
+      await mkdir(path.join(appDir, "feed", "@modal", "(...)photos", "[...slug]", "edit"), {
+        recursive: true,
+      });
+      await writeFile(path.join(appDir, "feed", "page.tsx"), EMPTY_PAGE);
+      await writeFile(path.join(appDir, "photos", "[id]", "page.tsx"), EMPTY_PAGE);
+      await writeFile(
+        path.join(appDir, "feed", "@modal", "(...)photos", "[...slug]", "edit", "page.tsx"),
+        EMPTY_PAGE,
+      );
+
+      invalidateAppRouteCache();
+      const routes = await appRouter(appDir);
+      const feedRoute = routes.find((route) => route.pattern === "/feed");
+
+      expect(feedRoute).toBeDefined();
+      const modalSlot = feedRoute!.parallelSlots.find((slot) => slot.name === "modal");
+      expect(modalSlot).toBeUndefined();
+    });
+  });
+
+  it("rejects non-terminal optional catch-all intercept targets", async () => {
+    await withTempDir("vinext-app-intercept-nonterminal-optional-catchall-", async (tmpDir) => {
+      const appDir = path.join(tmpDir, "app");
+      await mkdir(path.join(appDir, "feed", "@modal", "(...)photos", "[[...slug]]", "edit"), {
+        recursive: true,
+      });
+      await writeFile(path.join(appDir, "feed", "page.tsx"), EMPTY_PAGE);
+      await writeFile(path.join(appDir, "photos", "[id]", "page.tsx"), EMPTY_PAGE);
+      await writeFile(
+        path.join(appDir, "feed", "@modal", "(...)photos", "[[...slug]]", "edit", "page.tsx"),
+        EMPTY_PAGE,
+      );
+
+      invalidateAppRouteCache();
+      const routes = await appRouter(appDir);
+      const feedRoute = routes.find((route) => route.pattern === "/feed");
+
+      expect(feedRoute).toBeDefined();
+      const modalSlot = feedRoute!.parallelSlots.find((slot) => slot.name === "modal");
+      expect(modalSlot).toBeUndefined();
+    });
+  });
+
+  it("allows terminal catch-all intercept targets when only route groups follow", async () => {
+    await withTempDir("vinext-app-intercept-terminal-catchall-group-", async (tmpDir) => {
+      const appDir = path.join(tmpDir, "app");
+      await mkdir(path.join(appDir, "feed", "@modal", "(...)photos", "[...slug]", "(admin)"), {
+        recursive: true,
+      });
+      await writeFile(path.join(appDir, "feed", "page.tsx"), EMPTY_PAGE);
+      await writeFile(path.join(appDir, "photos", "[id]", "page.tsx"), EMPTY_PAGE);
+      await writeFile(
+        path.join(appDir, "feed", "@modal", "(...)photos", "[...slug]", "(admin)", "page.tsx"),
+        EMPTY_PAGE,
+      );
+
+      invalidateAppRouteCache();
+      const routes = await appRouter(appDir);
+      const feedRoute = routes.find((route) => route.pattern === "/feed");
+
+      expect(feedRoute).toBeDefined();
+      const modalSlot = feedRoute!.parallelSlots.find((slot) => slot.name === "modal");
+      expect(modalSlot).toBeDefined();
+      expect(modalSlot!.interceptingRoutes).toHaveLength(1);
+      expect(modalSlot!.interceptingRoutes[0].targetPattern).toBe("/photos/:slug+");
+      expect(modalSlot!.interceptingRoutes[0].params).toEqual(["slug"]);
+    });
+  });
 });
 
 describe("matchAppRoute - URL matching", () => {
