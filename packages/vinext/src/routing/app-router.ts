@@ -177,6 +177,13 @@ export async function appRouter(
   routes.push(...slotSubRoutes);
 
   validateRoutePatterns(routes.map((route) => route.pattern));
+  validateRoutePatterns(
+    routes.flatMap((route) =>
+      route.parallelSlots.flatMap((slot) =>
+        slot.interceptingRoutes.map((intercept) => intercept.targetPattern),
+      ),
+    ),
+  );
 
   // Sort: static routes first, then dynamic, then catch-all
   routes.sort(compareRoutes);
