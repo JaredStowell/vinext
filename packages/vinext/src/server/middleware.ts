@@ -190,12 +190,8 @@ function matchMatcherPattern(
   pattern: string,
   i18nConfig?: NextI18nConfig | null,
 ): boolean {
-  if (matchPattern(pathname, pattern)) {
-    return true;
-  }
-
   if (!i18nConfig) {
-    return false;
+    return matchPattern(pathname, pattern);
   }
 
   const localeStrippedPathname = stripLocalePrefix(pathname, i18nConfig);

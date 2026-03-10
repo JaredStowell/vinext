@@ -1744,6 +1744,12 @@ describe("middleware matcher patterns", () => {
     expect(matchesMiddleware("/about", "/about")).toBe(true);
     expect(matchesMiddleware("/other", "/about")).toBe(false);
     expect(
+      matchesMiddleware("/about", "/about", undefined, {
+        locales: ["en", "fr"],
+        defaultLocale: "en",
+      }),
+    ).toBe(false);
+    expect(
       matchesMiddleware("/fr/about", "/about", undefined, {
         locales: ["en", "fr"],
         defaultLocale: "en",
@@ -1829,13 +1835,16 @@ describe("middleware matcher patterns", () => {
     expect(matchesMiddleware("/about", matcher)).toBe(false);
   });
 
-  it("matchesMiddleware: strips locale prefix unless locale is false", async () => {
+  it("matchesMiddleware: requires a locale-prefixed pathname unless locale is false", async () => {
     const { matchesMiddleware } = await import("../packages/vinext/src/server/middleware.js");
     const i18nConfig = {
       locales: ["en", "fr"],
       defaultLocale: "en",
     };
 
+    expect(matchesMiddleware("/dashboard", { source: "/dashboard" }, undefined, i18nConfig)).toBe(
+      false,
+    );
     expect(matchesMiddleware("/fr/dashboard", { source: "/dashboard" }, undefined, i18nConfig)).toBe(
       true,
     );
@@ -1954,6 +1963,12 @@ describe("middleware codegen parity", () => {
     expect(matchMiddlewarePattern("/about", "/about")).toBe(true);
     expect(matchMiddlewarePattern("/other", "/about")).toBe(false);
     expect(
+      matchesMiddleware("/about", "/about", undefined, {
+        locales: ["en", "fr"],
+        defaultLocale: "en",
+      }),
+    ).toBe(false);
+    expect(
       matchesMiddleware("/fr/about", "/about", undefined, {
         locales: ["en", "fr"],
         defaultLocale: "en",
@@ -1996,6 +2011,14 @@ describe("middleware codegen parity", () => {
       ),
     ).toBe(false);
 
+    expect(
+      matchesMiddleware(
+        "/dashboard",
+        { source: "/dashboard" },
+        undefined,
+        { locales: ["en", "fr"], defaultLocale: "en" },
+      ),
+    ).toBe(false);
     expect(
       matchesMiddleware(
         "/fr/dashboard",
