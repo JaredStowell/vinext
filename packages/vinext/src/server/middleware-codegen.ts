@@ -178,6 +178,11 @@ ${v} __emptyMiddlewareRequestContext = {
   host: "",
 };
 
+function __normalizeMiddlewareHost(hostHeader, fallbackHostname) {
+  ${v} host = hostHeader ?? fallbackHostname;
+  return host.split(":", 1)[0].toLowerCase();
+}
+
 function __parseMiddlewareCookies(cookieHeader) {
   if (!cookieHeader) return {};
   ${v} cookies = {};
@@ -198,7 +203,7 @@ function __middlewareRequestContextFromRequest(request) {
     headers: request.headers,
     cookies: __parseMiddlewareCookies(request.headers.get("cookie")),
     query: url.searchParams,
-    host: request.headers.get("host") ?? url.host,
+    host: __normalizeMiddlewareHost(request.headers.get("host"), url.hostname),
   };
 }
 
@@ -288,11 +293,23 @@ function __checkMiddlewareHasConditions(has, missing, ctx) {
   return true;
 }
 
-function __matchMiddlewareObject(pathname, matcher, i18nConfig) {
-  if (matcher.regexp) {
-    ${v} re = __safeRegExp(matcher.regexp);
-    if (re && re.test(pathname)) return true;
+function __isValidMiddlewareMatcherObject(matcher) {
+  if (!matcher || typeof matcher !== "object" || Array.isArray(matcher)) return false;
+  if (typeof matcher.source !== "string") return false;
+  for (${v} key of Object.keys(matcher)) {
+    if (key !== "source" && key !== "locale" && key !== "has" && key !== "missing") {
+      return false;
+    }
   }
+  if ("locale" in matcher && matcher.locale !== undefined && matcher.locale !== false) return false;
+  if ("has" in matcher && matcher.has !== undefined && !Array.isArray(matcher.has)) return false;
+  if ("missing" in matcher && matcher.missing !== undefined && !Array.isArray(matcher.missing)) {
+    return false;
+  }
+  return true;
+}
+
+function __matchMiddlewareObject(pathname, matcher, i18nConfig) {
   return matcher.locale === false
     ? matchMiddlewarePattern(pathname, matcher.source)
     : __matchMiddlewareMatcherPattern(pathname, matcher.source, i18nConfig);
@@ -305,14 +322,16 @@ function matchesMiddleware(pathname, matcher, request, i18nConfig) {
   if (typeof matcher === "string") {
     return __matchMiddlewareMatcherPattern(pathname, matcher, i18nConfig);
   }
+  if (!Array.isArray(matcher)) {
+    return false;
+  }
   ${v} requestContext = __middlewareRequestContextFromRequest(request);
-  ${v} matchers = Array.isArray(matcher) ? matcher : [matcher];
-  for (${v} m of matchers) {
+  for (${v} m of matcher) {
     if (typeof m === "string") {
       if (__matchMiddlewareMatcherPattern(pathname, m, i18nConfig)) return true;
       continue;
     }
-    if (m && typeof m === "object" && "source" in m) {
+    if (__isValidMiddlewareMatcherObject(m)) {
       if (!__matchMiddlewareObject(pathname, m, i18nConfig)) continue;
       if (!__checkMiddlewareHasConditions(m.has, m.missing, requestContext)) continue;
       return true;

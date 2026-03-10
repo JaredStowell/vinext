@@ -1813,7 +1813,7 @@ describe("middleware matcher patterns", () => {
     ).toBe(false);
   });
 
-  it("matchesMiddleware: supports a single object matcher config", async () => {
+  it("matchesMiddleware: rejects a single object matcher config", async () => {
     const { matchesMiddleware } = await import("../packages/vinext/src/server/middleware.js");
     const matcher: any = {
       source: "/dashboard",
@@ -1829,17 +1829,14 @@ describe("middleware matcher patterns", () => {
           headers: { "x-user-tier": "pro" },
         }),
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
-  it("matchesMiddleware: prefers regexp on object matchers", async () => {
+  it("matchesMiddleware: rejects object matchers with unsupported fields", async () => {
     const { matchesMiddleware } = await import("../packages/vinext/src/server/middleware.js");
-    const matcher: any = {
-      source: "/does-not-match",
-      regexp: "^/dashboard(?:/.*)?$",
-    };
+    const matcher: any = [{ source: "/does-not-match", regexp: "^/dashboard(?:/.*)?$" }];
 
-    expect(matchesMiddleware("/dashboard/settings", matcher)).toBe(true);
+    expect(matchesMiddleware("/dashboard/settings", matcher)).toBe(false);
     expect(matchesMiddleware("/about", matcher)).toBe(false);
   });
 
@@ -1852,16 +1849,16 @@ describe("middleware matcher patterns", () => {
 
     // Ported from Next.js: test/e2e/middleware-custom-matchers-i18n/test/index.test.ts
     // https://github.com/vercel/next.js/blob/canary/test/e2e/middleware-custom-matchers-i18n/test/index.test.ts
-    expect(matchesMiddleware("/dashboard", { source: "/dashboard" }, undefined, i18nConfig)).toBe(
+    expect(matchesMiddleware("/dashboard", [{ source: "/dashboard" }], undefined, i18nConfig)).toBe(
       true,
     );
     expect(
-      matchesMiddleware("/fr/dashboard", { source: "/dashboard" }, undefined, i18nConfig),
+      matchesMiddleware("/fr/dashboard", [{ source: "/dashboard" }], undefined, i18nConfig),
     ).toBe(true);
     expect(
       matchesMiddleware(
         "/fr/dashboard",
-        { source: "/dashboard", locale: false },
+        [{ source: "/dashboard", locale: false }],
         undefined,
         i18nConfig,
       ),
@@ -2032,13 +2029,13 @@ describe("middleware codegen parity", () => {
     ).toBe(false);
 
     expect(
-      matchesMiddleware("/dashboard", { source: "/dashboard" }, undefined, {
+      matchesMiddleware("/dashboard", [{ source: "/dashboard" }], undefined, {
         locales: ["en", "fr"],
         defaultLocale: "en",
       }),
     ).toBe(true);
     expect(
-      matchesMiddleware("/fr/dashboard", { source: "/dashboard" }, undefined, {
+      matchesMiddleware("/fr/dashboard", [{ source: "/dashboard" }], undefined, {
         locales: ["en", "fr"],
         defaultLocale: "en",
       }),
@@ -2080,13 +2077,18 @@ describe("middleware codegen parity", () => {
     const hostMatcher = [
       {
         source: "/dashboard",
-        has: [{ type: "host", key: "example.com" }],
+        has: [{ type: "host", value: "example.com" }],
       },
     ];
+    const mixedCaseHostRequest = {
+      url: "https://example.com/dashboard",
+      headers: new Headers([["host", "Example.com:3000"]]),
+    };
     const emptyHostRequest = {
       url: "https://example.com/dashboard",
       headers: new Headers([["host", ""]]),
     };
+    expect(matchesMiddleware("/dashboard", hostMatcher, mixedCaseHostRequest)).toBe(true);
     expect(matchesMiddleware("/dashboard", hostMatcher, emptyHostRequest)).toBe(false);
   });
 

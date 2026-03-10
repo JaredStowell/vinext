@@ -126,14 +126,12 @@ export function findMiddlewareFile(root: string): string | null {
 /** Matcher pattern from middleware config export. */
 type MiddlewareMatcherObject = {
   source: string;
-  regexp?: string;
-  locale?: boolean;
+  locale?: false;
   has?: HasCondition[];
   missing?: HasCondition[];
 };
 
-type MatcherInput = string | MiddlewareMatcherObject;
-type MatcherConfig = MatcherInput | MatcherInput[];
+type MatcherConfig = string | Array<string | MiddlewareMatcherObject>;
 
 const EMPTY_MIDDLEWARE_REQUEST_CONTEXT: RequestContext = {
   headers: new Headers(),
@@ -162,13 +160,15 @@ export function matchesMiddleware(
   if (typeof matcher === "string") {
     return matchMatcherPattern(pathname, matcher, i18nConfig);
   }
+  if (!Array.isArray(matcher)) {
+    return false;
+  }
 
   const requestContext = request
     ? requestContextFromRequest(request)
     : EMPTY_MIDDLEWARE_REQUEST_CONTEXT;
-  const matchers = Array.isArray(matcher) ? matcher : [matcher];
 
-  for (const m of matchers) {
+  for (const m of matcher) {
     if (typeof m === "string") {
       if (matchMatcherPattern(pathname, m, i18nConfig)) {
         return true;
@@ -176,7 +176,7 @@ export function matchesMiddleware(
       continue;
     }
 
-    if (m && typeof m === "object" && "source" in m) {
+    if (isValidMiddlewareMatcherObject(m)) {
       if (!matchObjectMatcher(pathname, m, i18nConfig)) {
         continue;
       }
@@ -190,6 +190,27 @@ export function matchesMiddleware(
   }
 
   return false;
+}
+
+function isValidMiddlewareMatcherObject(value: unknown): value is MiddlewareMatcherObject {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+
+  const matcher = value as Record<string, unknown>;
+  if (typeof matcher.source !== "string") return false;
+
+  for (const key of Object.keys(matcher)) {
+    if (key !== "source" && key !== "locale" && key !== "has" && key !== "missing") {
+      return false;
+    }
+  }
+
+  if ("locale" in matcher && matcher.locale !== undefined && matcher.locale !== false) return false;
+  if ("has" in matcher && matcher.has !== undefined && !Array.isArray(matcher.has)) return false;
+  if ("missing" in matcher && matcher.missing !== undefined && !Array.isArray(matcher.missing)) {
+    return false;
+  }
+
+  return true;
 }
 
 function matchMatcherPattern(
@@ -209,11 +230,6 @@ function matchObjectMatcher(
   matcher: MiddlewareMatcherObject,
   i18nConfig?: NextI18nConfig | null,
 ): boolean {
-  if (matcher.regexp) {
-    const re = safeRegExp(matcher.regexp);
-    if (re) return re.test(pathname);
-  }
-
   return matcher.locale === false
     ? matchPattern(pathname, matcher.source)
     : matchMatcherPattern(pathname, matcher.source, i18nConfig);
