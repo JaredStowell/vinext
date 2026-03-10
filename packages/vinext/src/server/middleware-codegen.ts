@@ -131,7 +131,7 @@ function __normalizePath(pathname) {
  *
  * This includes:
  * - `matchMiddlewarePattern(pathname, pattern)` — matches a single pattern
- * - `matchesMiddleware(pathname, matcher, request)` — matches the full matcher config
+ * - `matchesMiddleware(pathname, matcher, request, i18nConfig)` — matches the full matcher config
  *
  * The generated code depends on `__safeRegExp` being defined in the same scope
  * (use `generateSafeRegExpCode` to emit it).
@@ -198,8 +198,26 @@ function __middlewareRequestContextFromRequest(request) {
     headers: request.headers,
     cookies: __parseMiddlewareCookies(request.headers.get("cookie")),
     query: url.searchParams,
-    host: request.headers.get("host") || url.host,
+    host: request.headers.get("host") ?? url.host,
   };
+}
+
+function __stripMiddlewareLocalePrefix(pathname, i18nConfig) {
+  if (pathname === "/") return null;
+  ${v} segments = pathname.split("/");
+  ${v} firstSegment = segments[1];
+  if (!firstSegment || !i18nConfig || !i18nConfig.locales.includes(firstSegment)) {
+    return null;
+  }
+  ${v} stripped = "/" + segments.slice(2).join("/");
+  return stripped === "//" || stripped === "/" ? "/" : stripped.replace(/\\/+$/, "") || "/";
+}
+
+function __matchMiddlewareMatcherPattern(pathname, pattern, i18nConfig) {
+  if (matchMiddlewarePattern(pathname, pattern)) return true;
+  if (!i18nConfig) return false;
+  ${v} localeStrippedPathname = __stripMiddlewareLocalePrefix(pathname, i18nConfig);
+  return localeStrippedPathname ? matchMiddlewarePattern(localeStrippedPathname, pattern) : false;
 }
 
 function __middlewareConditionRegex(value) {
@@ -270,25 +288,34 @@ function __checkMiddlewareHasConditions(has, missing, ctx) {
   return true;
 }
 
-function matchesMiddleware(pathname, matcher, request) {
+function __matchMiddlewareObject(pathname, matcher, i18nConfig) {
+  if (matcher.regexp) {
+    ${v} re = __safeRegExp(matcher.regexp);
+    if (re && re.test(pathname)) return true;
+  }
+  return matcher.locale === false
+    ? matchMiddlewarePattern(pathname, matcher.source)
+    : __matchMiddlewareMatcherPattern(pathname, matcher.source, i18nConfig);
+}
+
+function matchesMiddleware(pathname, matcher, request, i18nConfig) {
   if (!matcher) {
     return true;
   }
   if (typeof matcher === "string") {
-    return matchMiddlewarePattern(pathname, matcher);
+    return __matchMiddlewareMatcherPattern(pathname, matcher, i18nConfig);
   }
   ${v} requestContext = __middlewareRequestContextFromRequest(request);
-  if (Array.isArray(matcher)) {
-    for (${v} m of matcher) {
-      if (typeof m === "string") {
-        if (matchMiddlewarePattern(pathname, m)) return true;
-        continue;
-      }
-      if (m && typeof m === "object" && "source" in m) {
-        if (!matchMiddlewarePattern(pathname, m.source)) continue;
-        if (!__checkMiddlewareHasConditions(m.has, m.missing, requestContext)) continue;
-        return true;
-      }
+  ${v} matchers = Array.isArray(matcher) ? matcher : [matcher];
+  for (${v} m of matchers) {
+    if (typeof m === "string") {
+      if (__matchMiddlewareMatcherPattern(pathname, m, i18nConfig)) return true;
+      continue;
+    }
+    if (m && typeof m === "object" && "source" in m) {
+      if (!__matchMiddlewareObject(pathname, m, i18nConfig)) continue;
+      if (!__checkMiddlewareHasConditions(m.has, m.missing, requestContext)) continue;
+      return true;
     }
   }
   return false;

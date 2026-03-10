@@ -1743,6 +1743,12 @@ describe("middleware matcher patterns", () => {
     const { matchesMiddleware } = await import("../packages/vinext/src/server/middleware.js");
     expect(matchesMiddleware("/about", "/about")).toBe(true);
     expect(matchesMiddleware("/other", "/about")).toBe(false);
+    expect(
+      matchesMiddleware("/fr/about", "/about", undefined, {
+        locales: ["en", "fr"],
+        defaultLocale: "en",
+      }),
+    ).toBe(true);
   });
 
   it("matchesMiddleware: array of string matchers", async () => {
@@ -1764,13 +1770,13 @@ describe("middleware matcher patterns", () => {
 
   it("matchesMiddleware: object matchers respect has and missing conditions", async () => {
     const { matchesMiddleware } = await import("../packages/vinext/src/server/middleware.js");
-    const matcher = [
+    const matcher: any = [
       {
         source: "/dashboard",
         has: [{ type: "header", key: "x-user-tier", value: "pro" }],
         missing: [{ type: "cookie", key: "blocked" }],
       },
-    ] as const;
+    ];
 
     expect(matchesMiddleware("/dashboard", matcher)).toBe(false);
     expect(
@@ -1789,6 +1795,56 @@ describe("middleware matcher patterns", () => {
         new Request("https://example.com/dashboard", {
           headers: { "x-user-tier": "free", cookie: "blocked=1" },
         }),
+      ),
+    ).toBe(false);
+  });
+
+  it("matchesMiddleware: supports a single object matcher config", async () => {
+    const { matchesMiddleware } = await import("../packages/vinext/src/server/middleware.js");
+    const matcher: any = {
+      source: "/dashboard",
+      has: [{ type: "header", key: "x-user-tier", value: "pro" }],
+    };
+
+    expect(matchesMiddleware("/dashboard", matcher)).toBe(false);
+    expect(
+      matchesMiddleware(
+        "/dashboard",
+        matcher,
+        new Request("https://example.com/dashboard", {
+          headers: { "x-user-tier": "pro" },
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("matchesMiddleware: prefers regexp on object matchers", async () => {
+    const { matchesMiddleware } = await import("../packages/vinext/src/server/middleware.js");
+    const matcher: any = {
+      source: "/does-not-match",
+      regexp: "^/dashboard(?:/.*)?$",
+    };
+
+    expect(matchesMiddleware("/dashboard/settings", matcher)).toBe(true);
+    expect(matchesMiddleware("/about", matcher)).toBe(false);
+  });
+
+  it("matchesMiddleware: strips locale prefix unless locale is false", async () => {
+    const { matchesMiddleware } = await import("../packages/vinext/src/server/middleware.js");
+    const i18nConfig = {
+      locales: ["en", "fr"],
+      defaultLocale: "en",
+    };
+
+    expect(matchesMiddleware("/fr/dashboard", { source: "/dashboard" }, undefined, i18nConfig)).toBe(
+      true,
+    );
+    expect(
+      matchesMiddleware(
+        "/fr/dashboard",
+        { source: "/dashboard", locale: false },
+        undefined,
+        i18nConfig,
       ),
     ).toBe(false);
   });
@@ -1897,6 +1953,12 @@ describe("middleware codegen parity", () => {
     // Exact match
     expect(matchMiddlewarePattern("/about", "/about")).toBe(true);
     expect(matchMiddlewarePattern("/other", "/about")).toBe(false);
+    expect(
+      matchesMiddleware("/fr/about", "/about", undefined, {
+        locales: ["en", "fr"],
+        defaultLocale: "en",
+      }),
+    ).toBe(true);
 
     // Regex pattern with groups (must NOT corrupt the regex via dot-escaping)
     expect(matchMiddlewarePattern("/about", "/((?!api|_next|favicon\\.ico).*)")).toBe(true);
@@ -1933,6 +1995,15 @@ describe("middleware codegen parity", () => {
         }),
       ),
     ).toBe(false);
+
+    expect(
+      matchesMiddleware(
+        "/fr/dashboard",
+        { source: "/dashboard" },
+        undefined,
+        { locales: ["en", "fr"], defaultLocale: "en" },
+      ),
+    ).toBe(true);
   });
 
   it("generateMiddlewareMatcherCode('es5') produces working matchesMiddleware", async () => {
@@ -1966,6 +2037,18 @@ describe("middleware codegen parity", () => {
         }),
       ),
     ).toBe(true);
+
+    const hostMatcher = [
+      {
+        source: "/dashboard",
+        has: [{ type: "host", key: "example.com" }],
+      },
+    ];
+    const emptyHostRequest = {
+      url: "https://example.com/dashboard",
+      headers: new Headers([["host", ""]]),
+    };
+    expect(matchesMiddleware("/dashboard", hostMatcher, emptyHostRequest)).toBe(false);
   });
 
   it("generateNormalizePathCode produces working __normalizePath", async () => {

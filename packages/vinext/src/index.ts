@@ -1408,6 +1408,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
               allowedOrigins: nextConfig?.serverActionsAllowedOrigins,
               allowedDevOrigins: nextConfig?.allowedDevOrigins,
               bodySizeLimit: nextConfig?.serverActionsBodySizeLimit,
+              i18n: nextConfig?.i18n,
             },
             instrumentationPath,
           );
@@ -1958,6 +1959,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                   getPagesRunner(),
                   middlewarePath,
                   middlewareRequest,
+                  nextConfig?.i18n,
                 );
 
                 if (!result.continue) {

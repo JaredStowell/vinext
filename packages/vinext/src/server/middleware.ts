@@ -22,7 +22,7 @@ import type { ModuleRunner } from "vite/module-runner";
 import fs from "node:fs";
 import path from "node:path";
 import { checkHasConditions, requestContextFromRequest, safeRegExp, type RequestContext } from "../config/config-matchers.js";
-import type { HasCondition } from "../config/next-config.js";
+import type { HasCondition, NextI18nConfig } from "../config/next-config.js";
 import { NextRequest, NextFetchEvent } from "../shims/server.js";
 import { normalizePath } from "./normalize-path.js";
 
@@ -127,7 +127,8 @@ type MiddlewareMatcherObject = {
   missing?: HasCondition[];
 };
 
-type MatcherConfig = string | string[] | MiddlewareMatcherObject[];
+type MatcherInput = string | MiddlewareMatcherObject;
+type MatcherConfig = MatcherInput | MatcherInput[];
 
 const EMPTY_MIDDLEWARE_REQUEST_CONTEXT: RequestContext = {
   headers: new Headers(),
@@ -145,6 +146,7 @@ export function matchesMiddleware(
   pathname: string,
   matcher: MatcherConfig | undefined,
   request?: Request,
+  i18nConfig?: NextI18nConfig | null,
 ): boolean {
   if (!matcher) {
     // Next.js default: middleware runs on ALL paths when no matcher is configured.
@@ -153,35 +155,79 @@ export function matchesMiddleware(
   }
 
   if (typeof matcher === "string") {
-    return matchPattern(pathname, matcher);
+    return matchMatcherPattern(pathname, matcher, i18nConfig);
   }
 
   const requestContext = request ? requestContextFromRequest(request) : EMPTY_MIDDLEWARE_REQUEST_CONTEXT;
+  const matchers = Array.isArray(matcher) ? matcher : [matcher];
 
-  if (Array.isArray(matcher)) {
-    for (const m of matcher) {
-      if (typeof m === "string") {
-        if (matchPattern(pathname, m)) {
-          return true;
-        }
+  for (const m of matchers) {
+    if (typeof m === "string") {
+      if (matchMatcherPattern(pathname, m, i18nConfig)) {
+        return true;
+      }
+      continue;
+    }
+
+    if (m && typeof m === "object" && "source" in m) {
+      if (!matchObjectMatcher(pathname, m, i18nConfig)) {
         continue;
       }
 
-      if (m && typeof m === "object" && "source" in m) {
-        if (!matchPattern(pathname, m.source)) {
-          continue;
-        }
-
-        if (!checkHasConditions(m.has, m.missing, requestContext)) {
-          continue;
-        }
-
-        return true;
+      if (!checkHasConditions(m.has, m.missing, requestContext)) {
+        continue;
       }
+
+      return true;
     }
   }
 
   return false;
+}
+
+function matchMatcherPattern(
+  pathname: string,
+  pattern: string,
+  i18nConfig?: NextI18nConfig | null,
+): boolean {
+  if (matchPattern(pathname, pattern)) {
+    return true;
+  }
+
+  if (!i18nConfig) {
+    return false;
+  }
+
+  const localeStrippedPathname = stripLocalePrefix(pathname, i18nConfig);
+  return localeStrippedPathname !== null && matchPattern(localeStrippedPathname, pattern);
+}
+
+function matchObjectMatcher(
+  pathname: string,
+  matcher: MiddlewareMatcherObject,
+  i18nConfig?: NextI18nConfig | null,
+): boolean {
+  if (matcher.regexp) {
+    const re = safeRegExp(matcher.regexp);
+    if (re) return re.test(pathname);
+  }
+
+  return matcher.locale === false
+    ? matchPattern(pathname, matcher.source)
+    : matchMatcherPattern(pathname, matcher.source, i18nConfig);
+}
+
+function stripLocalePrefix(pathname: string, i18nConfig: NextI18nConfig): string | null {
+  if (pathname === "/") return null;
+
+  const segments = pathname.split("/");
+  const firstSegment = segments[1];
+  if (!firstSegment || !i18nConfig.locales.includes(firstSegment)) {
+    return null;
+  }
+
+  const stripped = "/" + segments.slice(2).join("/");
+  return stripped === "//" || stripped === "/" ? "/" : stripped.replace(/\/+$/, "") || "/";
 }
 
 /**
@@ -262,6 +308,7 @@ export async function runMiddleware(
   runner: ModuleRunner,
   middlewarePath: string,
   request: Request,
+  i18nConfig?: NextI18nConfig | null,
 ): Promise<MiddlewareResult> {
   // Load the middleware module via the direct-call ModuleRunner.
   // This bypasses the hot channel entirely and is safe with all Vite plugin
@@ -289,7 +336,7 @@ export async function runMiddleware(
   }
   const normalizedPathname = normalizePath(decodedPathname);
 
-  if (!matchesMiddleware(normalizedPathname, matcher, request)) {
+  if (!matchesMiddleware(normalizedPathname, matcher, request, i18nConfig)) {
     return { continue: true };
   }
 
