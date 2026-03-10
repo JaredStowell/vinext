@@ -147,7 +147,7 @@ describe("Next.js compat: draft-mode", () => {
     expect(data).toEqual({ isEnabled: true });
   });
 
-  it('draftMode().enable() and disable() preserve the dynamic = "error" failure', async () => {
+  it('await draftMode() preserves the dynamic = "error" failure', async () => {
     const res = await fetch(`${baseUrl}/nextjs-compat/draft-mode-dynamic-error`);
     const html = await res.text();
 

@@ -631,6 +631,9 @@ export async function draftMode(): Promise<DraftModeResult> {
   markDynamicUsage();
 
   const state = _getState();
+  if (state.headersContext?.accessError) {
+    throw state.headersContext.accessError;
+  }
   const secret = getDraftSecret();
   const isEnabled = state.headersContext
     ? state.headersContext.cookies.get(DRAFT_MODE_COOKIE) === secret
