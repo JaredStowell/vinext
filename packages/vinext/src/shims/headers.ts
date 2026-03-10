@@ -396,7 +396,7 @@ function _getMutableCookies(ctx: HeadersContext): RequestCookies {
 
 function _getReadonlyCookies(ctx: HeadersContext): RequestCookies {
   if (!ctx.readonlyCookies) {
-    ctx.readonlyCookies = _sealCookies(_getMutableCookies(ctx));
+    ctx.readonlyCookies = _sealCookies(new RequestCookies(ctx.cookies));
   }
 
   return ctx.readonlyCookies;
