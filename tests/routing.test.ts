@@ -182,6 +182,7 @@ describe("matchRoute - URL matching", () => {
   it("rejects malformed non-terminal catch-all patterns in the matcher", () => {
     const malformedRoute = {
       pattern: "/:slug+/edit",
+      patternParts: [":slug+", "edit"],
       filePath: "/tmp/pages/[...slug]/edit/index.tsx",
       isDynamic: true,
       params: ["slug"],
@@ -194,6 +195,7 @@ describe("matchRoute - URL matching", () => {
   it("rejects malformed non-terminal optional catch-all patterns in the matcher", () => {
     const malformedRoute = {
       pattern: "/:slug*/edit",
+      patternParts: [":slug*", "edit"],
       filePath: "/tmp/pages/[[...slug]]/edit/index.tsx",
       isDynamic: true,
       params: ["slug"],
@@ -206,12 +208,14 @@ describe("matchRoute - URL matching", () => {
   it("skips malformed catch-all patterns and continues to later valid routes", () => {
     const malformedRoute = {
       pattern: "/:slug+/edit",
+      patternParts: [":slug+", "edit"],
       filePath: "/tmp/pages/[...slug]/edit/index.tsx",
       isDynamic: true,
       params: ["slug"],
     } as Route;
     const validRoute = {
       pattern: "/foo",
+      patternParts: ["foo"],
       filePath: "/tmp/pages/foo.tsx",
       isDynamic: false,
       params: [],
