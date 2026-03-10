@@ -529,6 +529,27 @@ describe("next/headers shim", () => {
     expect(cookieHeader).toContain("Max-Age=0");
     setHeadersContext(null);
   });
+
+  it('draftMode().enable() and disable() throw the dynamic = "error" access error', async () => {
+    const { setHeadersContext, draftMode, getDraftModeCookieHeader } =
+      await import("../packages/vinext/src/shims/headers.js");
+    const accessError = new Error(
+      'Page with `dynamic = "error"` used a dynamic API. This page was expected to be fully static.',
+    );
+
+    setHeadersContext({
+      headers: new Headers(),
+      cookies: new Map(),
+      accessError,
+    });
+
+    const dm = await draftMode();
+    expect(() => dm.enable()).toThrow(accessError);
+    expect(() => dm.disable()).toThrow(accessError);
+    expect(getDraftModeCookieHeader()).toBeNull();
+
+    setHeadersContext(null);
+  });
 });
 
 describe("next/headers phase-aware cookies", () => {

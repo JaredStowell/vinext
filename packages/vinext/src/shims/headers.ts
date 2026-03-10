@@ -639,6 +639,9 @@ export async function draftMode(): Promise<DraftModeResult> {
   return {
     isEnabled,
     enable(): void {
+      if (state.headersContext?.accessError) {
+        throw state.headersContext.accessError;
+      }
       if (state.headersContext) {
         state.headersContext.cookies.set(DRAFT_MODE_COOKIE, secret);
       }
@@ -647,6 +650,9 @@ export async function draftMode(): Promise<DraftModeResult> {
       state.draftModeCookieHeader = `${DRAFT_MODE_COOKIE}=${secret}; Path=/; HttpOnly; SameSite=Lax${secure}`;
     },
     disable(): void {
+      if (state.headersContext?.accessError) {
+        throw state.headersContext.accessError;
+      }
       if (state.headersContext) {
         state.headersContext.cookies.delete(DRAFT_MODE_COOKIE);
       }
