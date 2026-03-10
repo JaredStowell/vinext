@@ -45,20 +45,7 @@ import {
 } from "./image-optimization.js";
 import { normalizePath } from "./normalize-path.js";
 import { computeLazyChunks } from "../index.js";
-
-function normalizeManifestFile(file: string): string {
-  return file.startsWith("/") ? file.slice(1) : file;
-}
-
-function manifestFileWithBase(file: string, base: string): string {
-  const normalizedFile = normalizeManifestFile(file);
-  if (!base || base === "/") return normalizedFile;
-
-  const normalizedBase = normalizeManifestFile(base).replace(/\/+$/, "");
-  if (!normalizedBase) return normalizedFile;
-  if (normalizedFile.startsWith(normalizedBase + "/")) return normalizedFile;
-  return normalizedBase + "/" + normalizedFile;
-}
+import { manifestFileWithBase } from "../utils/manifest-paths.js";
 
 /** Convert a Node.js IncomingMessage into a ReadableStream for Web Request body. */
 function readNodeStream(req: IncomingMessage): ReadableStream<Uint8Array> {

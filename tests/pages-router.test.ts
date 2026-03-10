@@ -1132,6 +1132,14 @@ export const config = { matcher: ["/protected"] };
     // Verify build manifest was also produced (needed for lazy chunk computation)
     const buildManifestPath = path.join(outDir, "client", ".vite", "manifest.json");
     expect(fs.existsSync(buildManifestPath)).toBe(true);
+    const buildManifest = JSON.parse(fs.readFileSync(buildManifestPath, "utf-8")) as Record<
+      string,
+      unknown
+    >;
+    const counterBuildManifestEntries = Object.keys(buildManifest).filter(
+      (key) => key.endsWith("/pages/counter.tsx") || key === "pages/counter.tsx",
+    );
+    expect(counterBuildManifestEntries).toEqual([]);
 
     // There should be JS files in the assets directory
     const assets = fs.readdirSync(assetsDir);

@@ -26,6 +26,7 @@ import {
   findInNodeModules,
   ensureViteConfigCompatibility,
 } from "../packages/vinext/src/utils/project.js";
+import { manifestFileWithBase } from "../packages/vinext/src/utils/manifest-paths.js";
 import { computeLazyChunks } from "../packages/vinext/src/index.js";
 import { mergeHeaders } from "../packages/vinext/src/server/worker-utils.js";
 
@@ -1607,20 +1608,6 @@ describe("Cloudflare _headers file generation", () => {
 // added an early return for App Router builds, skipping lazy chunk injection.
 
 describe("Cloudflare closeBundle lazy chunk injection", () => {
-  function normalizeManifestFile(file: string): string {
-    return file.startsWith("/") ? file.slice(1) : file;
-  }
-
-  function manifestFileWithBase(file: string, base: string): string {
-    const normalizedFile = normalizeManifestFile(file);
-    if (!base || base === "/") return normalizedFile;
-
-    const normalizedBase = normalizeManifestFile(base).replace(/\/+$/, "");
-    if (!normalizedBase) return normalizedFile;
-    if (normalizedFile.startsWith(normalizedBase + "/")) return normalizedFile;
-    return normalizedBase + "/" + normalizedFile;
-  }
-
   /**
    * Replicates the closeBundle hook logic for App Router builds.
    * In #358's architecture, the RSC env IS the worker, so the worker entry

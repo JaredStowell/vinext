@@ -44,6 +44,11 @@ import {
 import { scanMetadataFiles } from "./server/metadata-routes.js";
 import { staticExportPages } from "./build/static-export.js";
 import { detectPackageManager } from "./utils/project.js";
+import {
+  manifestFileWithBase,
+  manifestFilesWithBase,
+  normalizeManifestFile,
+} from "./utils/manifest-paths.js";
 import { asyncHooksStubPlugin } from "./plugins/async-hooks-stub.js";
 import { hasWranglerConfig, formatMissingCloudflarePluginError } from "./deploy.js";
 import tsconfigPaths from "vite-tsconfig-paths";
@@ -575,26 +580,6 @@ function computeLazyChunks(buildManifest: Record<string, BuildManifestChunk>): s
   return lazyChunks;
 }
 
-function normalizeManifestFile(file: string): string {
-  return file.startsWith("/") ? file.slice(1) : file;
-}
-
-function manifestFileWithBase(file: string, base: string): string {
-  const normalizedFile = normalizeManifestFile(file);
-  if (!base || base === "/") return normalizedFile;
-
-  // Vite's SSR manifest stores base-prefixed paths without a leading slash,
-  // e.g. "docs/assets/app.js" for base "/docs/".
-  const normalizedBase = normalizeManifestFile(base).replace(/\/+$/, "");
-  if (!normalizedBase) return normalizedFile;
-  if (normalizedFile.startsWith(normalizedBase + "/")) return normalizedFile;
-  return normalizedBase + "/" + normalizedFile;
-}
-
-function manifestFilesWithBase(files: string[], base: string): string[] {
-  return files.map((file) => manifestFileWithBase(file, base));
-}
-
 type BundleBackfillChunk = {
   type: "chunk";
   fileName: string;
@@ -654,6 +639,7 @@ function augmentSsrManifestFromBundle(
     for (const moduleId of Object.keys(chunk.modules ?? {})) {
       const key = normalizeManifestModuleId(moduleId, root);
       if (key.startsWith("node_modules/") || key.includes("/node_modules/")) continue;
+      if (key.startsWith("\0")) continue;
       if (!nextManifest[key]) nextManifest[key] = new Set<string>();
       for (const file of files) {
         nextManifest[key].add(file);
@@ -2995,8 +2981,9 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
               buildBase,
             );
             fs.writeFileSync(ssrManifestPath, JSON.stringify(augmentedManifest, null, 2));
-          } catch {
+          } catch (err) {
             // Leave Vite's manifest untouched if parsing fails.
+            console.warn("[vinext] Failed to augment SSR manifest:", err);
           }
         },
       },
