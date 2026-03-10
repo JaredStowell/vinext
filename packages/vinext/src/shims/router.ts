@@ -453,19 +453,8 @@ function buildRouterValue(
 export function useRouter(): NextRouter {
   const [{ pathname, query, asPath }, setState] = useState(getPathnameAndQuery);
 
-  useEffect(() => {
-    const onPopState = (e: PopStateEvent) => {
-      setState(getPathnameAndQuery());
-      // Re-render with the new page on back/forward navigation
-      void navigateClient(window.location.pathname + window.location.search).then(() => {
-        restoreScrollPosition(e.state);
-      });
-    };
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
-  }, []);
-
-  // Listen for custom navigation events from Link component
+  // Popstate is handled by the module-level listener below so beforePopState()
+  // is consistently enforced even when multiple components mount useRouter().
   useEffect(() => {
     const onNavigate = ((_e: CustomEvent) => {
       setState(getPathnameAndQuery());

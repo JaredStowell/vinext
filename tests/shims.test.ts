@@ -6607,6 +6607,26 @@ describe("Pages Router router helpers", () => {
     expect(typeof mod.wrapWithRouterContext).toBe("function");
   });
 
+  it("exposes beforePopState on both the Router singleton and wrapped router context", async () => {
+    const React = await import("react");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const mod = await import("../packages/vinext/src/shims/router.js");
+    const { useRouter: useCompatRouter } =
+      await import("../packages/vinext/src/shims/compat-router.js");
+    const routerSingleton = mod.default;
+
+    let captured: unknown = "NOT_SET";
+    function Probe() {
+      captured = useCompatRouter();
+      return React.createElement("div", null, "probe");
+    }
+
+    renderToStaticMarkup(mod.wrapWithRouterContext(React.createElement(Probe)));
+
+    expect(typeof (routerSingleton as any).beforePopState).toBe("function");
+    expect(typeof (captured as any).beforePopState).toBe("function");
+  });
+
   describe("isExternalUrl", () => {
     it("detects https:// as external", () => {
       expect(isExternalUrl("https://example.com")).toBe(true);
