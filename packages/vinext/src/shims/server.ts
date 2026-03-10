@@ -9,6 +9,8 @@
  * rather than bug-for-bug parity with Next.js internals.
  */
 
+import { encodeMiddlewareRequestHeaders } from "../server/middleware-request-headers.js";
+
 // ---------------------------------------------------------------------------
 // NextRequest
 // ---------------------------------------------------------------------------
@@ -90,6 +92,15 @@ export class NextRequest extends Request {
         undefined,
     };
   }
+
+  /**
+   * The build ID of the Next.js application.
+   * Delegates to `nextUrl.buildId` to match Next.js API surface.
+   * Can be used in middleware to detect deployment skew between client and server.
+   */
+  get buildId(): string | undefined {
+    return this._nextUrl.buildId;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +152,9 @@ export class NextResponse<_Body = unknown> extends Response {
     const url = typeof destination === "string" ? destination : destination.toString();
     const headers = new Headers(init?.headers);
     headers.set("x-middleware-rewrite", url);
+    if (init?.request?.headers) {
+      encodeMiddlewareRequestHeaders(headers, init.request.headers);
+    }
     return new NextResponse(null, { ...init, headers });
   }
 
@@ -151,11 +165,8 @@ export class NextResponse<_Body = unknown> extends Response {
   static next(init?: MiddlewareResponseInit): NextResponse {
     const headers = new Headers(init?.headers);
     headers.set("x-middleware-next", "1");
-    // Forward request headers if provided
     if (init?.request?.headers) {
-      for (const [key, value] of init.request.headers.entries()) {
-        headers.set(`x-middleware-request-${key}`, value);
-      }
+      encodeMiddlewareRequestHeaders(headers, init.request.headers);
     }
     return new NextResponse(null, { ...init, headers });
   }
@@ -256,6 +267,16 @@ export class NextURL {
 
   toString(): string {
     return this._url.toString();
+  }
+
+  /**
+   * The build ID of the Next.js application.
+   * Set from `generateBuildId` in next.config.js, or a random UUID if not configured.
+   * Can be used in middleware to detect deployment skew between client and server.
+   * Matches the Next.js API: `request.nextUrl.buildId`.
+   */
+  get buildId(): string | undefined {
+    return process.env.__VINEXT_BUILD_ID ?? undefined;
   }
 }
 
