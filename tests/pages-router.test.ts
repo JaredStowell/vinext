@@ -1154,6 +1154,12 @@ export const config = { matcher: ["/protected"] };
       const entrySize = fs.statSync(path.join(assetsDir, entryChunk)).size;
       expect(entrySize).toBeLessThan(20 * 1024); // < 20 KB
     }
+
+    const counterManifestEntry = Object.entries(manifest).find(
+      ([key]) => key.endsWith("/pages/counter.tsx") || key === "pages/counter.tsx",
+    );
+    expect(counterManifestEntry).toBeDefined();
+    expect(counterManifestEntry?.[1].some((file: string) => file.endsWith(".js"))).toBe(true);
   });
 
   it("serves pages from production build end-to-end", async () => {

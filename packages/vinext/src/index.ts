@@ -490,6 +490,16 @@ const clientTreeshakeConfig = {
   moduleSideEffects: "no-external" as const,
 };
 
+type BuildManifestChunk = {
+  file: string;
+  isEntry?: boolean;
+  isDynamicEntry?: boolean;
+  imports?: string[];
+  dynamicImports?: string[];
+  css?: string[];
+  assets?: string[];
+};
+
 /**
  * Compute the set of chunk filenames that are ONLY reachable through dynamic
  * imports (i.e. behind React.lazy(), next/dynamic, or manual import()).
@@ -507,19 +517,7 @@ const clientTreeshakeConfig = {
  * @returns Array of chunk filenames (e.g. "assets/mermaid-NOHMQCX5.js") that
  *   should be excluded from modulepreload hints.
  */
-function computeLazyChunks(
-  buildManifest: Record<
-    string,
-    {
-      file: string;
-      isEntry?: boolean;
-      isDynamicEntry?: boolean;
-      imports?: string[];
-      dynamicImports?: string[];
-      css?: string[];
-    }
-  >,
-): string[] {
+function computeLazyChunks(buildManifest: Record<string, BuildManifestChunk>): string[] {
   // Collect all chunk files that are statically reachable from entries
   const eagerFiles = new Set<string>();
   const visited = new Set<string>();
@@ -575,6 +573,73 @@ function computeLazyChunks(
   }
 
   return lazyChunks;
+}
+
+function normalizeManifestFile(file: string): string {
+  return file.startsWith("/") ? file.slice(1) : file;
+}
+
+type BundleBackfillChunk = {
+  type: "chunk";
+  fileName: string;
+  imports?: string[];
+  modules?: Record<string, unknown>;
+  viteMetadata?: {
+    importedCss?: Set<string>;
+    importedAssets?: Set<string>;
+  };
+};
+
+function normalizeManifestModuleId(moduleId: string, root: string): string {
+  const normalizedId = moduleId.replace(/\\/g, "/");
+  if (!path.isAbsolute(moduleId)) return normalizedId;
+
+  const relativeId = path.relative(root, moduleId).replace(/\\/g, "/");
+  if (!relativeId || relativeId.startsWith("../")) return normalizedId;
+  return relativeId;
+}
+
+function augmentSsrManifestFromBundle(
+  ssrManifest: Record<string, string[]>,
+  bundle: Record<string, BundleBackfillChunk | { type: string }>,
+  root: string,
+): Record<string, string[]> {
+  const nextManifest = Object.fromEntries(
+    Object.entries(ssrManifest).map(([key, files]) => [
+      key,
+      new Set(files.map((file) => normalizeManifestFile(file))),
+    ]),
+  ) as Record<string, Set<string>>;
+
+  for (const item of Object.values(bundle)) {
+    if (item.type !== "chunk") continue;
+    const chunk = item as BundleBackfillChunk;
+
+    const files = new Set<string>();
+    files.add(normalizeManifestFile(chunk.fileName));
+    for (const importedFile of chunk.imports ?? []) {
+      files.add(normalizeManifestFile(importedFile));
+    }
+    for (const cssFile of chunk.viteMetadata?.importedCss ?? []) {
+      files.add(normalizeManifestFile(cssFile));
+    }
+    for (const assetFile of chunk.viteMetadata?.importedAssets ?? []) {
+      files.add(normalizeManifestFile(assetFile));
+    }
+
+    for (const moduleId of Object.keys(chunk.modules ?? {})) {
+      const key = normalizeManifestModuleId(moduleId, root);
+      if (key.startsWith("node_modules/") || key.includes("/node_modules/")) continue;
+      if (!nextManifest[key]) nextManifest[key] = new Set<string>();
+      for (const file of files) {
+        nextManifest[key].add(file);
+      }
+    }
+  }
+
+  return Object.fromEntries(
+    Object.entries(nextManifest).map(([key, files]) => [key, [...files]]),
+  ) as Record<string, string[]>;
 }
 
 export interface VinextOptions {
@@ -2874,6 +2939,41 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
         },
       },
     },
+    // Vite can emit empty SSR manifest entries for modules that Rollup inlines
+    // into another chunk. Pages Router looks up assets by page module path at
+    // runtime, so rebuild those mappings from the emitted client bundle.
+    {
+      name: "vinext:ssr-manifest-backfill",
+      apply: "build",
+      enforce: "post",
+      writeBundle: {
+        sequential: true,
+        order: "post",
+        handler(options, bundle) {
+          const outDir = options.dir;
+          if (!outDir) return;
+
+          const viteDir = path.join(outDir, ".vite");
+          const ssrManifestPath = path.join(viteDir, "ssr-manifest.json");
+          if (!fs.existsSync(ssrManifestPath)) return;
+
+          try {
+            const ssrManifest = JSON.parse(
+              fs.readFileSync(ssrManifestPath, "utf-8"),
+            ) as Record<string, string[]>;
+            const buildRoot = this.environment?.config.root ?? process.cwd();
+            const augmentedManifest = augmentSsrManifestFromBundle(
+              ssrManifest,
+              bundle as Record<string, BundleBackfillChunk | { type: string }>,
+              buildRoot,
+            );
+            fs.writeFileSync(ssrManifestPath, JSON.stringify(augmentedManifest, null, 2));
+          } catch {
+            // Leave Vite's manifest untouched if parsing fails.
+          }
+        },
+      },
+    },
     // Cloudflare Workers production build integration:
     // After all environments are built, compute lazy chunks from the client
     // build manifest and inject globals into the worker entry.
@@ -3419,6 +3519,7 @@ export type { NextConfig } from "./config/next-config.js";
 
 // Exported for CLI and testing
 export { clientManualChunks, clientOutputConfig, clientTreeshakeConfig, computeLazyChunks };
+export { augmentSsrManifestFromBundle as _augmentSsrManifestFromBundle };
 export { resolvePostcssStringPlugins as _resolvePostcssStringPlugins };
 export { parseStaticObjectLiteral as _parseStaticObjectLiteral };
 export { stripServerExports as _stripServerExports };

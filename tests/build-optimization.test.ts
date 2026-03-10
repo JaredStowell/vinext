@@ -10,6 +10,7 @@ import {
   clientManualChunks,
   clientTreeshakeConfig,
   computeLazyChunks,
+  _augmentSsrManifestFromBundle,
   _stripServerExports,
   _asyncHooksStubPlugin,
 } from "../packages/vinext/src/index.js";
@@ -774,6 +775,83 @@ describe("computeLazyChunks", () => {
     // Framework and entry should NOT be lazy
     expect(lazy).not.toContain("assets/vinext-client-entry-abc.js");
     expect(lazy).not.toContain("assets/framework-xyz.js");
+  });
+});
+
+describe("augmentSsrManifestFromBundle", () => {
+  it("backfills inlined page modules with the containing entry chunk", () => {
+    const bundle = {
+      "assets/vinext-client-entry.js": {
+        type: "chunk" as const,
+        fileName: "assets/vinext-client-entry.js",
+        imports: ["assets/vinext.js", "assets/framework.js"],
+        modules: {
+          "\0virtual:vinext-client-entry": {},
+          "/app/pages/counter.tsx": {},
+        },
+      },
+    };
+
+    const ssrManifest = {
+      "pages/counter.tsx": [],
+    };
+
+    const augmented = _augmentSsrManifestFromBundle(ssrManifest, bundle, "/app");
+
+    expect(augmented["pages/counter.tsx"]).toEqual([
+      "assets/vinext-client-entry.js",
+      "assets/vinext.js",
+      "assets/framework.js",
+    ]);
+  });
+
+  it("adds CSS and asset metadata from the containing chunk", () => {
+    const bundle = {
+      "assets/about.js": {
+        type: "chunk" as const,
+        fileName: "assets/about.js",
+        imports: [],
+        modules: {
+          "/app/pages/about.tsx": {},
+        },
+        viteMetadata: {
+          importedCss: new Set(["assets/about.css"]),
+          importedAssets: new Set(["assets/logo.svg"]),
+        },
+      },
+    };
+
+    const augmented = _augmentSsrManifestFromBundle({}, bundle, "/app");
+
+    expect(augmented["pages/about.tsx"]).toEqual([
+      "assets/about.js",
+      "assets/about.css",
+      "assets/logo.svg",
+    ]);
+  });
+
+  it("preserves existing SSR manifest files while normalizing leading slashes", () => {
+    const bundle = {
+      "assets/about.js": {
+        type: "chunk" as const,
+        fileName: "assets/about.js",
+        imports: [],
+        modules: {
+          "/app/pages/about.tsx": {},
+        },
+      },
+    };
+
+    const ssrManifest = {
+      "pages/about.tsx": ["/assets/about.js", "/assets/about.css"],
+    };
+
+    const augmented = _augmentSsrManifestFromBundle(ssrManifest, bundle, "/app");
+
+    expect(augmented["pages/about.tsx"]).toEqual([
+      "assets/about.js",
+      "assets/about.css",
+    ]);
   });
 });
 
