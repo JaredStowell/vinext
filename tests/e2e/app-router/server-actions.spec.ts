@@ -91,7 +91,8 @@ test.describe("Server Actions", () => {
 
     await page.click("#submit-action");
     const readActionCookie = async () =>
-      (await page.context().cookies()).find((cookie) => cookie.name === "action-cookie")?.value ?? null;
+      (await page.context().cookies()).find((cookie) => cookie.name === "action-cookie")?.value ??
+      null;
 
     let cookieSet = false;
     try {

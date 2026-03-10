@@ -17,6 +17,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 interface HeadersContext {
   headers: Headers;
   cookies: Map<string, string>;
+  accessError?: Error;
   mutableCookies?: RequestCookies;
   readonlyCookies?: RequestCookies;
   readonlyHeaders?: Headers;
@@ -131,7 +132,10 @@ export function consumeDynamicUsage(): boolean {
   return used;
 }
 
-function _setStatePhase(state: VinextHeadersShimState, phase: HeadersAccessPhase): HeadersAccessPhase {
+function _setStatePhase(
+  state: VinextHeadersShimState,
+  phase: HeadersAccessPhase,
+): HeadersAccessPhase {
   const previous = state.phase;
   state.phase = phase;
   return previous;
@@ -286,7 +290,10 @@ class ReadonlyRequestCookiesError extends Error {
   }
 }
 
-function _decorateRequestApiPromise<T extends object>(promise: Promise<T>, target: T): Promise<T> & T {
+function _decorateRequestApiPromise<T extends object>(
+  promise: Promise<T>,
+  target: T,
+): Promise<T> & T {
   return new Proxy(promise as Promise<T> & T, {
     get(promiseTarget, prop) {
       if (prop in promiseTarget) {
@@ -304,10 +311,31 @@ function _decorateRequestApiPromise<T extends object>(promise: Promise<T>, targe
       return Array.from(new Set([...Reflect.ownKeys(promiseTarget), ...Reflect.ownKeys(target)]));
     },
     getOwnPropertyDescriptor(promiseTarget, prop) {
-      return Reflect.getOwnPropertyDescriptor(promiseTarget, prop)
-        ?? Reflect.getOwnPropertyDescriptor(target, prop);
+      return (
+        Reflect.getOwnPropertyDescriptor(promiseTarget, prop) ??
+        Reflect.getOwnPropertyDescriptor(target, prop)
+      );
     },
   });
+}
+
+function _decorateRejectedRequestApiPromise<T extends object>(error: unknown): Promise<T> & T {
+  const normalizedError = error instanceof Error ? error : new Error(String(error));
+  const promise = Promise.reject(normalizedError) as Promise<T>;
+  // Mark the rejection as handled so legacy sync access does not trigger
+  // spurious unhandled rejection noise before callers await/catch it.
+  promise.catch(() => {});
+
+  const throwingTarget = new Proxy({} as T, {
+    get(_target, prop) {
+      if (prop === "then" || prop === "catch" || prop === "finally") {
+        return undefined;
+      }
+      throw normalizedError;
+    },
+  });
+
+  return _decorateRequestApiPromise(promise, throwingTarget);
 }
 
 function _sealHeaders(headers: Headers): Headers {
@@ -482,17 +510,21 @@ export function headers(): Promise<Headers> & Headers {
   try {
     throwIfInsideCacheScope("headers()");
   } catch (error) {
-    return Promise.reject(error) as Promise<Headers> & Headers;
+    return _decorateRejectedRequestApiPromise<Headers>(error);
   }
 
   const state = _getState();
   if (!state.headersContext) {
-    return Promise.reject(
+    return _decorateRejectedRequestApiPromise<Headers>(
       new Error(
         "headers() can only be called from a Server Component, Route Handler, " +
           "or Server Action. Make sure you're not calling it from a Client Component.",
       ),
-    ) as Promise<Headers> & Headers;
+    );
+  }
+
+  if (state.headersContext.accessError) {
+    return _decorateRejectedRequestApiPromise<Headers>(state.headersContext.accessError);
   }
 
   markDynamicUsage();
@@ -508,14 +540,20 @@ export function cookies(): Promise<RequestCookies> & RequestCookies {
   try {
     throwIfInsideCacheScope("cookies()");
   } catch (error) {
-    return Promise.reject(error) as Promise<RequestCookies> & RequestCookies;
+    return _decorateRejectedRequestApiPromise<RequestCookies>(error);
   }
 
   const state = _getState();
   if (!state.headersContext) {
-    return Promise.reject(
-      new Error("cookies() can only be called from a Server Component, Route Handler, or Server Action."),
-    ) as Promise<RequestCookies> & RequestCookies;
+    return _decorateRejectedRequestApiPromise<RequestCookies>(
+      new Error(
+        "cookies() can only be called from a Server Component, Route Handler, or Server Action.",
+      ),
+    );
+  }
+
+  if (state.headersContext.accessError) {
+    return _decorateRejectedRequestApiPromise<RequestCookies>(state.headersContext.accessError);
   }
 
   markDynamicUsage();

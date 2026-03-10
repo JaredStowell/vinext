@@ -1951,25 +1951,18 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     });
   }
 
-  // dynamic = 'error': set a trap context that throws when headers/cookies are accessed
+  // dynamic = 'error': install an access error so request APIs fail with the
+  // static-generation message even for legacy sync property access.
   if (isDynamicError) {
     const errorMsg = 'Page with \`dynamic = "error"\` used a dynamic API. ' +
       'This page was expected to be fully static, but headers(), cookies(), ' +
       'or searchParams was accessed. Remove the dynamic API usage or change ' +
       'the dynamic config to "auto" or "force-dynamic".';
-    const throwingHeaders = new Proxy(new Headers(), {
-      get(target, prop) {
-        if (typeof prop === "string" && prop !== "then") throw new Error(errorMsg);
-        return Reflect.get(target, prop);
-      },
+    setHeadersContext({
+      headers: new Headers(),
+      cookies: new Map(),
+      accessError: new Error(errorMsg),
     });
-    const throwingCookies = new Proxy(new Map(), {
-      get(target, prop) {
-        if (typeof prop === "string" && prop !== "then") throw new Error(errorMsg);
-        return Reflect.get(target, prop);
-      },
-    });
-    setHeadersContext({ headers: throwingHeaders, cookies: throwingCookies });
     setNavigationContext({
       pathname: cleanPathname,
       searchParams: new URLSearchParams(),

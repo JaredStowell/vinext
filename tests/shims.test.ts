@@ -443,6 +443,15 @@ describe("next/headers shim", () => {
     await expect(cookies()).rejects.toThrow("Server Component");
   });
 
+  it("legacy sync access still throws the request-context error outside request context", async () => {
+    const { headers, cookies, setHeadersContext } =
+      await import("../packages/vinext/src/shims/headers.js");
+    setHeadersContext(null);
+
+    expect(() => headers().get("x-test")).toThrow("Server Component");
+    expect(() => cookies().get("session")).toThrow("Server Component");
+  });
+
   it("draftMode() returns isEnabled=false when no bypass cookie", async () => {
     const { setHeadersContext, draftMode } =
       await import("../packages/vinext/src/shims/headers.js");
@@ -2665,7 +2674,9 @@ describe("cookie name validation", () => {
     const previousPhase = headersModule.setHeadersAccessPhase("route-handler");
     try {
       const jar = await headersModule.cookies();
-      expect(() => jar.set("foo=bar; Path=/; Domain=evil.com", "val")).toThrow("Invalid cookie name");
+      expect(() => jar.set("foo=bar; Path=/; Domain=evil.com", "val")).toThrow(
+        "Invalid cookie name",
+      );
     } finally {
       headersModule.setHeadersAccessPhase(previousPhase);
     }
@@ -8118,6 +8129,22 @@ describe("cache scope guards for dynamic APIs", () => {
     setHeadersContext(null);
   });
 
+  it('headers() sync access throws the "use cache" error instead of a TypeError', async () => {
+    const { cacheContextStorage } = await import("../packages/vinext/src/shims/cache-runtime.js");
+    const { headers, setHeadersContext } = await import("../packages/vinext/src/shims/headers.js");
+
+    setHeadersContext({
+      headers: new Headers({ "x-test": "blocked" }),
+      cookies: new Map(),
+    });
+
+    await cacheContextStorage.run({ tags: [], lifeConfigs: [], variant: "default" }, async () => {
+      expect(() => headers().get("x-test")).toThrow(/cannot be called inside "use cache"/);
+    });
+
+    setHeadersContext(null);
+  });
+
   it('cookies() throws inside "use cache" scope', async () => {
     const { cacheContextStorage } = await import("../packages/vinext/src/shims/cache-runtime.js");
     const { cookies, setHeadersContext } = await import("../packages/vinext/src/shims/headers.js");
@@ -8126,6 +8153,22 @@ describe("cache scope guards for dynamic APIs", () => {
 
     await cacheContextStorage.run({ tags: [], lifeConfigs: [], variant: "default" }, async () => {
       await expect(cookies()).rejects.toThrow(/cannot be called inside "use cache"/);
+    });
+
+    setHeadersContext(null);
+  });
+
+  it('cookies() sync access throws the "use cache" error instead of a TypeError', async () => {
+    const { cacheContextStorage } = await import("../packages/vinext/src/shims/cache-runtime.js");
+    const { cookies, setHeadersContext } = await import("../packages/vinext/src/shims/headers.js");
+
+    setHeadersContext({
+      headers: new Headers(),
+      cookies: new Map([["session", "blocked"]]),
+    });
+
+    await cacheContextStorage.run({ tags: [], lifeConfigs: [], variant: "default" }, async () => {
+      expect(() => cookies().get("session")).toThrow(/cannot be called inside "use cache"/);
     });
 
     setHeadersContext(null);

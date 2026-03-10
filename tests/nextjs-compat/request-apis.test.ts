@@ -60,6 +60,17 @@ describe("Next.js compat: request-apis", () => {
     expect(res.headers.getSetCookie()).toEqual([]);
   });
 
+  it('preserves the dynamic = "error" failure for sync request API access', async () => {
+    const res = await fetch(`${baseUrl}/nextjs-compat/request-api-dynamic-error`);
+    const html = await res.text();
+
+    expect(html).toMatch(
+      /Page with `dynamic = (?:&quot;|\\")error(?:&quot;|\\")` used a dynamic API/,
+    );
+    expect(html).not.toContain("Headers cannot be modified");
+    expect(html).not.toContain("Cookies can only be modified in a Server Action or Route Handler");
+  });
+
   it("allows sync cookies() mutation in route handlers", async () => {
     const res = await fetch(`${baseUrl}/nextjs-compat/api/request-api-sync`, {
       headers: { "x-sync-header": "route-header" },
