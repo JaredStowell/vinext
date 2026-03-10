@@ -251,7 +251,7 @@ import { MetadataHead, mergeMetadata, resolveModuleMetadata, ViewportHead, merge
 ${middlewarePath ? `import * as middlewareModule from ${JSON.stringify(middlewarePath.replace(/\\/g, "/"))};` : ""}
 ${instrumentationPath ? `import * as _instrumentation from ${JSON.stringify(instrumentationPath.replace(/\\/g, "/"))};` : ""}
 ${effectiveMetaRoutes.length > 0 ? `import { sitemapToXml, robotsToText, manifestToJson } from ${JSON.stringify(fileURLToPath(new URL("../server/metadata-routes.js", import.meta.url)).replace(/\\/g, "/"))};` : ""}
-import { requestContextFromRequest, matchRedirect, matchRewrite, matchHeaders, isExternalUrl, proxyExternalRequest, sanitizeDestination } from ${JSON.stringify(configMatchersPath)};
+import { requestContextFromRequest, normalizeHost, matchRedirect, matchRewrite, matchHeaders, isExternalUrl, proxyExternalRequest, sanitizeDestination } from ${JSON.stringify(configMatchersPath)};
 import { validateCsrfOrigin, validateImageUrl, guardProtocolRelativeUrl, stripBasePath, normalizeTrailingSlash, processMiddlewareHeaders } from ${JSON.stringify(requestPipelinePath)};
 import { _consumeRequestScopedCacheLife, _runWithCacheState } from "next/cache";
 import { runWithFetchCache } from "vinext/fetch-cache";
@@ -1219,7 +1219,7 @@ function __buildPostMwRequestContext(request) {
     headers: ctx.headers,
     cookies: cookiesRecord,
     query: url.searchParams,
-    host: ctx.headers.get("host") || url.host,
+    host: normalizeHost(ctx.headers.get("host"), url.hostname),
   };
 }
 

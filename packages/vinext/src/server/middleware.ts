@@ -218,11 +218,10 @@ function matchMatcherPattern(
   pattern: string,
   i18nConfig?: NextI18nConfig | null,
 ): boolean {
-  if (matchPattern(pathname, pattern)) return true;
-  if (!i18nConfig) return false;
+  if (!i18nConfig) return matchPattern(pathname, pattern);
 
   const localeStrippedPathname = stripLocalePrefix(pathname, i18nConfig);
-  return localeStrippedPathname !== null && matchPattern(localeStrippedPathname, pattern);
+  return matchPattern(localeStrippedPathname ?? pathname, pattern);
 }
 
 function matchObjectMatcher(

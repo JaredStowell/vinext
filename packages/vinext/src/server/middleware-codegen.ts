@@ -219,10 +219,9 @@ function __stripMiddlewareLocalePrefix(pathname, i18nConfig) {
 }
 
 function __matchMiddlewareMatcherPattern(pathname, pattern, i18nConfig) {
-  if (matchMiddlewarePattern(pathname, pattern)) return true;
-  if (!i18nConfig) return false;
+  if (!i18nConfig) return matchMiddlewarePattern(pathname, pattern);
   ${v} localeStrippedPathname = __stripMiddlewareLocalePrefix(pathname, i18nConfig);
-  return localeStrippedPathname ? matchMiddlewarePattern(localeStrippedPathname, pattern) : false;
+  return matchMiddlewarePattern(localeStrippedPathname ?? pathname, pattern);
 }
 
 function __middlewareConditionRegex(value) {

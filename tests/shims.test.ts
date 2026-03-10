@@ -1765,6 +1765,22 @@ describe("middleware matcher patterns", () => {
     ).toBe(true);
   });
 
+  it("matchesMiddleware: locale-prefixed negative-lookahead matchers keep internal paths excluded", async () => {
+    const { matchesMiddleware } = await import("../packages/vinext/src/server/middleware.js");
+    const matcher = "/((?!api|_next|favicon\\.ico).*)";
+    const i18nConfig = {
+      locales: ["en", "fr"],
+      defaultLocale: "en",
+    };
+
+    expect(matchesMiddleware("/fr/about", matcher, undefined, i18nConfig)).toBe(true);
+    expect(matchesMiddleware("/fr/api/hello", matcher, undefined, i18nConfig)).toBe(false);
+    expect(matchesMiddleware("/fr/_next/static/chunk.js", matcher, undefined, i18nConfig)).toBe(
+      false,
+    );
+    expect(matchesMiddleware("/fr/favicon.ico", matcher, undefined, i18nConfig)).toBe(false);
+  });
+
   it("matchesMiddleware: array of string matchers", async () => {
     const { matchesMiddleware } = await import("../packages/vinext/src/server/middleware.js");
     const matcher = ["/about", "/dashboard/:path*"];
@@ -1995,6 +2011,35 @@ describe("middleware codegen parity", () => {
     // Regex pattern with groups (must NOT corrupt the regex via dot-escaping)
     expect(matchMiddlewarePattern("/about", "/((?!api|_next|favicon\\.ico).*)")).toBe(true);
     expect(matchMiddlewarePattern("/api/hello", "/((?!api|_next|favicon\\.ico).*)")).toBe(false);
+    expect(
+      matchesMiddleware("/fr/about", "/((?!api|_next|favicon\\.ico).*)", undefined, {
+        locales: ["en", "fr"],
+        defaultLocale: "en",
+      }),
+    ).toBe(true);
+    expect(
+      matchesMiddleware("/fr/api/hello", "/((?!api|_next|favicon\\.ico).*)", undefined, {
+        locales: ["en", "fr"],
+        defaultLocale: "en",
+      }),
+    ).toBe(false);
+    expect(
+      matchesMiddleware(
+        "/fr/_next/static/chunk.js",
+        "/((?!api|_next|favicon\\.ico).*)",
+        undefined,
+        {
+          locales: ["en", "fr"],
+          defaultLocale: "en",
+        },
+      ),
+    ).toBe(false);
+    expect(
+      matchesMiddleware("/fr/favicon.ico", "/((?!api|_next|favicon\\.ico).*)", undefined, {
+        locales: ["en", "fr"],
+        defaultLocale: "en",
+      }),
+    ).toBe(false);
 
     // Named params
     expect(matchMiddlewarePattern("/user/123", "/user/:id")).toBe(true);

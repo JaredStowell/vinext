@@ -417,7 +417,7 @@ export function requestContextFromRequest(request: Request): RequestContext {
   };
 }
 
-function normalizeHost(hostHeader: string | null, fallbackHostname: string): string {
+export function normalizeHost(hostHeader: string | null, fallbackHostname: string): string {
   const host = hostHeader ?? fallbackHostname;
   return host.split(":", 1)[0].toLowerCase();
 }
