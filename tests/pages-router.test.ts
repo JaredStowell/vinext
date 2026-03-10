@@ -1247,6 +1247,103 @@ export default function CounterPage() {
     }
   });
 
+  it("emits stylesheet and static asset URLs for backfilled inlined pages", async () => {
+    const tmpRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "vinext-pages-inline-assets-"));
+    const rootNodeModules = path.resolve(import.meta.dirname, "../node_modules");
+    const fixtureOutDir = path.join(tmpRoot, "dist");
+
+    try {
+      await fsp.symlink(rootNodeModules, path.join(tmpRoot, "node_modules"), "junction");
+      await fsp.mkdir(path.join(tmpRoot, "pages"), { recursive: true });
+
+      await fsp.writeFile(path.join(tmpRoot, "package.json"), JSON.stringify({ type: "module" }));
+      await fsp.writeFile(path.join(tmpRoot, "next.config.mjs"), `export default {};\n`);
+      await fsp.writeFile(
+        path.join(tmpRoot, "pages", "counter.module.css"),
+        `.button { color: red; background-image: url("./dot.svg"); }\n`,
+      );
+      await fsp.writeFile(
+        path.join(tmpRoot, "pages", "dot.svg"),
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5"/></svg>\n`,
+      );
+      await fsp.writeFile(
+        path.join(tmpRoot, "pages", "counter.tsx"),
+        `import { useState } from "react";
+import styles from "./counter.module.css";
+export default function CounterPage() {
+  const [count, setCount] = useState(0);
+  return (
+    <button className={styles.button} data-testid="increment" onClick={() => setCount((c) => c + 1)}>
+      Count: {count}
+    </button>
+  );
+}
+`,
+      );
+
+      await build({
+        root: tmpRoot,
+        configFile: false,
+        plugins: [vinext()],
+        logLevel: "silent",
+        build: {
+          outDir: path.join(fixtureOutDir, "server"),
+          ssr: "virtual:vinext-server-entry",
+          rollupOptions: { output: { entryFileNames: "entry.js" } },
+        },
+      });
+
+      await build({
+        root: tmpRoot,
+        configFile: false,
+        plugins: [vinext()],
+        logLevel: "silent",
+        build: {
+          outDir: path.join(fixtureOutDir, "client"),
+          manifest: true,
+          ssrManifest: true,
+          rollupOptions: { input: "virtual:vinext-client-entry" },
+        },
+      });
+
+      const manifestPath = path.join(fixtureOutDir, "client", ".vite", "ssr-manifest.json");
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+      const counterManifestEntries = Object.entries(manifest).filter(
+        ([key]) => key.endsWith("/pages/counter.tsx") || key === "pages/counter.tsx",
+      );
+      expect(counterManifestEntries.length).toBeGreaterThan(0);
+      const populatedCounterManifestEntry = counterManifestEntries.find(([, files]) =>
+        files.some((file: string) => file.endsWith(".css")),
+      );
+      expect(populatedCounterManifestEntry).toBeDefined();
+      const cssFile = populatedCounterManifestEntry?.[1].find((file: string) => file.endsWith(".css"));
+      expect(cssFile).toBeDefined();
+      const cssContent = fs.readFileSync(path.join(fixtureOutDir, "client", cssFile!), "utf-8");
+      expect(cssContent).toContain("url(");
+      expect(cssContent).toMatch(/data:image\/svg\+xml|\.svg/);
+
+      const { startProdServer } = await import("../packages/vinext/src/server/prod-server.js");
+      const prodServer = await startProdServer({
+        port: 0,
+        host: "127.0.0.1",
+        outDir: fixtureOutDir,
+      });
+
+      try {
+        const addr = prodServer.address() as { port: number };
+        const res = await fetch(`http://127.0.0.1:${addr.port}/counter`);
+        expect(res.status).toBe(200);
+        const html = await res.text();
+        expect(html).toContain('rel="stylesheet"');
+        expect(html).toContain(".css");
+      } finally {
+        await new Promise<void>((resolve) => prodServer.close(() => resolve()));
+      }
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
   it("serves pages from production build end-to-end", async () => {
     const serverEntryPath = path.join(outDir, "server", "entry.js");
     const manifestPath = path.join(outDir, "client", ".vite", "ssr-manifest.json");
