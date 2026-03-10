@@ -44,7 +44,7 @@ import {
   type ImageConfig,
 } from "./image-optimization.js";
 import { normalizePath } from "./normalize-path.js";
-import { stripBasePath } from "../utils/base-path.js";
+import { hasBasePath, stripBasePath } from "../utils/base-path.js";
 import { computeLazyChunks } from "../index.js";
 
 /** Convert a Node.js IncomingMessage into a ReadableStream for Web Request body. */
@@ -959,7 +959,7 @@ async function startPagesRouterServer(options: PagesRouterServerOptions) {
           // doesn't already start with it.
           // Sanitize the final destination to prevent protocol-relative URL open redirects.
           const dest = sanitizeDestination(
-            basePath && !redirect.destination.startsWith(basePath)
+            basePath && !hasBasePath(redirect.destination, basePath)
               ? basePath + redirect.destination
               : redirect.destination,
           );

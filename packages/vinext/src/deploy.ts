@@ -517,12 +517,14 @@ const imageConfig: ImageConfig | undefined = vinextConfig?.images ? {
   contentSecurityPolicy: vinextConfig.images.contentSecurityPolicy,
 } : undefined;
 
+function hasBasePath(pathname: string, basePath: string): boolean {
+  if (!basePath) return false;
+  return pathname === basePath || pathname.startsWith(basePath + "/");
+}
+
 function stripBasePath(pathname: string, basePath: string): string {
-  if (!basePath) return pathname;
-  if (pathname === basePath || pathname.startsWith(basePath + "/")) {
-    return pathname.slice(basePath.length) || "/";
-  }
-  return pathname;
+  if (!hasBasePath(pathname, basePath)) return pathname;
+  return pathname.slice(basePath.length) || "/";
 }
 
 export default {
@@ -692,7 +694,7 @@ export default {
         const redirect = matchRedirect(resolvedPathname, configRedirects, reqCtx);
         if (redirect) {
           const dest = sanitizeDestination(
-            basePath && !redirect.destination.startsWith(basePath)
+            basePath && !hasBasePath(redirect.destination, basePath)
               ? basePath + redirect.destination
               : redirect.destination,
           );

@@ -1273,6 +1273,15 @@ describe("basePath HTTP routing (Pages Router)", () => {
       `/** @type {import('next').NextConfig} */
 export default {
   basePath: "/app",
+  async redirects() {
+    return [
+      {
+        source: "/redir",
+        destination: "/application/about",
+        permanent: false,
+      },
+    ];
+  },
 };
 `,
     );
@@ -1408,6 +1417,12 @@ export default function Home() {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.message).toBe("hello from basePath");
+  });
+
+  it("redirects prefix destinations under the real basePath boundary", async () => {
+    const res = await fetch(`${bpBaseUrl}/app/redir`, { redirect: "manual" });
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toBe("/app/application/about");
   });
 
   it("GET /api/hello (without basePath) does NOT serve API routes", async () => {

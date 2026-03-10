@@ -511,6 +511,7 @@ describe("generatePagesRouterWorkerEntry", () => {
   it("handles basePath stripping and creates a new request with stripped URL for middleware", () => {
     const content = generatePagesRouterWorkerEntry();
     expect(content).toContain("basePath");
+    expect(content).toContain("function hasBasePath(pathname: string, basePath: string): boolean");
     expect(content).toContain("function stripBasePath(pathname: string, basePath: string): string");
     expect(content).toContain('pathname === basePath || pathname.startsWith(basePath + "/")');
     expect(content).toContain("const stripped = stripBasePath(pathname, basePath);");
@@ -643,6 +644,11 @@ describe("generatePagesRouterWorkerEntry", () => {
     expect(basePathPos).toBeGreaterThan(-1);
     expect(imagePos).toBeGreaterThan(-1);
     expect(basePathPos).toBeLessThan(imagePos);
+  });
+
+  it("uses segment-boundary check before skipping redirect destination prefixing", () => {
+    const content = generatePagesRouterWorkerEntry();
+    expect(content).toContain("!hasBasePath(redirect.destination, basePath)");
   });
 });
 

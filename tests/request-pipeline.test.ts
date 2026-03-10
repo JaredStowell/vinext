@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   guardProtocolRelativeUrl,
+  hasBasePath,
   stripBasePath,
   normalizeTrailingSlash,
   validateCsrfOrigin,
@@ -31,6 +32,21 @@ describe("guardProtocolRelativeUrl", () => {
 });
 
 // ── stripBasePath ───────────────────────────────────────────────────────
+
+describe("hasBasePath", () => {
+  it("matches exact basePath and basePath-prefixed descendants only", () => {
+    expect(hasBasePath("/app", "/app")).toBe(true);
+    expect(hasBasePath("/app/about", "/app")).toBe(true);
+    expect(hasBasePath("/application/about", "/app")).toBe(false);
+    expect(hasBasePath("/app2", "/app")).toBe(false);
+  });
+
+  it("handles nested basePath segments", () => {
+    expect(hasBasePath("/docs/v2", "/docs/v2")).toBe(true);
+    expect(hasBasePath("/docs/v2/guide", "/docs/v2")).toBe(true);
+    expect(hasBasePath("/docs/v20", "/docs/v2")).toBe(false);
+  });
+});
 
 describe("stripBasePath", () => {
   it("strips basePath prefix from pathname", () => {

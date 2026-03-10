@@ -1,4 +1,4 @@
-import { stripBasePath } from "../utils/base-path.js";
+import { hasBasePath, stripBasePath } from "../utils/base-path.js";
 
 /**
  * Shared request pipeline utilities.
@@ -47,7 +47,7 @@ export function guardProtocolRelativeUrl(rawPathname: string): Response | null {
  * @param basePath - The basePath from next.config.js (empty string if not set)
  * @returns The pathname with basePath removed
  */
-export { stripBasePath };
+export { hasBasePath, stripBasePath };
 
 /**
  * Check if the pathname needs a trailing slash redirect, and return the
