@@ -373,6 +373,78 @@ describe("appRouter - route discovery", () => {
       expect(routes.map((route) => route.pattern)).toEqual(["/:slug*"]);
     });
   });
+
+  it("rejects non-terminal catch-all in synthetic @slot subroutes", async () => {
+    await withTempDir("vinext-app-slot-nonterminal-catchall-", async (tmpDir) => {
+      const appDir = path.join(tmpDir, "app");
+      await mkdir(path.join(appDir, "dashboard", "@modal", "[...slug]", "edit"), {
+        recursive: true,
+      });
+      await writeFile(path.join(appDir, "dashboard", "page.tsx"), EMPTY_PAGE);
+      await writeFile(path.join(appDir, "dashboard", "default.tsx"), EMPTY_PAGE);
+      await writeFile(path.join(appDir, "dashboard", "@modal", "default.tsx"), EMPTY_PAGE);
+      await writeFile(
+        path.join(appDir, "dashboard", "@modal", "[...slug]", "edit", "page.tsx"),
+        EMPTY_PAGE,
+      );
+
+      invalidateAppRouteCache();
+      const routes = await appRouter(appDir);
+      const patterns = routes.map((route) => route.pattern);
+
+      expect(patterns).toContain("/dashboard");
+      expect(patterns).not.toContain("/dashboard/:slug+/edit");
+    });
+  });
+
+  it("rejects non-terminal optional catch-all in synthetic @slot subroutes", async () => {
+    await withTempDir("vinext-app-slot-nonterminal-optional-catchall-", async (tmpDir) => {
+      const appDir = path.join(tmpDir, "app");
+      await mkdir(path.join(appDir, "dashboard", "@modal", "[[...slug]]", "edit"), {
+        recursive: true,
+      });
+      await writeFile(path.join(appDir, "dashboard", "page.tsx"), EMPTY_PAGE);
+      await writeFile(path.join(appDir, "dashboard", "default.tsx"), EMPTY_PAGE);
+      await writeFile(path.join(appDir, "dashboard", "@modal", "default.tsx"), EMPTY_PAGE);
+      await writeFile(
+        path.join(appDir, "dashboard", "@modal", "[[...slug]]", "edit", "page.tsx"),
+        EMPTY_PAGE,
+      );
+
+      invalidateAppRouteCache();
+      const routes = await appRouter(appDir);
+      const patterns = routes.map((route) => route.pattern);
+
+      expect(patterns).toContain("/dashboard");
+      expect(patterns).not.toContain("/dashboard/:slug*/edit");
+    });
+  });
+
+  it("allows terminal synthetic @slot catch-all when only route groups follow", async () => {
+    await withTempDir("vinext-app-slot-terminal-catchall-group-", async (tmpDir) => {
+      const appDir = path.join(tmpDir, "app");
+      await mkdir(path.join(appDir, "dashboard", "@modal", "[...slug]", "(admin)"), {
+        recursive: true,
+      });
+      await writeFile(path.join(appDir, "dashboard", "page.tsx"), EMPTY_PAGE);
+      await writeFile(path.join(appDir, "dashboard", "default.tsx"), EMPTY_PAGE);
+      await writeFile(path.join(appDir, "dashboard", "@modal", "default.tsx"), EMPTY_PAGE);
+      await writeFile(
+        path.join(appDir, "dashboard", "@modal", "[...slug]", "(admin)", "page.tsx"),
+        EMPTY_PAGE,
+      );
+
+      invalidateAppRouteCache();
+      const routes = await appRouter(appDir);
+      const patterns = routes.map((route) => route.pattern);
+
+      expect(patterns).toContain("/dashboard/:slug+");
+      const match = matchAppRoute("/dashboard/a/b", routes);
+      expect(match).not.toBeNull();
+      expect(match!.route.pattern).toBe("/dashboard/:slug+");
+      expect(match!.params.slug).toEqual(["a", "b"]);
+    });
+  });
 });
 
 describe("matchAppRoute - URL matching", () => {

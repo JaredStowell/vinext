@@ -232,38 +232,10 @@ function discoverSlotSubRoutes(
     for (const [subPath, slotPages] of subPathMap) {
       // Convert sub-path segments to URL pattern parts
       const subSegments = subPath.split(path.sep);
-      const urlParts: string[] = [];
-      const subParams: string[] = [];
-      let subIsDynamic = false;
+      const convertedSubRoute = convertSegmentsToRouteParts(subSegments);
+      if (!convertedSubRoute) continue;
 
-      for (const seg of subSegments) {
-        // Route groups are transparent
-        if (seg.startsWith("(") && seg.endsWith(")")) continue;
-
-        const catchAllMatch = seg.match(/^\[\.\.\.([\w-]+)\]$/);
-        if (catchAllMatch) {
-          subIsDynamic = true;
-          subParams.push(catchAllMatch[1]);
-          urlParts.push(`:${catchAllMatch[1]}+`);
-          continue;
-        }
-        const optionalCatchAllMatch = seg.match(/^\[\[\.\.\.([\w-]+)\]\]$/);
-        if (optionalCatchAllMatch) {
-          subIsDynamic = true;
-          subParams.push(optionalCatchAllMatch[1]);
-          urlParts.push(`:${optionalCatchAllMatch[1]}*`);
-          continue;
-        }
-        const dynamicMatch = seg.match(/^\[([\w-]+)\]$/);
-        if (dynamicMatch) {
-          subIsDynamic = true;
-          subParams.push(dynamicMatch[1]);
-          urlParts.push(`:${dynamicMatch[1]}`);
-          continue;
-        }
-
-        urlParts.push(seg);
-      }
+      const { urlSegments: urlParts, params: subParams, isDynamic: subIsDynamic } = convertedSubRoute;
 
       const subUrlPath = urlParts.join("/");
       const pattern =
@@ -358,57 +330,12 @@ function fileToAppRoute(
   const params: string[] = [];
   let isDynamic = false;
 
-  // Convert segments to URL pattern, stripping route groups and parallel slots.
-  // Catch-all segments are only valid in terminal URL position.
-  const urlSegments: string[] = [];
-  for (let i = 0; i < segments.length; i++) {
-    const segment = segments[i];
+  const convertedRoute = convertSegmentsToRouteParts(segments);
+  if (!convertedRoute) return null;
 
-    // Route groups: (group) -> skip (transparent in URL)
-    if (segment.startsWith("(") && segment.endsWith(")")) {
-      continue;
-    }
-
-    // Parallel slots: @slot -> skip (invisible in URL, content passed as layout props)
-    if (segment.startsWith("@")) {
-      continue;
-    }
-
-    // Catch-all: [...slug] (param names may contain hyphens, e.g. [...sign-in])
-    const catchAllMatch = segment.match(/^\[\.\.\.([\w-]+)\]$/);
-    if (catchAllMatch) {
-      if (hasRemainingVisibleSegments(segments, i + 1)) return null;
-      isDynamic = true;
-      params.push(catchAllMatch[1]);
-      urlSegments.push(`:${catchAllMatch[1]}+`);
-      continue;
-    }
-
-    // Optional catch-all: [[...slug]] (param names may contain hyphens, e.g. [[...sign-in]])
-    const optionalCatchAllMatch = segment.match(/^\[\[\.\.\.([\w-]+)\]\]$/);
-    if (optionalCatchAllMatch) {
-      if (hasRemainingVisibleSegments(segments, i + 1)) return null;
-      isDynamic = true;
-      params.push(optionalCatchAllMatch[1]);
-      urlSegments.push(`:${optionalCatchAllMatch[1]}*`);
-      continue;
-    }
-
-    // Dynamic segment: [id] (param names may contain hyphens, e.g. [my-param])
-    const dynamicMatch = segment.match(/^\[([\w-]+)\]$/);
-    if (dynamicMatch) {
-      isDynamic = true;
-      params.push(dynamicMatch[1]);
-      urlSegments.push(`:${dynamicMatch[1]}`);
-      continue;
-    }
-
-    try {
-      urlSegments.push(decodeURIComponent(segment));
-    } catch {
-      urlSegments.push(segment);
-    }
-  }
+  const { urlSegments, params: routeParams, isDynamic: routeIsDynamic } = convertedRoute;
+  params.push(...routeParams);
+  isDynamic = routeIsDynamic;
 
   const pattern = "/" + urlSegments.join("/");
 
@@ -967,6 +894,59 @@ function findFile(dir: string, name: string, matcher: ValidFileMatcher): string 
     if (fs.existsSync(filePath)) return filePath;
   }
   return null;
+}
+
+function convertSegmentsToRouteParts(
+  segments: string[],
+): { urlSegments: string[]; params: string[]; isDynamic: boolean } | null {
+  const urlSegments: string[] = [];
+  const params: string[] = [];
+  let isDynamic = false;
+
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
+
+    // Route groups are transparent in the URL.
+    if (segment.startsWith("(") && segment.endsWith(")")) continue;
+
+    // Parallel slots are also transparent.
+    if (segment.startsWith("@")) continue;
+
+    // Catch-all segments are only valid in terminal URL position.
+    const catchAllMatch = segment.match(/^\[\.\.\.([\w-]+)\]$/);
+    if (catchAllMatch) {
+      if (hasRemainingVisibleSegments(segments, i + 1)) return null;
+      isDynamic = true;
+      params.push(catchAllMatch[1]);
+      urlSegments.push(`:${catchAllMatch[1]}+`);
+      continue;
+    }
+
+    const optionalCatchAllMatch = segment.match(/^\[\[\.\.\.([\w-]+)\]\]$/);
+    if (optionalCatchAllMatch) {
+      if (hasRemainingVisibleSegments(segments, i + 1)) return null;
+      isDynamic = true;
+      params.push(optionalCatchAllMatch[1]);
+      urlSegments.push(`:${optionalCatchAllMatch[1]}*`);
+      continue;
+    }
+
+    const dynamicMatch = segment.match(/^\[([\w-]+)\]$/);
+    if (dynamicMatch) {
+      isDynamic = true;
+      params.push(dynamicMatch[1]);
+      urlSegments.push(`:${dynamicMatch[1]}`);
+      continue;
+    }
+
+    try {
+      urlSegments.push(decodeURIComponent(segment));
+    } catch {
+      urlSegments.push(segment);
+    }
+  }
+
+  return { urlSegments, params, isDynamic };
 }
 
 function hasRemainingVisibleSegments(segments: string[], startIndex: number): boolean {
