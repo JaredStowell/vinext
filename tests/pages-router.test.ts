@@ -1215,6 +1215,13 @@ export default function CounterPage() {
         },
       });
 
+      const buildManifestPath = path.join(fixtureOutDir, "client", ".vite", "manifest.json");
+      const buildManifest = JSON.parse(fs.readFileSync(buildManifestPath, "utf-8"));
+      const counterBuildManifestEntries = Object.keys(buildManifest).filter(
+        (key) => key.endsWith("/pages/counter.tsx") || key === "pages/counter.tsx",
+      );
+      expect(counterBuildManifestEntries).toEqual([]);
+
       const manifestPath = path.join(fixtureOutDir, "client", ".vite", "ssr-manifest.json");
       const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
       const counterManifestEntry = Object.entries(manifest).find(
@@ -1305,6 +1312,13 @@ export default function CounterPage() {
           rollupOptions: { input: "virtual:vinext-client-entry" },
         },
       });
+
+      const buildManifestPath = path.join(fixtureOutDir, "client", ".vite", "manifest.json");
+      const buildManifest = JSON.parse(fs.readFileSync(buildManifestPath, "utf-8"));
+      const counterBuildManifestEntries = Object.keys(buildManifest).filter(
+        (key) => key.endsWith("/pages/counter.tsx") || key === "pages/counter.tsx",
+      );
+      expect(counterBuildManifestEntries).toEqual([]);
 
       const manifestPath = path.join(fixtureOutDir, "client", ".vite", "ssr-manifest.json");
       const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));

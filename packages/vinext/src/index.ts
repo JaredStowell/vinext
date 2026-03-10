@@ -591,6 +591,10 @@ function manifestFileWithBase(file: string, base: string): string {
   return normalizedBase + "/" + normalizedFile;
 }
 
+function manifestFilesWithBase(files: string[], base: string): string[] {
+  return files.map((file) => manifestFileWithBase(file, base));
+}
+
 type BundleBackfillChunk = {
   type: "chunk";
   fileName: string;
@@ -3025,6 +3029,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
           if (!fs.existsSync(distDir)) return;
 
           const clientDir = path.resolve(buildRoot, "dist", "client");
+          const clientBase = envConfig.base ?? "/";
 
           // Read build manifest and compute lazy chunks (only reachable via
           // dynamic imports). This runs for BOTH App Router and Pages Router.
@@ -3038,11 +3043,11 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
               const buildManifest = JSON.parse(fs.readFileSync(buildManifestPath, "utf-8"));
               for (const [, value] of Object.entries(buildManifest) as [string, any][]) {
                 if (value && value.isEntry && value.file) {
-                  clientEntryFile = value.file;
+                  clientEntryFile = manifestFileWithBase(value.file, clientBase);
                   break;
                 }
               }
-              const lazy = computeLazyChunks(buildManifest);
+              const lazy = manifestFilesWithBase(computeLazyChunks(buildManifest), clientBase);
               if (lazy.length > 0) lazyChunksData = lazy;
             } catch {
               /* ignore parse errors */
@@ -3114,7 +3119,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                     (f.includes("vinext-client-entry") || f.includes("vinext-app-browser-entry")) &&
                     f.endsWith(".js"),
                 );
-                if (entry) clientEntryFile = "assets/" + entry;
+                if (entry) clientEntryFile = manifestFileWithBase("assets/" + entry, clientBase);
               }
             }
 

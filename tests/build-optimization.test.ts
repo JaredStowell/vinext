@@ -1061,6 +1061,33 @@ describe("collectAssetTags lazy chunk filtering", () => {
     expect(tags.join("\n")).not.toContain("page-index.js");
   });
 
+  it("filters base-prefixed lazy chunks against base-prefixed SSR manifest values", () => {
+    const buildManifest = {
+      "src/entry.ts": {
+        file: "assets/entry.js",
+        isEntry: true,
+        imports: ["node_modules/react/index.js"],
+        dynamicImports: ["src/pages/index.tsx"],
+      },
+      "node_modules/react/index.js": {
+        file: "assets/framework.js",
+      },
+      "src/pages/index.tsx": {
+        file: "assets/page-index.js",
+        isDynamicEntry: true,
+      },
+    };
+
+    const lazyChunks = computeLazyChunks(buildManifest).map((file) => `docs/${file}`);
+    const ssrFiles = ["docs/assets/entry.js", "docs/assets/framework.js", "docs/assets/page-index.js"];
+    const tags = simulateAssetTagFiltering(ssrFiles, lazyChunks);
+
+    expect(tags).toContain('<link rel="modulepreload" href="/docs/assets/entry.js" />');
+    expect(tags).toContain('<script type="module" src="/docs/assets/entry.js" crossorigin></script>');
+    expect(tags).toContain('<link rel="modulepreload" href="/docs/assets/framework.js" />');
+    expect(tags.join("\n")).not.toContain("page-index.js");
+  });
+
   it("deduplicates entries when SSR manifest has leading slashes and client entry does not", () => {
     // The client entry (from __VINEXT_CLIENT_ENTRY__) uses values without
     // leading slashes ("assets/entry.js"), while SSR manifest values have
