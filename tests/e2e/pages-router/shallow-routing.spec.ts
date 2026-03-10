@@ -179,4 +179,22 @@ test.describe("Shallow routing (Pages Router)", () => {
     await expect(page.locator('[data-testid="router-query"]')).toHaveText('{"slug":["a","b"]}');
     await expect(page.locator('[data-testid="router-asPath"]')).toHaveText("/docs/a/b#section");
   });
+
+  test("router.query prefers catch-all route params over same-key search params", async ({
+    page,
+  }) => {
+    await page.goto(`${BASE}/shallow-test`);
+    await expect(page.locator("h1")).toHaveText("Shallow Routing Test");
+    await waitForHydration(page);
+
+    await page.evaluate(() => {
+      (window as any).__NEXT_DATA__.page = "/docs/[...slug]";
+      (window as any).__NEXT_DATA__.query = { slug: ["a", "b"] };
+      window.history.pushState({}, "", "/docs/a/b?slug=c");
+      window.dispatchEvent(new CustomEvent("vinext:navigate"));
+    });
+
+    await expect(page.locator('[data-testid="router-query"]')).toHaveText('{"slug":["a","b"]}');
+    await expect(page.locator('[data-testid="router-asPath"]')).toHaveText("/docs/a/b?slug=c");
+  });
 });

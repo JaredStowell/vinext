@@ -281,7 +281,7 @@ function getPathnameAndQuery(): {
   for (const [key, value] of params) {
     addQueryParam(searchQuery, key, value);
   }
-  const query = { ...routeQuery, ...searchQuery };
+  const query = { ...searchQuery, ...routeQuery };
   const asPath = pathname + window.location.search + window.location.hash;
   return { pathname, query, asPath };
 }
