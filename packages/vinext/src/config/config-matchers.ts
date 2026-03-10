@@ -51,6 +51,15 @@ const _compiledHeaderSourceCache = new Map<string, RegExp | null>();
 const _compiledConditionCache = new Map<string, RegExp | null>();
 
 /**
+ * Cache for destination substitution regexes in substituteDestinationParams.
+ *
+ * The regex depends only on the set of param keys captured from the matched
+ * source pattern. Caching by sorted key list avoids recompiling a new RegExp
+ * for repeated redirect/rewrite calls that use the same param shape.
+ */
+const _compiledDestinationParamCache = new Map<string, RegExp>();
+
+/**
  * Redirect index for O(1) locale-static rule lookup.
  *
  * Many Next.js apps generate 50-100 redirect rules of the form:
@@ -882,12 +891,19 @@ function substituteDestinationParams(destination: string, params: Record<string,
 
   // Match only the concrete param keys captured from the source pattern.
   // Sorting longest-first ensures hyphenated names like `auth-method`
-  // win over shorter prefixes like `auth`.
-  const paramAlternation = keys
-    .sort((a, b) => b.length - a.length)
-    .map((key) => key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-    .join("|");
-  const paramRe = new RegExp(`:(${paramAlternation})([+*])?(?![A-Za-z0-9_])`, "g");
+  // win over shorter prefixes like `auth`. The negative lookahead keeps
+  // alphanumeric/underscore suffixes attached, while allowing `-` to act
+  // as a literal delimiter in destinations like `:year-:month`.
+  const sortedKeys = [...keys].sort((a, b) => b.length - a.length);
+  const cacheKey = sortedKeys.join("\0");
+  let paramRe = _compiledDestinationParamCache.get(cacheKey);
+  if (!paramRe) {
+    const paramAlternation = sortedKeys
+      .map((key) => key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join("|");
+    paramRe = new RegExp(`:(${paramAlternation})([+*])?(?![A-Za-z0-9_])`, "g");
+    _compiledDestinationParamCache.set(cacheKey, paramRe);
+  }
 
   return destination.replace(paramRe, (_token, key: string) => params[key]);
 }

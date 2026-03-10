@@ -5087,6 +5087,13 @@ describe("matchRewrite with external URLs", () => {
     const result = matchRewrite("/auth/google", rewrites, emptyCtx);
     expect(result).toBe("/signin/google");
   });
+
+  it("treats hyphen as a literal delimiter when only the shorter param key exists", async () => {
+    const { matchRewrite } = await import("../packages/vinext/src/config/config-matchers.js");
+    const rewrites = [{ source: "/item/:foo", destination: "/dest/:foo-bar" }];
+    const result = matchRewrite("/item/123", rewrites, emptyCtx);
+    expect(result).toBe("/dest/123-bar");
+  });
 });
 
 describe("matchRedirect destination param substitution", () => {
