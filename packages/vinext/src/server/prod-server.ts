@@ -198,8 +198,11 @@ function sendCompressed(
       /* ignore pipeline errors on closed connections */
     });
   } else {
+    // Strip any pre-existing content-length (from the Web Response constructor)
+    // before setting our own — avoids duplicate Content-Length headers.
+    const { "content-length": _cl, "Content-Length": _CL, ...headersWithoutLength } = extraHeaders;
     res.writeHead(statusCode, {
-      ...extraHeaders,
+      ...headersWithoutLength,
       "Content-Type": contentType,
       "Content-Length": String(buf.length),
     });

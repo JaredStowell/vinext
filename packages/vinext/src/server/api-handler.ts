@@ -226,6 +226,7 @@ export async function handleApiRoute(
       res.end(e.message);
       return true;
     }
+
     server.ssrFixStacktrace(e as Error);
     console.error(e);
     reportRequestError(

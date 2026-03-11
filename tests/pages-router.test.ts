@@ -1865,6 +1865,7 @@ describe("Production server middleware (Pages Router)", () => {
     const res = await fetch(`${prodUrl}/api/send-buffer`);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("application/octet-stream");
+    expect(res.headers.get("content-length")).toBe("3");
 
     const body = Buffer.from(await res.arrayBuffer());
     expect(body.equals(Buffer.from([1, 2, 3]))).toBe(true);
