@@ -93,16 +93,119 @@ const COMPRESS_THRESHOLD = 1024;
 
 /**
  * Parse the Accept-Encoding header and return the best supported encoding.
- * Preference order: br > gzip > deflate > identity.
+ * Mirrors Next.js' compiled compression negotiator semantics, extended with
+ * brotli support.
  */
 function negotiateEncoding(req: IncomingMessage): "br" | "gzip" | "deflate" | null {
   const accept = req.headers["accept-encoding"];
   if (!accept || typeof accept !== "string") return null;
-  const lower = accept.toLowerCase();
-  if (lower.includes("br")) return "br";
-  if (lower.includes("gzip")) return "gzip";
-  if (lower.includes("deflate")) return "deflate";
-  return null;
+
+  const supported = ["br", "gzip", "deflate", "identity"] as const;
+  type SupportedEncoding = (typeof supported)[number];
+  type AcceptedEncoding = {
+    encoding: string;
+    i: number;
+    q: number;
+  };
+  type EncodingPriority = {
+    i: number;
+    o: number;
+    q: number;
+    s: number;
+  };
+
+  const parseEncoding = (value: string, index: number): AcceptedEncoding | null => {
+    const match = /^\s*([^\s;]+)\s*(?:;(.*))?$/.exec(value);
+    if (!match) return null;
+
+    let q = 1;
+    if (match[2]) {
+      for (const param of match[2].split(";")) {
+        const [key, raw] = param.trim().split("=");
+        if (key === "q") {
+          q = Number.parseFloat(raw);
+          break;
+        }
+      }
+    }
+
+    return {
+      encoding: match[1],
+      i: index,
+      q,
+    };
+  };
+
+  const specify = (
+    encoding: SupportedEncoding,
+    spec: AcceptedEncoding,
+    index: number,
+  ): EncodingPriority | null => {
+    let s = 0;
+    if (spec.encoding.toLowerCase() === encoding.toLowerCase()) {
+      s |= 1;
+    } else if (spec.encoding !== "*") {
+      return null;
+    }
+
+    return {
+      i: index,
+      o: spec.i,
+      q: spec.q,
+      s,
+    };
+  };
+
+  const accepted = accept.split(",");
+  const parsed: AcceptedEncoding[] = [];
+  let hasIdentity = false;
+  let minQuality = 1;
+
+  for (let i = 0, count = 0; i < accepted.length; i++) {
+    const entry = parseEncoding(accepted[i].trim(), i);
+    if (!entry) continue;
+
+    parsed[count++] = entry;
+    hasIdentity = hasIdentity || !!specify("identity", entry, i);
+    minQuality = Math.min(minQuality, entry.q || 1);
+  }
+
+  if (!hasIdentity) {
+    parsed.push({
+      encoding: "identity",
+      q: minQuality,
+      i: accepted.length,
+    });
+  }
+
+  const getPriority = (encoding: SupportedEncoding, index: number): EncodingPriority => {
+    let best: EncodingPriority = { o: -1, q: 0, s: 0, i: index };
+
+    for (const spec of parsed) {
+      const priority = specify(encoding, spec, index);
+      if (!priority) continue;
+
+      if ((best.s - priority.s || best.q - priority.q || best.o - priority.o) < 0) {
+        best = priority;
+      }
+    }
+
+    return best;
+  };
+
+  const ranked = supported
+    .map((encoding, index) => ({ encoding, priority: getPriority(encoding, index) }))
+    .filter(({ priority }) => priority.q > 0)
+    .sort(
+      (a, b) =>
+        b.priority.q - a.priority.q ||
+        b.priority.s - a.priority.s ||
+        a.priority.o - b.priority.o ||
+        a.priority.i - b.priority.i,
+    );
+
+  const best = ranked[0]?.encoding;
+  return !best || best === "identity" ? null : best;
 }
 
 /**

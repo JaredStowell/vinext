@@ -2690,10 +2690,24 @@ describe("instrumentation.ts support", () => {
 });
 
 describe("production server compression", () => {
-  it("negotiateEncoding returns br when Accept-Encoding includes br", async () => {
+  it("negotiateEncoding returns br when Accept-Encoding only allows br", async () => {
     const { negotiateEncoding } = await import("../packages/vinext/src/server/prod-server.js");
-    const req = { headers: { "accept-encoding": "gzip, deflate, br" } };
+    const req = { headers: { "accept-encoding": "br" } };
     expect(negotiateEncoding(req as any)).toBe("br");
+  });
+
+  // Aligned with Next.js' compiled compression negotiator, extended with br support:
+  // https://github.com/vercel/next.js/blob/canary/packages/next/src/compiled/compression/index.js
+  it("negotiateEncoding respects q-values over server preference order", async () => {
+    const { negotiateEncoding } = await import("../packages/vinext/src/server/prod-server.js");
+    const req = { headers: { "accept-encoding": "br;q=0.3, gzip;q=0.9, deflate;q=0.5" } };
+    expect(negotiateEncoding(req as any)).toBe("gzip");
+  });
+
+  it("negotiateEncoding skips explicitly rejected encodings", async () => {
+    const { negotiateEncoding } = await import("../packages/vinext/src/server/prod-server.js");
+    const req = { headers: { "accept-encoding": "br;q=0, gzip;q=1, deflate;q=0.5" } };
+    expect(negotiateEncoding(req as any)).toBe("gzip");
   });
 
   it("negotiateEncoding returns gzip when br is not available", async () => {
@@ -2702,9 +2716,45 @@ describe("production server compression", () => {
     expect(negotiateEncoding(req as any)).toBe("gzip");
   });
 
+  it("negotiateEncoding respects header order for equal-weight exact matches", async () => {
+    const { negotiateEncoding } = await import("../packages/vinext/src/server/prod-server.js");
+    const req = { headers: { "accept-encoding": "gzip, br" } };
+    expect(negotiateEncoding(req as any)).toBe("gzip");
+  });
+
+  it("negotiateEncoding falls back to wildcard-supported encodings", async () => {
+    const { negotiateEncoding } = await import("../packages/vinext/src/server/prod-server.js");
+    const req = { headers: { "accept-encoding": "gzip;q=0, *;q=0.7" } };
+    expect(negotiateEncoding(req as any)).toBe("br");
+  });
+
+  it("negotiateEncoding does not compress when identity is preferred", async () => {
+    const { negotiateEncoding } = await import("../packages/vinext/src/server/prod-server.js");
+    const req = { headers: { "accept-encoding": "identity;q=1, gzip;q=0.5" } };
+    expect(negotiateEncoding(req as any)).toBeNull();
+  });
+
+  it("negotiateEncoding treats malformed q-values like Next.js negotiator", async () => {
+    const { negotiateEncoding } = await import("../packages/vinext/src/server/prod-server.js");
+    const req = { headers: { "accept-encoding": "gzip;q=bogus, br;q=0.5" } };
+    expect(negotiateEncoding(req as any)).toBe("br");
+  });
+
+  it("negotiateEncoding preserves out-of-range positive q-values like Next.js negotiator", async () => {
+    const { negotiateEncoding } = await import("../packages/vinext/src/server/prod-server.js");
+    const req = { headers: { "accept-encoding": "gzip;q=2, br;q=0.5" } };
+    expect(negotiateEncoding(req as any)).toBe("gzip");
+  });
+
   it("negotiateEncoding returns null when no encoding header", async () => {
     const { negotiateEncoding } = await import("../packages/vinext/src/server/prod-server.js");
     const req = { headers: {} };
+    expect(negotiateEncoding(req as any)).toBeNull();
+  });
+
+  it("negotiateEncoding returns null when all supported encodings are rejected", async () => {
+    const { negotiateEncoding } = await import("../packages/vinext/src/server/prod-server.js");
+    const req = { headers: { "accept-encoding": "br;q=0, gzip;q=0, deflate;q=0" } };
     expect(negotiateEncoding(req as any)).toBeNull();
   });
 
