@@ -58,7 +58,6 @@ function getMediaType(contentType: string | undefined): string {
 function isJsonMediaType(mediaType: string): boolean {
   return mediaType === "application/json" || mediaType === "application/ld+json";
 }
-
 /**
  * Parse the request body based on content-type.
  * Enforces a size limit to prevent memory exhaustion attacks.
@@ -156,6 +155,15 @@ function enhanceApiObjects(
   };
 
   apiRes.send = function (data: unknown) {
+    if (Buffer.isBuffer(data)) {
+      if (!this.getHeader("Content-Type")) {
+        this.setHeader("Content-Type", "application/octet-stream");
+      }
+      this.setHeader("Content-Length", String(data.length));
+      this.end(data);
+      return;
+    }
+
     if (typeof data === "object" && data !== null) {
       this.setHeader("Content-Type", "application/json");
       this.end(JSON.stringify(data));
