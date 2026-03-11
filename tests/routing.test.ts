@@ -476,6 +476,37 @@ describe("appRouter - route discovery", () => {
     });
   });
 
+  it("discovers nested @slot sub-routes even when the slot root has no own page or default", async () => {
+    await withTempDir("vinext-app-slot-nested-only-", async (tmpDir) => {
+      const appDir = path.join(tmpDir, "app");
+      await mkdir(path.join(appDir, "inbox", "@modal", "profile"), { recursive: true });
+      await writeFile(path.join(appDir, "inbox", "page.tsx"), EMPTY_PAGE);
+      await writeFile(path.join(appDir, "inbox", "@modal", "profile", "page.tsx"), EMPTY_PAGE);
+
+      invalidateAppRouteCache();
+      const routes = await appRouter(appDir);
+      const patterns = routes.map((route) => route.pattern);
+
+      expect(patterns).toContain("/inbox");
+      expect(patterns).toContain("/inbox/profile");
+
+      const inboxRoute = routes.find((route) => route.pattern === "/inbox");
+      expect(inboxRoute).toBeDefined();
+      expect(inboxRoute!.parallelSlots).toHaveLength(1);
+      expect(inboxRoute!.parallelSlots[0].name).toBe("modal");
+      expect(inboxRoute!.parallelSlots[0].pagePath).toBeNull();
+      expect(inboxRoute!.parallelSlots[0].defaultPath).toBeNull();
+
+      const match = matchAppRoute("/inbox/profile", routes);
+      expect(match).not.toBeNull();
+      expect(match!.route.pattern).toBe("/inbox/profile");
+
+      const modalSlot = match!.route.parallelSlots.find((slot) => slot.name === "modal");
+      expect(modalSlot).toBeDefined();
+      expect(modalSlot!.pagePath).toContain(path.join("inbox", "@modal", "profile", "page.tsx"));
+    });
+  });
+
   it("rejects non-terminal catch-all intercept targets", async () => {
     await withTempDir("vinext-app-intercept-nonterminal-catchall-", async (tmpDir) => {
       const appDir = path.join(tmpDir, "app");
