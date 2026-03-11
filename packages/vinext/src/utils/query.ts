@@ -2,6 +2,8 @@
  * Add a query parameter value to an object, promoting to array for duplicate keys.
  * Matches Next.js behavior: ?a=1&a=2 → { a: ['1', '2'] }
  */
+export type UrlQuery = Record<string, string | readonly string[]>;
+
 function setOwnQueryValue(
   obj: Record<string, string | string[]>,
   key: string,
@@ -44,6 +46,28 @@ export function parseQueryString(url: string): Record<string, string | string[]>
     addQueryParam(query, key, value);
   }
   return query;
+}
+
+/**
+ * Convert a Next.js-style query object into URLSearchParams while preserving
+ * repeated keys for array values.
+ *
+ * Ported from Next.js `urlQueryToSearchParams()`:
+ * https://github.com/vercel/next.js/blob/canary/packages/next/src/shared/lib/router/utils/querystring.ts
+ */
+export function urlQueryToSearchParams(query: UrlQuery): URLSearchParams {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (typeof value === "string") {
+      params.set(key, value);
+      continue;
+    }
+
+    for (const item of value) {
+      params.append(key, item);
+    }
+  }
+  return params;
 }
 
 /**

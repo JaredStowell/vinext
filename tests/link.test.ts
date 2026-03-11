@@ -141,6 +141,17 @@ describe("Link resolveHref", () => {
     expect(html).toMatch(/href="\/items\?page=2&(?:amp;)?sort=name"/);
   });
 
+  it("object href preserves array query values as repeated params", () => {
+    const html = ReactDOMServer.renderToString(
+      React.createElement(
+        Link,
+        { href: { pathname: "/search", query: { tag: ["a", "b"], q: "x" } } },
+        "x",
+      ),
+    );
+    expect(html).toContain('href="/search?tag=a&amp;tag=b&amp;q=x"');
+  });
+
   it("object href preserves an existing query string in pathname", () => {
     const html = ReactDOMServer.renderToString(
       React.createElement(
