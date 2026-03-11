@@ -86,9 +86,11 @@ const MAX_TAG_LENGTH = 256;
  */
 function validateTag(tag: string): string | null {
   if (typeof tag !== "string" || tag.length === 0 || tag.length > MAX_TAG_LENGTH) return null;
-  // Block control characters, path separators, and KV-special characters.
+  // Block control characters and reserved separators used in our own key format.
+  // Slash is allowed because revalidatePath() relies on pathname tags like
+  // "/posts/hello" and "_N_T_/posts/hello".
   // eslint-disable-next-line no-control-regex -- intentional: reject control chars in tags
-  if (/[\x00-\x1f/\\:]/.test(tag)) return null;
+  if (/[\x00-\x1f\\:]/.test(tag)) return null;
   return tag;
 }
 
