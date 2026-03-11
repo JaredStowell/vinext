@@ -36,14 +36,16 @@ class FakeSubmitterElement extends FakeElement {
     value?: string;
   } = {}) {
     super();
-    this.attributes = attributes;
+    this.attributes = Object.fromEntries(
+      Object.entries(attributes).map(([key, value]) => [key.toLowerCase(), value]),
+    );
     this.disabled = disabled;
     this.name = name;
     this.value = value;
   }
 
   getAttribute(name: string): string | null {
-    return this.attributes[name] ?? this.attributes[name.toLowerCase()] ?? null;
+    return this.attributes[name.toLowerCase()] ?? null;
   }
 }
 

@@ -98,7 +98,7 @@ function checkFormActionUrl(action: string, source: "action" | "formAction"): vo
 }
 
 function hasUnsupportedSubmitterAttributes(submitter: FormSubmitter): boolean {
-  const formEncType = submitter.getAttribute("formEnctype");
+  const formEncType = submitter.getAttribute("formenctype");
   if (formEncType !== null && formEncType !== SUPPORTED_FORM_ENCTYPE) {
     console.error(
       `<Form>'s \`encType\` was set to an unsupported value via \`formEncType="${formEncType}"\`. ` +
@@ -107,7 +107,7 @@ function hasUnsupportedSubmitterAttributes(submitter: FormSubmitter): boolean {
     return true;
   }
 
-  const formMethod = submitter.getAttribute("formMethod");
+  const formMethod = submitter.getAttribute("formmethod");
   if (formMethod !== null && formMethod.toUpperCase() !== SUPPORTED_FORM_METHOD) {
     console.error(
       `<Form>'s \`method\` was set to an unsupported value via \`formMethod="${formMethod}"\`. ` +
@@ -116,7 +116,7 @@ function hasUnsupportedSubmitterAttributes(submitter: FormSubmitter): boolean {
     return true;
   }
 
-  const formTarget = submitter.getAttribute("formTarget");
+  const formTarget = submitter.getAttribute("formtarget");
   if (formTarget !== null && formTarget !== SUPPORTED_FORM_TARGET) {
     console.error(
       `<Form>'s \`target\` was set to an unsupported value via \`formTarget="${formTarget}"\`. ` +
