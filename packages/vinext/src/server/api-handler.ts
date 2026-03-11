@@ -90,7 +90,13 @@ async function parseBody(req: IncomingMessage): Promise<unknown> {
       const raw = Buffer.concat(chunks).toString("utf-8");
       const mediaType = getMediaType(req.headers["content-type"]);
       if (!raw) {
-        resolve(isJsonMediaType(mediaType) ? {} : undefined);
+        resolve(
+          isJsonMediaType(mediaType)
+            ? {}
+            : mediaType === "application/x-www-form-urlencoded"
+              ? decodeQueryString(raw)
+              : undefined,
+        );
         return;
       }
       if (isJsonMediaType(mediaType)) {

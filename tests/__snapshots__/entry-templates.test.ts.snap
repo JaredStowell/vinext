@@ -18398,7 +18398,11 @@ export async function handleApiRoute(request, url) {
   try { rawBody = await readBodyWithLimit(request, 1 * 1024 * 1024); }
   catch { return new Response("Request body too large", { status: 413 }); }
   if (!rawBody) {
-    body = isJsonMediaType(mediaType) ? {} : undefined;
+    body = isJsonMediaType(mediaType)
+      ? {}
+      : mediaType === "application/x-www-form-urlencoded"
+        ? decodeQueryString(rawBody)
+        : undefined;
   } else if (isJsonMediaType(mediaType)) {
     try { body = JSON.parse(rawBody); }
     catch { return new Response("Invalid JSON", { status: 400, statusText: "Invalid JSON" }); }

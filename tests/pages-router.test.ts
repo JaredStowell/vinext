@@ -224,6 +224,17 @@ describe("Pages Router integration", () => {
     expect(await res.json()).toEqual({ tag: ["a", "b", "c"] });
   });
 
+  it("parses empty urlencoded bodies on Pages API routes as {}", async () => {
+    const res = await fetch(`${baseUrl}/api/parse`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "",
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({});
+  });
+
   it("parses application/ld+json bodies on Pages API routes", async () => {
     const res = await fetch(`${baseUrl}/api/parse`, {
       method: "POST",
@@ -1815,6 +1826,7 @@ describe("Production server middleware (Pages Router)", () => {
   it("blocks /blocked with 403 via middleware", async () => {
     const res = await fetch(`${prodUrl}/blocked`);
     expect(res.status).toBe(403);
+    expect(res.statusText).toBe("Blocked by Middleware");
     const text = await res.text();
     expect(text).toContain("Access Denied");
   });
@@ -1873,6 +1885,17 @@ describe("Production server middleware (Pages Router)", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ tag: ["a", "b", "c"] });
+  });
+
+  it("parses empty urlencoded bodies for Pages API routes in production as {}", async () => {
+    const res = await fetch(`${prodUrl}/api/parse`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "",
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({});
   });
 
   it("parses empty JSON bodies for Pages API routes in production as {}", async () => {

@@ -251,6 +251,22 @@ describe("handleApiRoute", () => {
       expect(capturedBody).toEqual({ tag: ["a", "b", "c"] });
     });
 
+    it("parses empty application/x-www-form-urlencoded bodies as an empty object", async () => {
+      let capturedBody: unknown;
+      const handler = vi.fn((req: any) => {
+        capturedBody = req.body;
+      });
+      const server = mockServer({ default: handler });
+      const req = mockReq("POST", "/api/users", "", {
+        "content-type": "application/x-www-form-urlencoded",
+      });
+      const res = mockRes();
+
+      await handleApiRoute(server, req, res, "/api/users", [route("/api/users")]);
+
+      expect(capturedBody).toEqual({});
+    });
+
     it("parses application/ld+json bodies as JSON", async () => {
       let capturedBody: unknown;
       const handler = vi.fn((req: any) => {

@@ -896,7 +896,11 @@ async function startPagesRouterServer(options: PagesRouterServerOptions) {
             });
             const setCookies = result.response.headers.getSetCookie?.() ?? [];
             if (setCookies.length > 0) respHeaders["set-cookie"] = setCookies;
-            res.writeHead(result.response.status, respHeaders);
+            if (result.response.statusText) {
+              res.writeHead(result.response.status, result.response.statusText, respHeaders);
+            } else {
+              res.writeHead(result.response.status, respHeaders);
+            }
             res.end(body);
             return;
           }
