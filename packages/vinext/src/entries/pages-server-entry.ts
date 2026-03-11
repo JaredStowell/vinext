@@ -262,6 +262,7 @@ import { safeJsonStringify } from "vinext/html";
 import { getSSRFontLinks as _getSSRFontLinks, getSSRFontStyles as _getSSRFontStylesGoogle, getSSRFontPreloads as _getSSRFontPreloadsGoogle } from "next/font/google";
 import { getSSRFontStyles as _getSSRFontStylesLocal, getSSRFontPreloads as _getSSRFontPreloadsLocal } from "next/font/local";
 import { parseCookies } from ${JSON.stringify(path.resolve(__dirname, "../config/config-matchers.js").replace(/\\/g, "/"))};
+import { decode as decodeQueryString } from "node:querystring";
 import { runWithExecutionContext as _runWithExecutionContext, getRequestExecutionContext as _getRequestExecutionContext } from ${JSON.stringify(_requestContextShimPath)};
 ${instrumentationImportCode}
 ${middlewareImportCode}
@@ -322,6 +323,16 @@ function isrCacheKey(router, pathname) {
   const key = prefix + ":" + normalized;
   if (key.length <= 200) return key;
   return prefix + ":__hash:" + fnv1a64(normalized);
+}
+
+function getMediaType(contentType) {
+  var type = (contentType || "text/plain").split(";")[0];
+  type = type && type.trim().toLowerCase();
+  return type || "text/plain";
+}
+
+function isJsonMediaType(mediaType) {
+  return mediaType === "application/json" || mediaType === "application/ld+json";
 }
 
 async function renderToStringAsync(element) {
@@ -1039,14 +1050,17 @@ export async function handleApiRoute(request, url) {
     return new Response("Request body too large", { status: 413 });
   }
   let body;
-  const ct = request.headers.get("content-type") || "";
+  const mediaType = getMediaType(request.headers.get("content-type"));
   let rawBody;
   try { rawBody = await readBodyWithLimit(request, 1 * 1024 * 1024); }
   catch { return new Response("Request body too large", { status: 413 }); }
   if (!rawBody) {
-    body = undefined;
-  } else if (ct.includes("application/json")) {
-    try { body = JSON.parse(rawBody); } catch { body = rawBody; }
+    body = isJsonMediaType(mediaType) ? {} : undefined;
+  } else if (isJsonMediaType(mediaType)) {
+    try { body = JSON.parse(rawBody); }
+    catch { return new Response("Invalid JSON", { status: 400, statusText: "Invalid JSON" }); }
+  } else if (mediaType === "application/x-www-form-urlencoded") {
+    body = decodeQueryString(rawBody);
   } else {
     body = rawBody;
   }

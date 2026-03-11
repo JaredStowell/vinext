@@ -166,10 +166,19 @@ function sendCompressed(
   statusCode: number,
   extraHeaders: Record<string, string | string[]> = {},
   compress: boolean = true,
+  statusText: string | undefined = undefined,
 ): void {
   const buf = typeof body === "string" ? Buffer.from(body) : body;
   const baseType = contentType.split(";")[0].trim();
   const encoding = compress ? negotiateEncoding(req) : null;
+
+  const writeHead = (headers: Record<string, string | string[]>) => {
+    if (statusText) {
+      res.writeHead(statusCode, statusText, headers);
+    } else {
+      res.writeHead(statusCode, headers);
+    }
+  };
 
   if (encoding && COMPRESSIBLE_TYPES.has(baseType) && buf.length >= COMPRESS_THRESHOLD) {
     const compressor = createCompressor(encoding);
@@ -187,7 +196,7 @@ function sendCompressed(
     } else {
       varyValue = "Accept-Encoding";
     }
-    res.writeHead(statusCode, {
+    writeHead({
       ...extraHeaders,
       "Content-Type": contentType,
       "Content-Encoding": encoding,
@@ -198,7 +207,7 @@ function sendCompressed(
       /* ignore pipeline errors on closed connections */
     });
   } else {
-    res.writeHead(statusCode, {
+    writeHead({
       ...extraHeaders,
       "Content-Type": contentType,
       "Content-Length": String(buf.length),
@@ -393,6 +402,14 @@ async function sendWebResponse(
   compress: boolean,
 ): Promise<void> {
   const status = webResponse.status;
+  const statusText = webResponse.statusText || undefined;
+  const writeHead = (headers: Record<string, string | string[]>) => {
+    if (statusText) {
+      res.writeHead(status, statusText, headers);
+    } else {
+      res.writeHead(status, headers);
+    }
+  };
 
   // Collect headers, handling multi-value headers (e.g. Set-Cookie)
   const nodeHeaders: Record<string, string | string[]> = {};
@@ -406,7 +423,7 @@ async function sendWebResponse(
   });
 
   if (!webResponse.body) {
-    res.writeHead(status, nodeHeaders);
+    writeHead(nodeHeaders);
     res.end();
     return;
   }
@@ -437,7 +454,7 @@ async function sendWebResponse(
     }
   }
 
-  res.writeHead(status, nodeHeaders);
+  writeHead(nodeHeaders);
 
   // HEAD requests: send headers only, skip the body
   if (req.method === "HEAD") {
@@ -1014,6 +1031,7 @@ async function startPagesRouterServer(options: PagesRouterServerOptions) {
           middlewareRewriteStatus ?? response.status,
           responseHeaders,
           compress,
+          response.statusText || undefined,
         );
         return;
       }
@@ -1074,6 +1092,7 @@ async function startPagesRouterServer(options: PagesRouterServerOptions) {
         middlewareRewriteStatus ?? response.status,
         responseHeaders,
         compress,
+        response.statusText || undefined,
       );
     } catch (e) {
       console.error("[vinext] Server error:", e);

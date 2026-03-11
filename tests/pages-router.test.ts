@@ -4,6 +4,7 @@ import path from "node:path";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
+import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
 import vinext from "../packages/vinext/src/index.js";
 import { PAGES_FIXTURE_DIR, startFixtureServer } from "./helpers.js";
@@ -185,6 +186,53 @@ describe("Pages Router integration", () => {
 
     const data = await res.json();
     expect(data).toEqual({ user: { id: "123", name: "User 123" } });
+  });
+
+  // Ported from Next.js: test/integration/api-support/test/index.test.ts
+  // https://github.com/vercel/next.js/blob/canary/test/integration/api-support/test/index.test.ts
+  it("returns 400 for invalid JSON bodies on Pages API routes", async () => {
+    const res = await fetch(`${baseUrl}/api/parse`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: `{"message":Invalid"}`,
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.statusText).toBe("Invalid JSON");
+    expect(await res.text()).toBe("Invalid JSON");
+  });
+
+  it("parses empty JSON bodies on Pages API routes as {}", async () => {
+    const res = await fetch(`${baseUrl}/api/parse`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "",
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({});
+  });
+
+  it("preserves duplicate urlencoded body keys on Pages API routes", async () => {
+    const res = await fetch(`${baseUrl}/api/parse`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "tag=a&tag=b&tag=c",
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ tag: ["a", "b", "c"] });
+  });
+
+  it("parses application/ld+json bodies on Pages API routes", async () => {
+    const res = await fetch(`${baseUrl}/api/parse`, {
+      method: "POST",
+      headers: { "Content-Type": "application/ld+json; charset=utf-8" },
+      body: JSON.stringify({ title: "doc" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ title: "doc" });
   });
 
   it("returns 404 for non-existent API routes", async () => {
@@ -1481,10 +1529,16 @@ export default function CounterPage() {
         if (v) headers.set(k, Array.isArray(v) ? v.join(", ") : v);
       }
       const host = req.headers.host ?? "localhost";
-      const webRequest = new Request(`http://${host}${url}`, {
-        method: req.method,
+      const method = req.method ?? "GET";
+      const init: RequestInit & { duplex?: "half" } = {
+        method,
         headers,
-      });
+      };
+      if (method !== "GET" && method !== "HEAD") {
+        init.body = Readable.toWeb(req) as ReadableStream;
+        init.duplex = "half";
+      }
+      const webRequest = new Request(`http://${host}${url}`, init);
 
       let response: Response;
       if (pathname.startsWith("/api/") || pathname === "/api") {
@@ -1499,7 +1553,7 @@ export default function CounterPage() {
       response.headers.forEach((v: string, k: string) => {
         resHeaders[k] = v;
       });
-      res.writeHead(response.status, resHeaders);
+      res.writeHead(response.status, response.statusText || undefined, resHeaders);
       res.end(body);
     });
 
@@ -1533,6 +1587,39 @@ export default function CounterPage() {
       expect(apiRes.status).toBe(200);
       const apiData = await apiRes.json();
       expect(apiData).toEqual({ message: "Hello from API!" });
+
+      const invalidJsonRes = await fetch(`${prodUrl}/api/parse`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: `{"message":Invalid"}`,
+      });
+      expect(invalidJsonRes.status).toBe(400);
+      expect(invalidJsonRes.statusText).toBe("Invalid JSON");
+      expect(await invalidJsonRes.text()).toBe("Invalid JSON");
+
+      const duplicateFormRes = await fetch(`${prodUrl}/api/parse`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "tag=a&tag=b&tag=c",
+      });
+      expect(duplicateFormRes.status).toBe(200);
+      expect(await duplicateFormRes.json()).toEqual({ tag: ["a", "b", "c"] });
+
+      const emptyJsonRes = await fetch(`${prodUrl}/api/parse`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "",
+      });
+      expect(emptyJsonRes.status).toBe(200);
+      expect(await emptyJsonRes.json()).toEqual({});
+
+      const ldJsonRes = await fetch(`${prodUrl}/api/parse`, {
+        method: "POST",
+        headers: { "Content-Type": "application/ld+json; charset=utf-8" },
+        body: JSON.stringify({ title: "doc" }),
+      });
+      expect(ldJsonRes.status).toBe(200);
+      expect(await ldJsonRes.json()).toEqual({ title: "doc" });
 
       // Test: 404 for unknown route
       const notFoundRes = await fetch(`${prodUrl}/nonexistent`);
@@ -1763,6 +1850,51 @@ describe("Production server middleware (Pages Router)", () => {
     expect(res.status).toBe(200);
     // Middleware matcher excludes /api, so no x-custom-middleware header
     expect(res.headers.get("x-custom-middleware")).toBeNull();
+  });
+
+  it("preserves invalid JSON failures for Pages API routes in production", async () => {
+    const res = await fetch(`${prodUrl}/api/parse`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: `{"message":Invalid"}`,
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.statusText).toBe("Invalid JSON");
+    expect(await res.text()).toBe("Invalid JSON");
+  });
+
+  it("preserves duplicate urlencoded body keys for Pages API routes in production", async () => {
+    const res = await fetch(`${prodUrl}/api/parse`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "tag=a&tag=b&tag=c",
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ tag: ["a", "b", "c"] });
+  });
+
+  it("parses empty JSON bodies for Pages API routes in production as {}", async () => {
+    const res = await fetch(`${prodUrl}/api/parse`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "",
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({});
+  });
+
+  it("parses application/ld+json bodies for Pages API routes in production", async () => {
+    const res = await fetch(`${prodUrl}/api/parse`, {
+      method: "POST",
+      headers: { "Content-Type": "application/ld+json; charset=utf-8" },
+      body: JSON.stringify({ title: "doc" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ title: "doc" });
   });
 
   it("production object-form matcher requires has and missing conditions", async () => {
