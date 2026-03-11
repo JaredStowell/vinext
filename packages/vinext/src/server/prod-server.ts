@@ -1026,16 +1026,19 @@ async function startPagesRouterServer(options: PagesRouterServerOptions) {
         // the handler doesn't set an explicit Content-Type.
         const ct = response.headers.get("content-type") ?? "application/octet-stream";
         const responseHeaders = mergeResponseHeaders(middlewareHeaders, response);
+        const finalStatus = middlewareRewriteStatus ?? response.status;
+        const finalStatusText =
+          finalStatus === response.status ? response.statusText || undefined : undefined;
 
         sendCompressed(
           req,
           res,
           responseBody,
           ct,
-          middlewareRewriteStatus ?? response.status,
+          finalStatus,
           responseHeaders,
           compress,
-          response.statusText || undefined,
+          finalStatusText,
         );
         return;
       }
@@ -1087,16 +1090,19 @@ async function startPagesRouterServer(options: PagesRouterServerOptions) {
       const responseBody = Buffer.from(await response.arrayBuffer());
       const ct = response.headers.get("content-type") ?? "text/html";
       const responseHeaders = mergeResponseHeaders(middlewareHeaders, response);
+      const finalStatus = middlewareRewriteStatus ?? response.status;
+      const finalStatusText =
+        finalStatus === response.status ? response.statusText || undefined : undefined;
 
       sendCompressed(
         req,
         res,
         responseBody,
         ct,
-        middlewareRewriteStatus ?? response.status,
+        finalStatus,
         responseHeaders,
         compress,
-        response.statusText || undefined,
+        finalStatusText,
       );
     } catch (e) {
       console.error("[vinext] Server error:", e);
