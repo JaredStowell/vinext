@@ -924,6 +924,9 @@ async function startPagesRouterServer(options: PagesRouterServerOptions) {
       );
       webRequest = postMwReq;
 
+      // headers() and redirects() run before middleware in Next.js, so they
+      // must keep matching against the original normalized pathname even if
+      // middleware rewrites the downstream route/render target.
       let resolvedPathname = resolvedUrl.split("?")[0];
 
       // ── 5. Apply custom headers from next.config.js ───────────────
@@ -933,7 +936,7 @@ async function startPagesRouterServer(options: PagesRouterServerOptions) {
       // Middleware headers take precedence: skip config keys already set
       // by middleware so middleware always wins for the same key.
       if (configHeaders.length) {
-        const matched = matchHeaders(resolvedPathname, configHeaders, reqCtx);
+        const matched = matchHeaders(pathname, configHeaders, reqCtx);
         for (const h of matched) {
           const lk = h.key.toLowerCase();
           if (lk === "set-cookie") {
@@ -957,7 +960,7 @@ async function startPagesRouterServer(options: PagesRouterServerOptions) {
 
       // ── 6. Apply redirects from next.config.js ────────────────────
       if (configRedirects.length) {
-        const redirect = matchRedirect(resolvedPathname, configRedirects, reqCtx);
+        const redirect = matchRedirect(pathname, configRedirects, reqCtx);
         if (redirect) {
           // Guard against double-prefixing: only add basePath if destination
           // doesn't already start with it.

@@ -514,7 +514,7 @@ describe("generatePagesRouterWorkerEntry", () => {
   it("applies next.config.js redirects", () => {
     const content = generatePagesRouterWorkerEntry();
     expect(content).toContain("configRedirects");
-    expect(content).toContain("matchRedirect(resolvedPathname");
+    expect(content).toContain("matchRedirect(pathname");
   });
 
   it("applies next.config.js rewrites (beforeFiles, afterFiles, fallback)", () => {
@@ -528,7 +528,7 @@ describe("generatePagesRouterWorkerEntry", () => {
   it("applies next.config.js custom headers", () => {
     const content = generatePagesRouterWorkerEntry();
     expect(content).toContain("configHeaders");
-    expect(content).toContain("matchHeaders(resolvedPathname");
+    expect(content).toContain("matchHeaders(pathname");
   });
 
   it("handles basePath stripping and creates a new request with stripped URL for middleware", () => {

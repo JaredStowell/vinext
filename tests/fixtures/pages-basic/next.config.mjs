@@ -16,6 +16,11 @@ const nextConfig = {
         destination: "/docs/:id/:id",
         permanent: false,
       },
+      {
+        source: "/redirect-before-middleware-rewrite",
+        destination: "/about",
+        permanent: false,
+      },
     ];
   },
   async rewrites() {
@@ -89,6 +94,10 @@ const nextConfig = {
       {
         source: "/ssr",
         headers: [{ key: "Vary", value: "Accept-Language" }],
+      },
+      {
+        source: "/headers-before-middleware-rewrite",
+        headers: [{ key: "X-Rewrite-Source-Header", value: "1" }],
       },
     ];
   },

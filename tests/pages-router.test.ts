@@ -1725,6 +1725,34 @@ describe("Production server middleware (Pages Router)", () => {
     expect(html).toContain("Server-Side Rendered");
   });
 
+  // Ported from Next.js:
+  // test/e2e/app-dir/rewrites-redirects/rewrites-redirects.test.ts
+  // https://github.com/vercel/next.js/blob/canary/test/e2e/app-dir/rewrites-redirects/rewrites-redirects.test.ts
+  // and
+  // test/e2e/middleware-rewrites/test/index.test.ts
+  // https://github.com/vercel/next.js/blob/canary/test/e2e/middleware-rewrites/test/index.test.ts
+  it("applies next.config.js headers using the pre-middleware pathname after a rewrite", async () => {
+    const res = await fetch(`${prodUrl}/headers-before-middleware-rewrite`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-rewrite-source-header")).toBe("1");
+    const html = await res.text();
+    expect(html).toContain("Server-Side Rendered");
+  });
+
+  // Ported from Next.js:
+  // test/e2e/app-dir/rewrites-redirects/rewrites-redirects.test.ts
+  // https://github.com/vercel/next.js/blob/canary/test/e2e/app-dir/rewrites-redirects/rewrites-redirects.test.ts
+  // and
+  // test/e2e/middleware-rewrites/test/index.test.ts
+  // https://github.com/vercel/next.js/blob/canary/test/e2e/middleware-rewrites/test/index.test.ts
+  it("applies next.config.js redirects before middleware rewrites in production", async () => {
+    const res = await fetch(`${prodUrl}/redirect-before-middleware-rewrite`, {
+      redirect: "manual",
+    });
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toContain("/about");
+  });
+
   it("blocks /blocked with 403 via middleware", async () => {
     const res = await fetch(`${prodUrl}/blocked`);
     expect(res.status).toBe(403);
