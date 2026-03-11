@@ -47,6 +47,7 @@ import { normalizePath } from "./normalize-path.js";
 import { hasBasePath, stripBasePath } from "../utils/base-path.js";
 import { computeLazyChunks } from "../index.js";
 import { manifestFileWithBase } from "../utils/manifest-paths.js";
+import type { ExecutionContextLike } from "../shims/request-context.js";
 
 /** Convert a Node.js IncomingMessage into a ReadableStream for Web Request body. */
 function readNodeStream(req: IncomingMessage): ReadableStream<Uint8Array> {
@@ -508,11 +509,47 @@ interface AppRouterServerOptions {
   compress: boolean;
 }
 
+interface WorkerAppRouterEntry {
+  fetch(request: Request, env?: unknown, ctx?: ExecutionContextLike): Promise<Response> | Response;
+}
+
+function createNodeExecutionContext(): ExecutionContextLike {
+  return {
+    waitUntil(promise: Promise<unknown>) {
+      // Node doesn't provide a Workers lifecycle, but we still attach a
+      // rejection handler so background waitUntil work doesn't surface as an
+      // unhandled rejection when a Worker-style entry is used with vinext start.
+      void Promise.resolve(promise).catch(() => {});
+    },
+    passThroughOnException() {},
+  };
+}
+
+function resolveAppRouterHandler(entry: unknown): (request: Request) => Promise<Response> {
+  if (typeof entry === "function") {
+    return (request) => Promise.resolve(entry(request));
+  }
+
+  if (entry && typeof entry === "object" && "fetch" in entry) {
+    const workerEntry = entry as WorkerAppRouterEntry;
+    if (typeof workerEntry.fetch === "function") {
+      return (request) =>
+        Promise.resolve(workerEntry.fetch(request, undefined, createNodeExecutionContext()));
+    }
+  }
+
+  console.error(
+    "[vinext] App Router entry must export either a default handler function or a Worker-style default export with fetch()",
+  );
+  process.exit(1);
+}
+
 /**
  * Start the App Router production server.
  *
- * The RSC entry (dist/server/index.js) exports a default handler function:
- *   handler(request: Request) → Promise<Response>
+ * The App Router entry (dist/server/index.js) can export either:
+ *   - a default handler function: handler(request: Request) → Promise<Response>
+ *   - a Worker-style object: { fetch(request, env, ctx) → Promise<Response> }
  *
  * This handler already does everything: route matching, RSC rendering,
  * SSR HTML generation (via import("./ssr/index.js")), route handlers,
@@ -541,12 +578,7 @@ async function startAppRouterServer(options: AppRouterServerOptions) {
 
   // Import the RSC handler (use file:// URL for reliable dynamic import)
   const rscModule = await import(pathToFileURL(rscEntryPath).href);
-  const rscHandler: (request: Request) => Promise<Response> = rscModule.default;
-
-  if (typeof rscHandler !== "function") {
-    console.error("[vinext] RSC entry does not export a default handler function");
-    process.exit(1);
-  }
+  const rscHandler = resolveAppRouterHandler(rscModule.default);
 
   const server = createServer(async (req, res) => {
     const url = req.url ?? "/";
