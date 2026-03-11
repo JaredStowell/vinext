@@ -7591,6 +7591,44 @@ describe("image optimization request parsing", () => {
     expect(negotiateImageFormat(null)).toBe("image/jpeg");
   });
 
+  it("negotiateImageFormat respects q-values for AVIF and WebP", async () => {
+    const { negotiateImageFormat } =
+      await import("../packages/vinext/src/server/image-optimization.js");
+    expect(negotiateImageFormat("image/avif;q=0.1,image/webp;q=0.9,image/jpeg;q=1")).toBe(
+      "image/webp",
+    );
+    expect(negotiateImageFormat("image/avif;q=0,image/webp;q=0.9")).toBe("image/webp");
+  });
+
+  it("negotiateImageFormat matches Next.js tie-breaking for equal q-values", async () => {
+    const { negotiateImageFormat } =
+      await import("../packages/vinext/src/server/image-optimization.js");
+    expect(negotiateImageFormat("image/webp;q=0.9,image/avif;q=0.9")).toBe("image/avif");
+  });
+
+  it("negotiateImageFormat matches Next.js fallback for wildcard media ranges", async () => {
+    const { negotiateImageFormat } =
+      await import("../packages/vinext/src/server/image-optimization.js");
+    // Ported from the current Next.js image optimizer behavior:
+    // getSupportedMimeType() uses @hapi/accept for q-value parsing, then
+    // requires the chosen mime type to appear literally in the Accept header.
+    // https://github.com/vercel/next.js/blob/canary/packages/next/src/server/image-optimizer.ts
+    expect(negotiateImageFormat("image/*;q=0.8,*/*;q=0.5")).toBe("image/jpeg");
+  });
+
+  it("negotiateImageFormat preserves Next.js raw includes behavior for mixed-case media types", async () => {
+    const { negotiateImageFormat } =
+      await import("../packages/vinext/src/server/image-optimization.js");
+    expect(negotiateImageFormat("IMAGE/WEBP;Q=0.9,IMAGE/AVIF;Q=0.9")).toBe("image/jpeg");
+  });
+
+  it("negotiateImageFormat matches Next.js handling for invalid q-values", async () => {
+    const { negotiateImageFormat } =
+      await import("../packages/vinext/src/server/image-optimization.js");
+    expect(negotiateImageFormat("image/avif;q=bogus,image/webp;q=0.9")).toBe("image/avif");
+    expect(negotiateImageFormat("image/avif;q=1.5,image/webp;q=0.9")).toBe("image/avif");
+  });
+
   it("IMAGE_OPTIMIZATION_PATH is /_vinext/image", async () => {
     const { IMAGE_OPTIMIZATION_PATH } =
       await import("../packages/vinext/src/server/image-optimization.js");

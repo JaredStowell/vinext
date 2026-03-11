@@ -56,6 +56,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
+    "@hapi/accept": "^6.0.3",
     "@unpic/react": "^1.0.2",
     "@vercel/og": "^0.8.6",
     "@vitejs/plugin-react": "^5.1.4",

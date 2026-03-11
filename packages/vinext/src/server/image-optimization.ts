@@ -1,3 +1,5 @@
+import { mediaType } from "@hapi/accept";
+
 /**
  * Image optimization request handler.
  *
@@ -107,9 +109,9 @@ export function parseImageParams(
  */
 export function negotiateImageFormat(acceptHeader: string | null): string {
   if (!acceptHeader) return "image/jpeg";
-  if (acceptHeader.includes("image/avif")) return "image/avif";
-  if (acceptHeader.includes("image/webp")) return "image/webp";
-  return "image/jpeg";
+  const preferredFormat = mediaType(acceptHeader, ["image/avif", "image/webp"]);
+  if (!preferredFormat) return "image/jpeg";
+  return acceptHeader.includes(preferredFormat) ? preferredFormat : "image/jpeg";
 }
 
 /**
