@@ -390,7 +390,7 @@ describe("KVCacheHandler", () => {
       await handler.revalidateTag(["/revalidate-tag-test", "_N_T_/revalidate-tag-test"]);
 
       expect(store.get("__tag:/revalidate-tag-test")).toMatch(/^\d+$/);
-      expect(store.get("__tag:_N_T_\/revalidate-tag-test")).toMatch(/^\d+$/);
+      expect(store.get("__tag:_N_T_/revalidate-tag-test")).toMatch(/^\d+$/);
     });
 
     it("slash-based path tags invalidate persisted APP_PAGE entries", async () => {
