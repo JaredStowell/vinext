@@ -357,6 +357,7 @@ import { validateCsrfOrigin, validateImageUrl, guardProtocolRelativeUrl, hasBase
 import { _consumeRequestScopedCacheLife, _runWithCacheState, getCacheHandler } from "next/cache";
 import { runWithExecutionContext as _runWithExecutionContext, getRequestExecutionContext as _getRequestExecutionContext } from "<ROOT>/packages/vinext/src/shims/request-context.js";
 import { getCollectedFetchTags, runWithFetchCache } from "vinext/fetch-cache";
+import { buildRouteTrie as _buildRouteTrie, trieMatch as _trieMatch } from "<ROOT>/packages/vinext/src/routing/route-trie.js";
 import { runWithPrivateCache as _runWithPrivateCache } from "vinext/cache-runtime";
 // Import server-only state module to register ALS-backed accessors.
 import { runWithNavigationContext as _runWithNavigationContext } from "vinext/navigation-state";
@@ -760,6 +761,7 @@ const routes = [
     unauthorized: null,
   }
 ];
+const _routeTrie = _buildRouteTrie(routes);
 
 const metadataRoutes = [
 
@@ -1025,20 +1027,17 @@ async function renderErrorBoundaryPage(route, error, isRscRequest, request, matc
   });
 }
 
-function matchRoute(url, routes) {
+function matchRoute(url) {
   const pathname = url.split("?")[0];
   let normalizedUrl = pathname === "/" ? "/" : pathname.replace(/\\/$/, "");
    // NOTE: Do NOT decodeURIComponent here. The caller is responsible for decoding
    // the pathname exactly once at the request entry point. Decoding again here
    // would cause inconsistent path matching between middleware and routing.
   const urlParts = normalizedUrl.split("/").filter(Boolean);
-  for (const route of routes) {
-    const params = matchPattern(urlParts, route.patternParts);
-    if (params !== null) return { route, params };
-  }
-  return null;
+  return _trieMatch(_routeTrie, urlParts);
 }
 
+// matchPattern is kept for findIntercept (linear scan over small interceptLookup array).
 function matchPattern(urlParts, patternParts) {
   const params = Object.create(null);
   for (let i = 0; i < patternParts.length; i++) {
@@ -1998,7 +1997,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
 
       // After the action, re-render the current page so the client
       // gets an updated React tree reflecting any mutations.
-      const match = matchRoute(cleanPathname, routes);
+      const match = matchRoute(cleanPathname);
       let element;
       if (match) {
         const { route: actionRoute, params: actionParams } = match;
@@ -2073,7 +2072,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     }
   }
 
-  let match = matchRoute(cleanPathname, routes);
+  let match = matchRoute(cleanPathname);
 
   // ── Fallback rewrites from next.config.js (if no route matched) ───────
   if (!match && __configRewrites.fallback && __configRewrites.fallback.length) {
@@ -2085,7 +2084,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
         return proxyExternalRequest(request, __fallbackRewritten);
       }
       cleanPathname = __fallbackRewritten;
-      match = matchRoute(cleanPathname, routes);
+      match = matchRoute(cleanPathname);
     }
   }
 
@@ -2521,7 +2520,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
       const sourceRoute = routes[intercept.sourceRouteIndex];
       if (sourceRoute && sourceRoute !== route) {
         // Render the source route (e.g. /feed) with the intercepting page in the slot
-        const sourceMatch = matchRoute(sourceRoute.pattern, routes);
+        const sourceMatch = matchRoute(sourceRoute.pattern);
         const sourceParams = sourceMatch ? sourceMatch.params : {};
         setNavigationContext({
           pathname: cleanPathname,
@@ -3130,6 +3129,7 @@ import { validateCsrfOrigin, validateImageUrl, guardProtocolRelativeUrl, hasBase
 import { _consumeRequestScopedCacheLife, _runWithCacheState, getCacheHandler } from "next/cache";
 import { runWithExecutionContext as _runWithExecutionContext, getRequestExecutionContext as _getRequestExecutionContext } from "<ROOT>/packages/vinext/src/shims/request-context.js";
 import { getCollectedFetchTags, runWithFetchCache } from "vinext/fetch-cache";
+import { buildRouteTrie as _buildRouteTrie, trieMatch as _trieMatch } from "<ROOT>/packages/vinext/src/routing/route-trie.js";
 import { runWithPrivateCache as _runWithPrivateCache } from "vinext/cache-runtime";
 // Import server-only state module to register ALS-backed accessors.
 import { runWithNavigationContext as _runWithNavigationContext } from "vinext/navigation-state";
@@ -3533,6 +3533,7 @@ const routes = [
     unauthorized: null,
   }
 ];
+const _routeTrie = _buildRouteTrie(routes);
 
 const metadataRoutes = [
 
@@ -3798,20 +3799,17 @@ async function renderErrorBoundaryPage(route, error, isRscRequest, request, matc
   });
 }
 
-function matchRoute(url, routes) {
+function matchRoute(url) {
   const pathname = url.split("?")[0];
   let normalizedUrl = pathname === "/" ? "/" : pathname.replace(/\\/$/, "");
    // NOTE: Do NOT decodeURIComponent here. The caller is responsible for decoding
    // the pathname exactly once at the request entry point. Decoding again here
    // would cause inconsistent path matching between middleware and routing.
   const urlParts = normalizedUrl.split("/").filter(Boolean);
-  for (const route of routes) {
-    const params = matchPattern(urlParts, route.patternParts);
-    if (params !== null) return { route, params };
-  }
-  return null;
+  return _trieMatch(_routeTrie, urlParts);
 }
 
+// matchPattern is kept for findIntercept (linear scan over small interceptLookup array).
 function matchPattern(urlParts, patternParts) {
   const params = Object.create(null);
   for (let i = 0; i < patternParts.length; i++) {
@@ -4774,7 +4772,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
 
       // After the action, re-render the current page so the client
       // gets an updated React tree reflecting any mutations.
-      const match = matchRoute(cleanPathname, routes);
+      const match = matchRoute(cleanPathname);
       let element;
       if (match) {
         const { route: actionRoute, params: actionParams } = match;
@@ -4849,7 +4847,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     }
   }
 
-  let match = matchRoute(cleanPathname, routes);
+  let match = matchRoute(cleanPathname);
 
   // ── Fallback rewrites from next.config.js (if no route matched) ───────
   if (!match && __configRewrites.fallback && __configRewrites.fallback.length) {
@@ -4861,7 +4859,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
         return proxyExternalRequest(request, __fallbackRewritten);
       }
       cleanPathname = __fallbackRewritten;
-      match = matchRoute(cleanPathname, routes);
+      match = matchRoute(cleanPathname);
     }
   }
 
@@ -5297,7 +5295,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
       const sourceRoute = routes[intercept.sourceRouteIndex];
       if (sourceRoute && sourceRoute !== route) {
         // Render the source route (e.g. /feed) with the intercepting page in the slot
-        const sourceMatch = matchRoute(sourceRoute.pattern, routes);
+        const sourceMatch = matchRoute(sourceRoute.pattern);
         const sourceParams = sourceMatch ? sourceMatch.params : {};
         setNavigationContext({
           pathname: cleanPathname,
@@ -5906,6 +5904,7 @@ import { validateCsrfOrigin, validateImageUrl, guardProtocolRelativeUrl, hasBase
 import { _consumeRequestScopedCacheLife, _runWithCacheState, getCacheHandler } from "next/cache";
 import { runWithExecutionContext as _runWithExecutionContext, getRequestExecutionContext as _getRequestExecutionContext } from "<ROOT>/packages/vinext/src/shims/request-context.js";
 import { getCollectedFetchTags, runWithFetchCache } from "vinext/fetch-cache";
+import { buildRouteTrie as _buildRouteTrie, trieMatch as _trieMatch } from "<ROOT>/packages/vinext/src/routing/route-trie.js";
 import { runWithPrivateCache as _runWithPrivateCache } from "vinext/cache-runtime";
 // Import server-only state module to register ALS-backed accessors.
 import { runWithNavigationContext as _runWithNavigationContext } from "vinext/navigation-state";
@@ -6310,6 +6309,7 @@ const routes = [
     unauthorized: null,
   }
 ];
+const _routeTrie = _buildRouteTrie(routes);
 
 const metadataRoutes = [
 
@@ -6596,20 +6596,17 @@ async function renderErrorBoundaryPage(route, error, isRscRequest, request, matc
   });
 }
 
-function matchRoute(url, routes) {
+function matchRoute(url) {
   const pathname = url.split("?")[0];
   let normalizedUrl = pathname === "/" ? "/" : pathname.replace(/\\/$/, "");
    // NOTE: Do NOT decodeURIComponent here. The caller is responsible for decoding
    // the pathname exactly once at the request entry point. Decoding again here
    // would cause inconsistent path matching between middleware and routing.
   const urlParts = normalizedUrl.split("/").filter(Boolean);
-  for (const route of routes) {
-    const params = matchPattern(urlParts, route.patternParts);
-    if (params !== null) return { route, params };
-  }
-  return null;
+  return _trieMatch(_routeTrie, urlParts);
 }
 
+// matchPattern is kept for findIntercept (linear scan over small interceptLookup array).
 function matchPattern(urlParts, patternParts) {
   const params = Object.create(null);
   for (let i = 0; i < patternParts.length; i++) {
@@ -7577,7 +7574,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
 
       // After the action, re-render the current page so the client
       // gets an updated React tree reflecting any mutations.
-      const match = matchRoute(cleanPathname, routes);
+      const match = matchRoute(cleanPathname);
       let element;
       if (match) {
         const { route: actionRoute, params: actionParams } = match;
@@ -7652,7 +7649,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     }
   }
 
-  let match = matchRoute(cleanPathname, routes);
+  let match = matchRoute(cleanPathname);
 
   // ── Fallback rewrites from next.config.js (if no route matched) ───────
   if (!match && __configRewrites.fallback && __configRewrites.fallback.length) {
@@ -7664,7 +7661,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
         return proxyExternalRequest(request, __fallbackRewritten);
       }
       cleanPathname = __fallbackRewritten;
-      match = matchRoute(cleanPathname, routes);
+      match = matchRoute(cleanPathname);
     }
   }
 
@@ -8100,7 +8097,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
       const sourceRoute = routes[intercept.sourceRouteIndex];
       if (sourceRoute && sourceRoute !== route) {
         // Render the source route (e.g. /feed) with the intercepting page in the slot
-        const sourceMatch = matchRoute(sourceRoute.pattern, routes);
+        const sourceMatch = matchRoute(sourceRoute.pattern);
         const sourceParams = sourceMatch ? sourceMatch.params : {};
         setNavigationContext({
           pathname: cleanPathname,
@@ -8717,6 +8714,7 @@ import { validateCsrfOrigin, validateImageUrl, guardProtocolRelativeUrl, hasBase
 import { _consumeRequestScopedCacheLife, _runWithCacheState, getCacheHandler } from "next/cache";
 import { runWithExecutionContext as _runWithExecutionContext, getRequestExecutionContext as _getRequestExecutionContext } from "<ROOT>/packages/vinext/src/shims/request-context.js";
 import { getCollectedFetchTags, runWithFetchCache } from "vinext/fetch-cache";
+import { buildRouteTrie as _buildRouteTrie, trieMatch as _trieMatch } from "<ROOT>/packages/vinext/src/routing/route-trie.js";
 import { runWithPrivateCache as _runWithPrivateCache } from "vinext/cache-runtime";
 // Import server-only state module to register ALS-backed accessors.
 import { runWithNavigationContext as _runWithNavigationContext } from "vinext/navigation-state";
@@ -9149,6 +9147,7 @@ const routes = [
     unauthorized: null,
   }
 ];
+const _routeTrie = _buildRouteTrie(routes);
 
 const metadataRoutes = [
 
@@ -9414,20 +9413,17 @@ async function renderErrorBoundaryPage(route, error, isRscRequest, request, matc
   });
 }
 
-function matchRoute(url, routes) {
+function matchRoute(url) {
   const pathname = url.split("?")[0];
   let normalizedUrl = pathname === "/" ? "/" : pathname.replace(/\\/$/, "");
    // NOTE: Do NOT decodeURIComponent here. The caller is responsible for decoding
    // the pathname exactly once at the request entry point. Decoding again here
    // would cause inconsistent path matching between middleware and routing.
   const urlParts = normalizedUrl.split("/").filter(Boolean);
-  for (const route of routes) {
-    const params = matchPattern(urlParts, route.patternParts);
-    if (params !== null) return { route, params };
-  }
-  return null;
+  return _trieMatch(_routeTrie, urlParts);
 }
 
+// matchPattern is kept for findIntercept (linear scan over small interceptLookup array).
 function matchPattern(urlParts, patternParts) {
   const params = Object.create(null);
   for (let i = 0; i < patternParts.length; i++) {
@@ -10390,7 +10386,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
 
       // After the action, re-render the current page so the client
       // gets an updated React tree reflecting any mutations.
-      const match = matchRoute(cleanPathname, routes);
+      const match = matchRoute(cleanPathname);
       let element;
       if (match) {
         const { route: actionRoute, params: actionParams } = match;
@@ -10465,7 +10461,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     }
   }
 
-  let match = matchRoute(cleanPathname, routes);
+  let match = matchRoute(cleanPathname);
 
   // ── Fallback rewrites from next.config.js (if no route matched) ───────
   if (!match && __configRewrites.fallback && __configRewrites.fallback.length) {
@@ -10477,7 +10473,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
         return proxyExternalRequest(request, __fallbackRewritten);
       }
       cleanPathname = __fallbackRewritten;
-      match = matchRoute(cleanPathname, routes);
+      match = matchRoute(cleanPathname);
     }
   }
 
@@ -10913,7 +10909,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
       const sourceRoute = routes[intercept.sourceRouteIndex];
       if (sourceRoute && sourceRoute !== route) {
         // Render the source route (e.g. /feed) with the intercepting page in the slot
-        const sourceMatch = matchRoute(sourceRoute.pattern, routes);
+        const sourceMatch = matchRoute(sourceRoute.pattern);
         const sourceParams = sourceMatch ? sourceMatch.params : {};
         setNavigationContext({
           pathname: cleanPathname,
@@ -11522,6 +11518,7 @@ import { validateCsrfOrigin, validateImageUrl, guardProtocolRelativeUrl, hasBase
 import { _consumeRequestScopedCacheLife, _runWithCacheState, getCacheHandler } from "next/cache";
 import { runWithExecutionContext as _runWithExecutionContext, getRequestExecutionContext as _getRequestExecutionContext } from "<ROOT>/packages/vinext/src/shims/request-context.js";
 import { getCollectedFetchTags, runWithFetchCache } from "vinext/fetch-cache";
+import { buildRouteTrie as _buildRouteTrie, trieMatch as _trieMatch } from "<ROOT>/packages/vinext/src/routing/route-trie.js";
 import { runWithPrivateCache as _runWithPrivateCache } from "vinext/cache-runtime";
 // Import server-only state module to register ALS-backed accessors.
 import { runWithNavigationContext as _runWithNavigationContext } from "vinext/navigation-state";
@@ -11926,6 +11923,7 @@ const routes = [
     unauthorized: null,
   }
 ];
+const _routeTrie = _buildRouteTrie(routes);
 
 const metadataRoutes = [
   {
@@ -12197,20 +12195,17 @@ async function renderErrorBoundaryPage(route, error, isRscRequest, request, matc
   });
 }
 
-function matchRoute(url, routes) {
+function matchRoute(url) {
   const pathname = url.split("?")[0];
   let normalizedUrl = pathname === "/" ? "/" : pathname.replace(/\\/$/, "");
    // NOTE: Do NOT decodeURIComponent here. The caller is responsible for decoding
    // the pathname exactly once at the request entry point. Decoding again here
    // would cause inconsistent path matching between middleware and routing.
   const urlParts = normalizedUrl.split("/").filter(Boolean);
-  for (const route of routes) {
-    const params = matchPattern(urlParts, route.patternParts);
-    if (params !== null) return { route, params };
-  }
-  return null;
+  return _trieMatch(_routeTrie, urlParts);
 }
 
+// matchPattern is kept for findIntercept (linear scan over small interceptLookup array).
 function matchPattern(urlParts, patternParts) {
   const params = Object.create(null);
   for (let i = 0; i < patternParts.length; i++) {
@@ -13170,7 +13165,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
 
       // After the action, re-render the current page so the client
       // gets an updated React tree reflecting any mutations.
-      const match = matchRoute(cleanPathname, routes);
+      const match = matchRoute(cleanPathname);
       let element;
       if (match) {
         const { route: actionRoute, params: actionParams } = match;
@@ -13245,7 +13240,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     }
   }
 
-  let match = matchRoute(cleanPathname, routes);
+  let match = matchRoute(cleanPathname);
 
   // ── Fallback rewrites from next.config.js (if no route matched) ───────
   if (!match && __configRewrites.fallback && __configRewrites.fallback.length) {
@@ -13257,7 +13252,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
         return proxyExternalRequest(request, __fallbackRewritten);
       }
       cleanPathname = __fallbackRewritten;
-      match = matchRoute(cleanPathname, routes);
+      match = matchRoute(cleanPathname);
     }
   }
 
@@ -13693,7 +13688,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
       const sourceRoute = routes[intercept.sourceRouteIndex];
       if (sourceRoute && sourceRoute !== route) {
         // Render the source route (e.g. /feed) with the intercepting page in the slot
-        const sourceMatch = matchRoute(sourceRoute.pattern, routes);
+        const sourceMatch = matchRoute(sourceRoute.pattern);
         const sourceParams = sourceMatch ? sourceMatch.params : {};
         setNavigationContext({
           pathname: cleanPathname,
@@ -14302,6 +14297,7 @@ import { validateCsrfOrigin, validateImageUrl, guardProtocolRelativeUrl, hasBase
 import { _consumeRequestScopedCacheLife, _runWithCacheState, getCacheHandler } from "next/cache";
 import { runWithExecutionContext as _runWithExecutionContext, getRequestExecutionContext as _getRequestExecutionContext } from "<ROOT>/packages/vinext/src/shims/request-context.js";
 import { getCollectedFetchTags, runWithFetchCache } from "vinext/fetch-cache";
+import { buildRouteTrie as _buildRouteTrie, trieMatch as _trieMatch } from "<ROOT>/packages/vinext/src/routing/route-trie.js";
 import { runWithPrivateCache as _runWithPrivateCache } from "vinext/cache-runtime";
 // Import server-only state module to register ALS-backed accessors.
 import { runWithNavigationContext as _runWithNavigationContext } from "vinext/navigation-state";
@@ -14705,6 +14701,7 @@ const routes = [
     unauthorized: null,
   }
 ];
+const _routeTrie = _buildRouteTrie(routes);
 
 const metadataRoutes = [
 
@@ -14970,20 +14967,17 @@ async function renderErrorBoundaryPage(route, error, isRscRequest, request, matc
   });
 }
 
-function matchRoute(url, routes) {
+function matchRoute(url) {
   const pathname = url.split("?")[0];
   let normalizedUrl = pathname === "/" ? "/" : pathname.replace(/\\/$/, "");
    // NOTE: Do NOT decodeURIComponent here. The caller is responsible for decoding
    // the pathname exactly once at the request entry point. Decoding again here
    // would cause inconsistent path matching between middleware and routing.
   const urlParts = normalizedUrl.split("/").filter(Boolean);
-  for (const route of routes) {
-    const params = matchPattern(urlParts, route.patternParts);
-    if (params !== null) return { route, params };
-  }
-  return null;
+  return _trieMatch(_routeTrie, urlParts);
 }
 
+// matchPattern is kept for findIntercept (linear scan over small interceptLookup array).
 function matchPattern(urlParts, patternParts) {
   const params = Object.create(null);
   for (let i = 0; i < patternParts.length; i++) {
@@ -16221,7 +16215,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
 
       // After the action, re-render the current page so the client
       // gets an updated React tree reflecting any mutations.
-      const match = matchRoute(cleanPathname, routes);
+      const match = matchRoute(cleanPathname);
       let element;
       if (match) {
         const { route: actionRoute, params: actionParams } = match;
@@ -16296,7 +16290,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     }
   }
 
-  let match = matchRoute(cleanPathname, routes);
+  let match = matchRoute(cleanPathname);
 
   // ── Fallback rewrites from next.config.js (if no route matched) ───────
   if (!match && __configRewrites.fallback && __configRewrites.fallback.length) {
@@ -16308,7 +16302,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
         return proxyExternalRequest(request, __fallbackRewritten);
       }
       cleanPathname = __fallbackRewritten;
-      match = matchRoute(cleanPathname, routes);
+      match = matchRoute(cleanPathname);
     }
   }
 
@@ -16744,7 +16738,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
       const sourceRoute = routes[intercept.sourceRouteIndex];
       if (sourceRoute && sourceRoute !== route) {
         // Render the source route (e.g. /feed) with the intercepting page in the slot
-        const sourceMatch = matchRoute(sourceRoute.pattern, routes);
+        const sourceMatch = matchRoute(sourceRoute.pattern);
         const sourceParams = sourceMatch ? sourceMatch.params : {};
         setNavigationContext({
           pathname: cleanPathname,
@@ -17886,6 +17880,7 @@ import { getSSRFontLinks as _getSSRFontLinks, getSSRFontStyles as _getSSRFontSty
 import { getSSRFontStyles as _getSSRFontStylesLocal, getSSRFontPreloads as _getSSRFontPreloadsLocal } from "next/font/local";
 import { parseCookies } from "<ROOT>/packages/vinext/src/config/config-matchers.js";
 import { runWithExecutionContext as _runWithExecutionContext, getRequestExecutionContext as _getRequestExecutionContext } from "<ROOT>/packages/vinext/src/shims/request-context.js";
+import { buildRouteTrie as _buildRouteTrie, trieMatch as _trieMatch } from "<ROOT>/packages/vinext/src/routing/route-trie.js";
 import * as _instrumentation from "<ROOT>/tests/fixtures/pages-basic/instrumentation.ts";
 import * as middlewareModule from "<ROOT>/tests/fixtures/pages-basic/middleware.ts";
 import { NextRequest, NextFetchEvent } from "next/server";
@@ -18062,6 +18057,7 @@ const pageRoutes = [
   { pattern: "/docs/:slug+", patternParts: ["docs",":slug+"], isDynamic: true, params: ["slug"], module: page_30, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/docs/[...slug].tsx" },
   { pattern: "/sign-up/:sign-up*", patternParts: ["sign-up",":sign-up*"], isDynamic: true, params: ["sign-up"], module: page_31, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/sign-up/[[...sign-up]]/index.tsx" }
 ];
+const _pageRouteTrie = _buildRouteTrie(pageRoutes);
 
 const apiRoutes = [
   { pattern: "/api/binary", patternParts: ["api","binary"], isDynamic: false, params: [], module: api_0 },
@@ -18075,6 +18071,7 @@ const apiRoutes = [
   { pattern: "/api/send-buffer", patternParts: ["api","send-buffer"], isDynamic: false, params: [], module: api_8 },
   { pattern: "/api/users/:id", patternParts: ["api","users",":id"], isDynamic: true, params: ["id"], module: api_9 }
 ];
+const _apiRouteTrie = _buildRouteTrie(apiRoutes);
 
 function matchRoute(url, routes) {
   const pathname = url.split("?")[0];
@@ -18082,40 +18079,8 @@ function matchRoute(url, routes) {
   // NOTE: Do NOT decodeURIComponent here. The pathname is already decoded at
   // the entry point. Decoding again would create a double-decode vector.
   const urlParts = normalizedUrl.split("/").filter(Boolean);
-  for (const route of routes) {
-    const params = matchPattern(urlParts, route.patternParts);
-    if (params !== null) return { route, params };
-  }
-  return null;
-}
-
-function matchPattern(urlParts, patternParts) {
-  const params = Object.create(null);
-  for (let i = 0; i < patternParts.length; i++) {
-    const pp = patternParts[i];
-    if (pp.endsWith("+")) {
-      if (i !== patternParts.length - 1) return null;
-      const paramName = pp.slice(1, -1);
-      const remaining = urlParts.slice(i);
-      if (remaining.length === 0) return null;
-      params[paramName] = remaining;
-      return params;
-    }
-    if (pp.endsWith("*")) {
-      if (i !== patternParts.length - 1) return null;
-      const paramName = pp.slice(1, -1);
-      params[paramName] = urlParts.slice(i);
-      return params;
-    }
-    if (pp.startsWith(":")) {
-      if (i >= urlParts.length) return null;
-      params[pp.slice(1)] = urlParts[i];
-      continue;
-    }
-    if (i >= urlParts.length || urlParts[i] !== pp) return null;
-  }
-  if (urlParts.length !== patternParts.length) return null;
-  return params;
+  const trie = routes === pageRoutes ? _pageRouteTrie : _apiRouteTrie;
+  return _trieMatch(trie, urlParts);
 }
 
 function parseQuery(url) {
