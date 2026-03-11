@@ -46,6 +46,7 @@ class ApiBodyParseError extends Error {
     readonly statusCode: number,
   ) {
     super(message);
+    this.name = "ApiBodyParseError";
   }
 }
 
@@ -144,6 +145,7 @@ function enhanceApiObjects(
       if (!this.getHeader("Content-Type")) {
         this.setHeader("Content-Type", "application/octet-stream");
       }
+      this.setHeader("Content-Length", String(data.length));
       this.end(data);
       return;
     }
@@ -219,6 +221,11 @@ export async function handleApiRoute(
     await handler(apiReq, apiRes);
     return true;
   } catch (e) {
+    if (e instanceof ApiBodyParseError) {
+      res.statusCode = e.statusCode;
+      res.end(e.message);
+      return true;
+    }
     server.ssrFixStacktrace(e as Error);
     console.error(e);
     reportRequestError(
@@ -237,17 +244,12 @@ export async function handleApiRoute(
     ).catch(() => {
       /* ignore reporting errors */
     });
-    if (e instanceof ApiBodyParseError) {
-      res.statusCode = e.statusCode;
-      res.end(e.message);
+    if ((e as Error).message === "Request body too large") {
+      res.statusCode = 413;
+      res.end("Request body too large");
     } else {
-      if ((e as Error).message === "Request body too large") {
-        res.statusCode = 413;
-        res.end("Request body too large");
-      } else {
-        res.statusCode = 500;
-        res.end("Internal Server Error");
-      }
+      res.statusCode = 500;
+      res.end("Internal Server Error");
     }
     return true;
   }

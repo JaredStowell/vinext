@@ -10,12 +10,20 @@
  * all behavior is tested indirectly through handleApiRoute with a mocked
  * ViteDevServer.
  */
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PassThrough } from "node:stream";
 import http from "node:http";
+vi.mock("../packages/vinext/src/server/instrumentation.js", () => ({
+  reportRequestError: vi.fn(() => Promise.resolve()),
+}));
 import { handleApiRoute } from "../packages/vinext/src/server/api-handler.js";
+import { reportRequestError } from "../packages/vinext/src/server/instrumentation.js";
 import type { Route } from "../packages/vinext/src/routing/pages-router.js";
 import type { ViteDevServer } from "vite";
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -194,6 +202,8 @@ describe("handleApiRoute", () => {
       expect(handler).not.toHaveBeenCalled();
       expect(res._statusCode).toBe(400);
       expect(res._body).toBe("Invalid JSON");
+      expect(server.ssrFixStacktrace).not.toHaveBeenCalled();
+      expect(reportRequestError).not.toHaveBeenCalled();
     });
 
     it("parses application/x-www-form-urlencoded body", async () => {
@@ -510,6 +520,7 @@ describe("handleApiRoute", () => {
       await handleApiRoute(server, req, res, "/api/users", [route("/api/users")]);
 
       expect(res._headers["content-type"]).toBe("application/octet-stream");
+      expect(res._headers["content-length"]).toBe("3");
       expect(Buffer.isBuffer(res._body)).toBe(true);
       expect((res._body as Buffer).equals(Buffer.from([1, 2, 3]))).toBe(true);
     });
