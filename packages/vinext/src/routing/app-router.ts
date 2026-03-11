@@ -236,9 +236,11 @@ function discoverSlotSubRoutes(
       }
     }
 
+    if (subPathMap.size === 0) continue;
+
     // Find the default.tsx for the children slot at the parent directory
     const childrenDefault = findFile(parentPageDir, "default", matcher);
-    if (subPathMap.size === 0 || !childrenDefault) continue;
+    if (!childrenDefault) continue;
 
     for (const [subPath, slotPages] of subPathMap) {
       // Convert sub-path segments to URL pattern parts
