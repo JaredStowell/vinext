@@ -833,13 +833,35 @@ async function startPagesRouterServer(options: PagesRouterServerOptions) {
         duplex: hasBody ? "half" : undefined,
       });
 
-      // Build request context for has/missing condition matching.
-      // headers and redirects run before middleware and use this pre-middleware
-      // snapshot. beforeFiles, afterFiles, and fallback all run after middleware
-      // per the Next.js execution order, so they use postMwReqCtx below.
+      // Build request context for pre-middleware config matching. Redirects
+      // run before middleware in Next.js. Header match conditions also use the
+      // original request snapshot even though header merging happens later so
+      // middleware response headers can still take precedence.
+      // beforeFiles, afterFiles, and fallback all run after middleware per the
+      // Next.js execution order, so they use postMwReqCtx below.
       const reqCtx: RequestContext = requestContextFromRequest(webRequest);
 
-      // ── 4. Run middleware ─────────────────────────────────────────
+      // ── 4. Apply redirects from next.config.js ────────────────────
+      if (configRedirects.length) {
+        const redirect = matchRedirect(pathname, configRedirects, reqCtx);
+        if (redirect) {
+          // Guard against double-prefixing: only add basePath if destination
+          // doesn't already start with it.
+          // Sanitize the final destination to prevent protocol-relative URL open redirects.
+          const dest = sanitizeDestination(
+            basePath &&
+              !isExternalUrl(redirect.destination) &&
+              !hasBasePath(redirect.destination, basePath)
+              ? basePath + redirect.destination
+              : redirect.destination,
+          );
+          res.writeHead(redirect.permanent ? 308 : 307, { Location: dest });
+          res.end();
+          return;
+        }
+      }
+
+      // ── 5. Run middleware ─────────────────────────────────────────
       let resolvedUrl = url;
       const middlewareHeaders: Record<string, string | string[]> = {};
       let middlewareRewriteStatus: number | undefined;
@@ -924,12 +946,11 @@ async function startPagesRouterServer(options: PagesRouterServerOptions) {
       );
       webRequest = postMwReq;
 
-      // headers() and redirects() run before middleware in Next.js, so they
-      // must keep matching against the original normalized pathname even if
-      // middleware rewrites the downstream route/render target.
+      // Config header matching must keep using the original normalized pathname
+      // even if middleware rewrites the downstream route/render target.
       let resolvedPathname = resolvedUrl.split("?")[0];
 
-      // ── 5. Apply custom headers from next.config.js ───────────────
+      // ── 6. Apply custom headers from next.config.js ───────────────
       // Config headers are additive for multi-value headers (Vary,
       // Set-Cookie) and override for everything else. Set-Cookie values
       // are stored as arrays (RFC 6265 forbids comma-joining cookies).
@@ -955,26 +976,6 @@ async function startPagesRouterServer(options: PagesRouterServerOptions) {
             // did not already place this key on the response.
             middlewareHeaders[lk] = h.value;
           }
-        }
-      }
-
-      // ── 6. Apply redirects from next.config.js ────────────────────
-      if (configRedirects.length) {
-        const redirect = matchRedirect(pathname, configRedirects, reqCtx);
-        if (redirect) {
-          // Guard against double-prefixing: only add basePath if destination
-          // doesn't already start with it.
-          // Sanitize the final destination to prevent protocol-relative URL open redirects.
-          const dest = sanitizeDestination(
-            basePath &&
-              !isExternalUrl(redirect.destination) &&
-              !hasBasePath(redirect.destination, basePath)
-              ? basePath + redirect.destination
-              : redirect.destination,
-          );
-          res.writeHead(redirect.permanent ? 308 : 307, { Location: dest });
-          res.end();
-          return;
         }
       }
 

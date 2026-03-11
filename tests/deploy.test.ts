@@ -482,6 +482,15 @@ describe("generatePagesRouterWorkerEntry", () => {
     expect(middlewarePos).toBeLessThan(apiRoutePos);
   });
 
+  it("applies next.config.js redirects before middleware", () => {
+    const content = generatePagesRouterWorkerEntry();
+    const redirectPos = content.indexOf("matchRedirect(pathname, configRedirects, reqCtx)");
+    const middlewarePos = content.indexOf("runMiddleware(request, ctx)");
+    expect(redirectPos).toBeGreaterThan(-1);
+    expect(middlewarePos).toBeGreaterThan(-1);
+    expect(redirectPos).toBeLessThan(middlewarePos);
+  });
+
   it("handles middleware redirects", () => {
     const content = generatePagesRouterWorkerEntry();
     expect(content).toContain("result.redirectUrl");

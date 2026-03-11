@@ -31,7 +31,11 @@ export function middleware(request: NextRequest) {
   }
 
   if (url.pathname === "/redirect-before-middleware-rewrite") {
-    return NextResponse.rewrite(new URL("/ssr", request.url));
+    return NextResponse.redirect(new URL("/ssr", request.url));
+  }
+
+  if (url.pathname === "/redirect-before-middleware-response") {
+    return new Response("middleware should not win", { status: 418 });
   }
 
   // Block /blocked with a custom response

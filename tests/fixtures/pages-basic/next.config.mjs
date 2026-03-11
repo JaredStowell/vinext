@@ -21,6 +21,11 @@ const nextConfig = {
         destination: "/about",
         permanent: false,
       },
+      {
+        source: "/redirect-before-middleware-response",
+        destination: "/about",
+        permanent: false,
+      },
     ];
   },
   async rewrites() {
