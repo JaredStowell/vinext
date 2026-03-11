@@ -1559,6 +1559,14 @@ function __normalizePathnameForRouteMatch(pathname) {
   }
   return normalized.join("/");
 }
+function __normalizePathnameForRouteMatchStrict(pathname) {
+  const segments = pathname.split("/");
+  const normalized = [];
+  for (let i = 0; i < segments.length; i++) {
+    normalized.push(__decodeRouteSegment(segments[i]));
+  }
+  return normalized.join("/");
+}
 
 // ── Config pattern matching, redirects, rewrites, headers, CSRF validation,
 //    external URL proxy, cookie parsing, and request context are imported from
@@ -1738,7 +1746,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
   // This preserves encoded path delimiters like %2F within a single segment.
   // __normalizePath collapses //foo///bar → /foo/bar, resolves . and .. segments.
   let decodedUrlPathname;
-  try { decodedUrlPathname = __normalizePathnameForRouteMatch(url.pathname); } catch (e) {
+  try { decodedUrlPathname = __normalizePathnameForRouteMatchStrict(url.pathname); } catch (e) {
     return new Response("Bad Request", { status: 400 });
   }
   let pathname = __normalizePath(decodedUrlPathname);
@@ -4324,6 +4332,14 @@ function __normalizePathnameForRouteMatch(pathname) {
   }
   return normalized.join("/");
 }
+function __normalizePathnameForRouteMatchStrict(pathname) {
+  const segments = pathname.split("/");
+  const normalized = [];
+  for (let i = 0; i < segments.length; i++) {
+    normalized.push(__decodeRouteSegment(segments[i]));
+  }
+  return normalized.join("/");
+}
 
 // ── Config pattern matching, redirects, rewrites, headers, CSRF validation,
 //    external URL proxy, cookie parsing, and request context are imported from
@@ -4503,7 +4519,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
   // This preserves encoded path delimiters like %2F within a single segment.
   // __normalizePath collapses //foo///bar → /foo/bar, resolves . and .. segments.
   let decodedUrlPathname;
-  try { decodedUrlPathname = __normalizePathnameForRouteMatch(url.pathname); } catch (e) {
+  try { decodedUrlPathname = __normalizePathnameForRouteMatchStrict(url.pathname); } catch (e) {
     return new Response("Bad Request", { status: 400 });
   }
   let pathname = __normalizePath(decodedUrlPathname);
@@ -7122,6 +7138,14 @@ function __normalizePathnameForRouteMatch(pathname) {
   }
   return normalized.join("/");
 }
+function __normalizePathnameForRouteMatchStrict(pathname) {
+  const segments = pathname.split("/");
+  const normalized = [];
+  for (let i = 0; i < segments.length; i++) {
+    normalized.push(__decodeRouteSegment(segments[i]));
+  }
+  return normalized.join("/");
+}
 
 // ── Config pattern matching, redirects, rewrites, headers, CSRF validation,
 //    external URL proxy, cookie parsing, and request context are imported from
@@ -7301,7 +7325,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
   // This preserves encoded path delimiters like %2F within a single segment.
   // __normalizePath collapses //foo///bar → /foo/bar, resolves . and .. segments.
   let decodedUrlPathname;
-  try { decodedUrlPathname = __normalizePathnameForRouteMatch(url.pathname); } catch (e) {
+  try { decodedUrlPathname = __normalizePathnameForRouteMatchStrict(url.pathname); } catch (e) {
     return new Response("Bad Request", { status: 400 });
   }
   let pathname = __normalizePath(decodedUrlPathname);
@@ -9924,6 +9948,14 @@ function __normalizePathnameForRouteMatch(pathname) {
   }
   return normalized.join("/");
 }
+function __normalizePathnameForRouteMatchStrict(pathname) {
+  const segments = pathname.split("/");
+  const normalized = [];
+  for (let i = 0; i < segments.length; i++) {
+    normalized.push(__decodeRouteSegment(segments[i]));
+  }
+  return normalized.join("/");
+}
 
 // ── Config pattern matching, redirects, rewrites, headers, CSRF validation,
 //    external URL proxy, cookie parsing, and request context are imported from
@@ -10106,7 +10138,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
   // This preserves encoded path delimiters like %2F within a single segment.
   // __normalizePath collapses //foo///bar → /foo/bar, resolves . and .. segments.
   let decodedUrlPathname;
-  try { decodedUrlPathname = __normalizePathnameForRouteMatch(url.pathname); } catch (e) {
+  try { decodedUrlPathname = __normalizePathnameForRouteMatchStrict(url.pathname); } catch (e) {
     return new Response("Bad Request", { status: 400 });
   }
   let pathname = __normalizePath(decodedUrlPathname);
@@ -12699,6 +12731,14 @@ function __normalizePathnameForRouteMatch(pathname) {
   }
   return normalized.join("/");
 }
+function __normalizePathnameForRouteMatchStrict(pathname) {
+  const segments = pathname.split("/");
+  const normalized = [];
+  for (let i = 0; i < segments.length; i++) {
+    normalized.push(__decodeRouteSegment(segments[i]));
+  }
+  return normalized.join("/");
+}
 
 // ── Config pattern matching, redirects, rewrites, headers, CSRF validation,
 //    external URL proxy, cookie parsing, and request context are imported from
@@ -12878,7 +12918,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
   // This preserves encoded path delimiters like %2F within a single segment.
   // __normalizePath collapses //foo///bar → /foo/bar, resolves . and .. segments.
   let decodedUrlPathname;
-  try { decodedUrlPathname = __normalizePathnameForRouteMatch(url.pathname); } catch (e) {
+  try { decodedUrlPathname = __normalizePathnameForRouteMatchStrict(url.pathname); } catch (e) {
     return new Response("Bad Request", { status: 400 });
   }
   let pathname = __normalizePath(decodedUrlPathname);
@@ -15660,6 +15700,14 @@ function __normalizePathnameForRouteMatch(pathname) {
   }
   return normalized.join("/");
 }
+function __normalizePathnameForRouteMatchStrict(pathname) {
+  const segments = pathname.split("/");
+  const normalized = [];
+  for (let i = 0; i < segments.length; i++) {
+    normalized.push(__decodeRouteSegment(segments[i]));
+  }
+  return normalized.join("/");
+}
 
 // ── Config pattern matching, redirects, rewrites, headers, CSRF validation,
 //    external URL proxy, cookie parsing, and request context are imported from
@@ -15839,7 +15887,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
   // This preserves encoded path delimiters like %2F within a single segment.
   // __normalizePath collapses //foo///bar → /foo/bar, resolves . and .. segments.
   let decodedUrlPathname;
-  try { decodedUrlPathname = __normalizePathnameForRouteMatch(url.pathname); } catch (e) {
+  try { decodedUrlPathname = __normalizePathnameForRouteMatchStrict(url.pathname); } catch (e) {
     return new Response("Bad Request", { status: 400 });
   }
   let pathname = __normalizePath(decodedUrlPathname);
@@ -18810,6 +18858,14 @@ function __normalizePathnameForRouteMatch(pathname) {
   }
   return normalized.join("/");
 }
+function __normalizePathnameForRouteMatchStrict(pathname) {
+  var segments = pathname.split("/");
+  var normalized = [];
+  for (var i = 0; i < segments.length; i++) {
+    normalized.push(__decodeRouteSegment(segments[i]));
+  }
+  return normalized.join("/");
+}
 
 function __isSafeRegex(pattern) {
   var quantifierAtDepth = [];
@@ -19099,7 +19155,7 @@ async function _runMiddleware(request) {
   // Normalize pathname before matching to prevent path-confusion bypasses
   // (percent-encoding like /%61dmin, double slashes like /dashboard//settings).
   var decodedPathname;
-  try { decodedPathname = __normalizePathnameForRouteMatch(url.pathname); } catch (e) {
+  try { decodedPathname = __normalizePathnameForRouteMatchStrict(url.pathname); } catch (e) {
     return { continue: false, response: new Response("Bad Request", { status: 400 }) };
   }
   var normalizedPathname = __normalizePath(decodedPathname);

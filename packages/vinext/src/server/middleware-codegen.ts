@@ -155,6 +155,14 @@ function __normalizePathnameForRouteMatch(pathname) {
     normalized.push(__decodeRouteSegmentSafe(segments[i]));
   }
   return normalized.join("/");
+}
+function __normalizePathnameForRouteMatchStrict(pathname) {
+  ${v} segments = pathname.split("/");
+  ${v} normalized = [];
+  for (${l} i = 0; i < segments.length; i++) {
+    normalized.push(__decodeRouteSegment(segments[i]));
+  }
+  return normalized.join("/");
 }`;
 }
 
