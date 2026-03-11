@@ -933,6 +933,15 @@ function findFile(dir: string, name: string, matcher: ValidFileMatcher): string 
   return null;
 }
 
+/**
+ * Convert filesystem path segments to URL route parts, skipping invisible segments
+ * (route groups, @slots, ".") and converting dynamic segment syntax to Express-style
+ * patterns (e.g. "[id]" → ":id", "[...slug]" → ":slug+").
+ *
+ * Note: the invisible-segment filtering logic here is also applied manually in
+ * discoverSlotSubRoutes when building the dedup key from urlSegments. If a new
+ * invisible segment type is added, both locations need updating.
+ */
 function convertSegmentsToRouteParts(
   segments: string[],
 ): { urlSegments: string[]; params: string[]; isDynamic: boolean } | null {
@@ -997,29 +1006,6 @@ function hasRemainingVisibleSegments(segments: string[], startIndex: number): bo
   }
 
   return false;
-}
-
-/**
- * Filter filesystem path segments down to only the segments that are visible in the URL
- * (i.e. strip route groups, @slots, and "." entries) while preserving dynamic segment
- * syntax (e.g. "[id]" stays as "[id]", not converted to ":id").
- *
- * This is intentionally different from convertSegmentsToRouteParts, which additionally
- * converts dynamic segments to ":id" / ":id+" / ":id*" Express-style patterns.  Both
- * functions skip the same invisible segment types (route groups, @slots, "."), so they
- * must be kept in sync if new invisible segment types are introduced.
- */
-function normalizeVisibleRouteSegments(segments: string[]): string[] {
-  const visibleSegments: string[] = [];
-
-  for (const segment of segments) {
-    if (segment === ".") continue;
-    if (segment.startsWith("(") && segment.endsWith(")")) continue;
-    if (segment.startsWith("@")) continue;
-    visibleSegments.push(segment);
-  }
-
-  return visibleSegments;
 }
 
 function joinRoutePattern(basePattern: string, subPath: string): string {
