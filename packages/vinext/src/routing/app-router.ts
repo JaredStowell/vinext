@@ -37,6 +37,8 @@ export interface InterceptingRoute {
 export interface ParallelSlot {
   /** Slot name (e.g. "team" from @team) */
   name: string;
+  /** Absolute path to the @slot directory that owns this slot. Internal routing metadata. */
+  ownerDir?: string;
   /** Absolute path to the slot's page component */
   pagePath: string | null;
   /** Absolute path to the slot's default.tsx fallback */
@@ -211,7 +213,16 @@ function discoverSlotSubRoutes(
   matcher: ValidFileMatcher,
 ): AppRoute[] {
   const syntheticRoutes: AppRoute[] = [];
-  const existingPatterns = new Set(routes.map((r) => r.pattern));
+
+  const slotKey = (slotName: string, ownerDir: string | undefined): string =>
+    `${slotName}\u0000${ownerDir ?? ""}`;
+
+  const applySlotSubPages = (route: AppRoute, slotPages: Map<string, string>): void => {
+    route.parallelSlots = route.parallelSlots.map((slot) => ({
+      ...slot,
+      pagePath: slotPages.get(slotKey(slot.name, slot.ownerDir)) ?? slot.pagePath,
+    }));
+  };
 
   for (const parentRoute of routes) {
     if (parentRoute.parallelSlots.length === 0) continue;
@@ -220,8 +231,14 @@ function discoverSlotSubRoutes(
     const parentPageDir = path.dirname(parentRoute.pagePath);
 
     // Collect sub-paths from all slots.
-    // Map: relative sub-path (e.g., "demographics") -> Map<slotName, pagePath>
-    const subPathMap = new Map<string, Map<string, string>>();
+    // Map: normalized visible sub-path -> slot pages and visible route segments.
+    const subPathMap = new Map<
+      string,
+      {
+        routeSegments: string[];
+        slotPages: Map<string, string>;
+      }
+    >();
 
     for (const slot of parentRoute.parallelSlots) {
       const slotDir = path.join(parentPageDir, `@${slot.name}`);
@@ -229,10 +246,32 @@ function discoverSlotSubRoutes(
 
       const subPages = findSlotSubPages(slotDir, matcher);
       for (const { relativePath, pagePath } of subPages) {
-        if (!subPathMap.has(relativePath)) {
-          subPathMap.set(relativePath, new Map());
+        const subSegments = relativePath.split(path.sep);
+        const convertedSubRoute = convertSegmentsToRouteParts(subSegments);
+        if (!convertedSubRoute) continue;
+
+        const { urlSegments } = convertedSubRoute;
+        const normalizedSubPath = urlSegments.join("/");
+        let subPathEntry = subPathMap.get(normalizedSubPath);
+
+        if (!subPathEntry) {
+          subPathEntry = {
+            routeSegments: normalizeVisibleRouteSegments(subSegments),
+            slotPages: new Map(),
+          };
+          subPathMap.set(normalizedSubPath, subPathEntry);
         }
-        subPathMap.get(relativePath)!.set(slot.name, pagePath);
+
+        const slotId = slotKey(slot.name, slot.ownerDir);
+        const existingSlotPage = subPathEntry.slotPages.get(slotId);
+        if (existingSlotPage) {
+          const pattern = joinRoutePattern(parentRoute.pattern, normalizedSubPath);
+          throw new Error(
+            `You cannot have two routes that resolve to the same path ("${pattern}").`,
+          );
+        }
+
+        subPathEntry.slotPages.set(slotId, pagePath);
       }
     }
 
@@ -241,9 +280,7 @@ function discoverSlotSubRoutes(
     // Find the default.tsx for the children slot at the parent directory
     const childrenDefault = findFile(parentPageDir, "default", matcher);
 
-    for (const [subPath, slotPages] of subPathMap) {
-      // Convert sub-path segments to URL pattern parts
-      const subSegments = subPath.split(path.sep);
+    for (const [subPath, { routeSegments: subSegments, slotPages }] of subPathMap) {
       const convertedSubRoute = convertSegmentsToRouteParts(subSegments);
       if (!convertedSubRoute) continue;
 
@@ -254,18 +291,24 @@ function discoverSlotSubRoutes(
       } = convertedSubRoute;
 
       const subUrlPath = urlParts.join("/");
-      const pattern =
-        parentRoute.pattern === "/" ? "/" + subUrlPath : parentRoute.pattern + "/" + subUrlPath;
+      const pattern = joinRoutePattern(parentRoute.pattern, subUrlPath);
 
-      // Skip if this pattern already exists as a regular route
-      if (existingPatterns.has(pattern)) continue;
-      if (syntheticRoutes.some((r) => r.pattern === pattern)) continue;
+      const existingRoute = routes.find((route) => route.pattern === pattern);
+      if (existingRoute) {
+        if (existingRoute.routePath && !existingRoute.pagePath) {
+          throw new Error(
+            `You cannot have two routes that resolve to the same path ("${pattern}").`,
+          );
+        }
+        applySlotSubPages(existingRoute, slotPages);
+        continue;
+      }
 
       // Build parallel slots for this sub-route: matching slots get the sub-page,
       // non-matching slots get null pagePath (rendering falls back to defaultPath)
       const subSlots: ParallelSlot[] = parentRoute.parallelSlots.map((slot) => ({
         ...slot,
-        pagePath: slotPages.get(slot.name) || null,
+        pagePath: slotPages.get(slotKey(slot.name, slot.ownerDir)) || null,
       }));
 
       syntheticRoutes.push({
@@ -652,6 +695,7 @@ function discoverParallelSlots(
 
     slots.push({
       name: slotName,
+      ownerDir: slotDir,
       pagePath,
       defaultPath,
       layoutPath: findFile(slotDir, "layout", matcher),
@@ -945,6 +989,24 @@ function hasRemainingVisibleSegments(segments: string[], startIndex: number): bo
   }
 
   return false;
+}
+
+function normalizeVisibleRouteSegments(segments: string[]): string[] {
+  const visibleSegments: string[] = [];
+
+  for (const segment of segments) {
+    if (segment === ".") continue;
+    if (segment.startsWith("(") && segment.endsWith(")")) continue;
+    if (segment.startsWith("@")) continue;
+    visibleSegments.push(segment);
+  }
+
+  return visibleSegments;
+}
+
+function joinRoutePattern(basePattern: string, subPath: string): string {
+  if (!subPath) return basePattern;
+  return basePattern === "/" ? `/${subPath}` : `${basePattern}/${subPath}`;
 }
 
 /**
