@@ -1447,6 +1447,14 @@ describe("App Router Production server (startProdServer)", () => {
   let server: import("node:http").Server;
   let baseUrl: string;
 
+  function extractRequestId(html: string): string | undefined {
+    return (
+      html.match(
+        /data-testid="request-id"[^>]*>(?:<!--.*?-->)*RequestID:\s*(?:<!--.*?-->)*([a-z0-9]+)/,
+      )?.[1] ?? html.match(/request-id[^>]*>[^<]*?([a-z0-9]{6,})/)?.[1]
+    );
+  }
+
   beforeAll(async () => {
     // Build the app-basic fixture to the default dist/ directory
     const builder = await createBuilder({
@@ -1597,6 +1605,60 @@ describe("App Router Production server (startProdServer)", () => {
     expect(res.status).toBe(400);
     const body = await res.text();
     expect(body).toContain("Bad Request");
+  });
+
+  it("revalidateTag invalidates App Router ISR page entries by fetch tag", async () => {
+    const res1 = await fetch(`${baseUrl}/revalidate-tag-test`);
+    expect(res1.status).toBe(200);
+    const html1 = await res1.text();
+    const reqId1 = extractRequestId(html1);
+    expect(reqId1).toBeTruthy();
+
+    const res2 = await fetch(`${baseUrl}/revalidate-tag-test`);
+    expect(res2.status).toBe(200);
+    const html2 = await res2.text();
+    const reqId2 = extractRequestId(html2);
+    expect(reqId2).toBe(reqId1);
+    expect(res2.headers.get("x-vinext-cache")).toBe("HIT");
+
+    const tagRes = await fetch(`${baseUrl}/api/revalidate-tag`);
+    expect(tagRes.status).toBe(200);
+    expect(await tagRes.text()).toBe("ok");
+
+    const res3 = await fetch(`${baseUrl}/revalidate-tag-test`);
+    expect(res3.status).toBe(200);
+    const html3 = await res3.text();
+    const reqId3 = extractRequestId(html3);
+    expect(reqId3).toBeTruthy();
+    expect(reqId3).not.toBe(reqId1);
+    expect(res3.headers.get("x-vinext-cache")).toBe("MISS");
+  });
+
+  it("revalidatePath invalidates App Router ISR page entries by path tag", async () => {
+    const res1 = await fetch(`${baseUrl}/revalidate-tag-test`);
+    expect(res1.status).toBe(200);
+    const html1 = await res1.text();
+    const reqId1 = extractRequestId(html1);
+    expect(reqId1).toBeTruthy();
+
+    const res2 = await fetch(`${baseUrl}/revalidate-tag-test`);
+    expect(res2.status).toBe(200);
+    const html2 = await res2.text();
+    const reqId2 = extractRequestId(html2);
+    expect(reqId2).toBe(reqId1);
+    expect(res2.headers.get("x-vinext-cache")).toBe("HIT");
+
+    const pathRes = await fetch(`${baseUrl}/api/revalidate-path`);
+    expect(pathRes.status).toBe(200);
+    expect(await pathRes.text()).toBe("ok");
+
+    const res3 = await fetch(`${baseUrl}/revalidate-tag-test`);
+    expect(res3.status).toBe(200);
+    const html3 = await res3.text();
+    const reqId3 = extractRequestId(html3);
+    expect(reqId3).toBeTruthy();
+    expect(reqId3).not.toBe(reqId1);
+    expect(res3.headers.get("x-vinext-cache")).toBe("MISS");
   });
 });
 
@@ -1812,8 +1874,17 @@ describe("metadata routes integration (App Router)", () => {
     expect(res.headers.get("content-type")).toContain("application/xml");
     const xml = await res.text();
     expect(xml).toContain("<urlset");
+    expect(xml).toContain('xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"');
+    expect(xml).toContain('xmlns:video="http://www.google.com/schemas/sitemap-video/1.1"');
+    expect(xml).toContain('xmlns:xhtml="http://www.w3.org/1999/xhtml"');
     expect(xml).toContain("https://example.com");
     expect(xml).toContain("https://example.com/about");
+    expect(xml).toContain(
+      '<xhtml:link rel="alternate" hreflang="fr" href="https://example.com/fr" />',
+    );
+    expect(xml).toContain("<image:loc>https://example.com/image.jpg</image:loc>");
+    expect(xml).toContain("<video:title>Homepage Video</video:title>");
+    expect(xml).toContain("<video:content_loc>https://example.com/video.mp4</video:content_loc>");
   });
 
   it("serves /robots.txt from dynamic robots.ts", async () => {
@@ -2017,11 +2088,25 @@ describe("App Router next.config.js features (dev server integration)", () => {
     expect(res.headers.get("location")).toContain("/blog/hello");
   });
 
+  it("applies redirects with repeated dynamic params in the destination", async () => {
+    const res = await fetch(`${baseUrl}/repeat-redirect/hello`, { redirect: "manual" });
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toContain("/blog/hello/hello");
+  });
+
   it("applies beforeFiles rewrites from next.config.js", async () => {
     const res = await fetch(`${baseUrl}/rewrite-about`);
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("About");
+  });
+
+  it("applies rewrites with repeated dynamic params in the destination", async () => {
+    const res = await fetch(`${baseUrl}/repeat-rewrite/hello`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("hello/hello");
+    expect(html).toMatch(/Segments:.*2/);
   });
 
   it("applies afterFiles rewrites from next.config.js", async () => {
@@ -2466,7 +2551,7 @@ describe("App Router next.config.js features (generateRscEntry)", () => {
     // Should call dev origin validation inside _handleRequest
     const callSite = code.indexOf("const __originBlock = __validateDevRequestOrigin(request)");
     const handleRequestIdx = code.indexOf(
-      "async function _handleRequest(request, __reqCtx, _mwCtx, ctx)",
+      "async function _handleRequest(request, __reqCtx, _mwCtx)",
     );
     expect(callSite).toBeGreaterThan(-1);
     expect(handleRequestIdx).toBeGreaterThan(-1);
@@ -3069,6 +3154,7 @@ describe("App Router external rewrite proxy credential stripping", () => {
   let mockServer: import("node:http").Server;
   let mockPort: number;
   let capturedHeaders: import("node:http").IncomingHttpHeaders | null = null;
+  let capturedUrl: URL | null = null;
   let mockResponseMode: "plain" | "gzipHeaderAndBody" = "plain";
   let server: ViteDevServer;
   let baseUrl: string;
@@ -3078,6 +3164,7 @@ describe("App Router external rewrite proxy credential stripping", () => {
     const http = await import("node:http");
     mockServer = http.createServer((req, res) => {
       capturedHeaders = req.headers;
+      capturedUrl = new URL(req.url ?? "/", `http://localhost:${mockPort || 80}`);
       if (mockResponseMode === "gzipHeaderAndBody") {
         const payload = "proxied gzipped body";
         const gzipped = zlib.gzipSync(Buffer.from(payload));
@@ -3113,6 +3200,7 @@ describe("App Router external rewrite proxy credential stripping", () => {
   it("forwards credential headers through proxied requests to external rewrite targets", async () => {
     mockResponseMode = "plain";
     capturedHeaders = null;
+    capturedUrl = null;
 
     await fetch(`${baseUrl}/proxy-external-test/some-path`, {
       headers: {
@@ -3135,6 +3223,21 @@ describe("App Router external rewrite proxy credential stripping", () => {
     expect(capturedHeaders!["x-middleware-next"]).toBeUndefined();
     // Non-sensitive headers must be preserved
     expect(capturedHeaders!["x-custom-safe"]).toBe("keep-me");
+  });
+
+  it("preserves repeated query params when proxying to external rewrite targets", async () => {
+    mockResponseMode = "plain";
+    capturedHeaders = null;
+    capturedUrl = null;
+
+    const response = await fetch(`${baseUrl}/proxy-external-test/some-path?a=1&a=2&b=3`);
+    expect(response.status).toBe(200);
+    expect(capturedUrl).not.toBeNull();
+    expect([...capturedUrl!.searchParams.entries()]).toEqual([
+      ["a", "1"],
+      ["a", "2"],
+      ["b", "3"],
+    ]);
   });
 
   it("strips content-encoding and content-length for Node fetch auto-decompression", async () => {
@@ -3187,6 +3290,17 @@ describe("generateRscEntry ISR code generation", () => {
     expect(code).toContain("function __triggerBackgroundRegeneration(");
     expect(code).toContain("function __isrCacheKey(");
     expect(code).toContain("const __pendingRegenerations = new Map()");
+  });
+
+  it("generated code threads collected fetch tags into page ISR writes", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    expect(code).toContain("getCollectedFetchTags");
+    expect(code).toContain("function __pageCacheTags(pathname, extraTags)");
+    expect(code).toContain('const tags = [pathname, "_N_T_" + pathname]');
+    expect(code).toContain(
+      "const __pageTags = __pageCacheTags(cleanPathname, getCollectedFetchTags())",
+    );
+    expect(code).toContain("Array.isArray(tags) ? tags : []");
   });
 
   it("generated handler exports async function handler(request, ctx)", () => {

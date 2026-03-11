@@ -29,7 +29,7 @@
  */
 
 import type { CacheHandler, CacheHandlerValue, IncrementalCacheValue } from "../shims/cache.js";
-import { getRequestExecutionContext } from "../shims/request-context.js";
+import { getRequestExecutionContext, type ExecutionContextLike } from "../shims/request-context.js";
 
 // Cloudflare KV namespace interface (matches Workers types)
 interface KVNamespace {
@@ -46,19 +46,6 @@ interface KVNamespace {
     list_complete: boolean;
     cursor?: string;
   }>;
-}
-
-/**
- * Minimal ExecutionContext interface for Cloudflare Workers.
- * Background KV operations (cleanup deletes, cache writes) are registered
- * with ctx.waitUntil() so they are not killed when the Response is returned.
- *
- * The preferred way to supply ctx is via runWithExecutionContext() in the
- * worker entry (see vinext/shims/request-context). The constructor option
- * is kept as a fallback for callers that set it explicitly.
- */
-interface ExecutionContext {
-  waitUntil(promise: Promise<unknown>): void;
 }
 
 /** Shape stored in KV for each cache entry. */
@@ -86,21 +73,23 @@ const MAX_TAG_LENGTH = 256;
  */
 function validateTag(tag: string): string | null {
   if (typeof tag !== "string" || tag.length === 0 || tag.length > MAX_TAG_LENGTH) return null;
-  // Block control characters, path separators, and KV-special characters.
+  // Block control characters and reserved separators used in our own key format.
+  // Slash is allowed because revalidatePath() relies on pathname tags like
+  // "/posts/hello" and "_N_T_/posts/hello".
   // eslint-disable-next-line no-control-regex -- intentional: reject control chars in tags
-  if (/[\x00-\x1f/\\:]/.test(tag)) return null;
+  if (/[\x00-\x1f\\:]/.test(tag)) return null;
   return tag;
 }
 
 export class KVCacheHandler implements CacheHandler {
   private kv: KVNamespace;
   private prefix: string;
-  private ctx: ExecutionContext | undefined;
+  private ctx: ExecutionContextLike | undefined;
   private ttlSeconds: number;
 
   constructor(
     kvNamespace: KVNamespace,
-    options?: { appPrefix?: string; ctx?: ExecutionContext; ttlSeconds?: number },
+    options?: { appPrefix?: string; ctx?: ExecutionContextLike; ttlSeconds?: number },
   ) {
     this.kv = kvNamespace;
     this.prefix = options?.appPrefix ? `${options.appPrefix}:` : "";
@@ -239,10 +228,9 @@ export class KVCacheHandler implements CacheHandler {
     // 30 days of zero traffic, or when explicitly deleted via tag invalidation.
     const expirationTtl: number | undefined = revalidateAt !== null ? this.ttlSeconds : undefined;
 
-    this._putInBackground(this.prefix + ENTRY_PREFIX + key, JSON.stringify(entry), {
+    return this._put(this.prefix + ENTRY_PREFIX + key, JSON.stringify(entry), {
       expirationTtl,
     });
-    return Promise.resolve();
   }
 
   async revalidateTag(tags: string | string[], _durations?: { expire?: number }): Promise<void> {
@@ -282,21 +270,17 @@ export class KVCacheHandler implements CacheHandler {
   }
 
   /**
-   * Fire a KV put in the background.
-   * Same ALS ctx → constructor ctx → fire-and-forget precedence as
-   * `_deleteInBackground`.
+   * Execute a KV put and return the promise so callers can await completion.
+   * Also registers with ctx.waitUntil() so the Workers runtime keeps the
+   * isolate alive even if the caller does not await the returned promise.
    */
-  private _putInBackground(
-    kvKey: string,
-    value: string,
-    options?: { expirationTtl?: number },
-  ): void {
+  private _put(kvKey: string, value: string, options?: { expirationTtl?: number }): Promise<void> {
     const promise = this.kv.put(kvKey, value, options);
     const ctx = getRequestExecutionContext() ?? this.ctx;
     if (ctx) {
       ctx.waitUntil(promise);
     }
-    // else: fire-and-forget on Node.js
+    return promise;
   }
 }
 

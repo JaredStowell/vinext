@@ -356,6 +356,70 @@ describe("KVCacheHandler", () => {
       expect(result!.value!.kind).toBe("PAGES");
       expect((result!.value as any).html).toBe("<div>hi</div>");
     });
+
+    it("preserves slash-based path tags for Workers invalidation", async () => {
+      await handler.set(
+        "rt-path-tags",
+        {
+          kind: "APP_PAGE",
+          html: "<div>hi</div>",
+          rscData: undefined,
+          headers: undefined,
+          postponed: undefined,
+          status: 200,
+        },
+        {
+          revalidate: 60,
+          tags: ["/revalidate-tag-test", "_N_T_/revalidate-tag-test", "test-data"],
+        },
+      );
+
+      const raw = store.get("cache:rt-path-tags");
+      expect(raw).toBeTruthy();
+      const parsed = JSON.parse(raw!);
+      expect(parsed.tags).toEqual([
+        "/revalidate-tag-test",
+        "_N_T_/revalidate-tag-test",
+        "test-data",
+      ]);
+    });
+  });
+
+  describe("tag invalidation", () => {
+    it("revalidateTag persists slash-based path invalidation markers", async () => {
+      await handler.revalidateTag(["/revalidate-tag-test", "_N_T_/revalidate-tag-test"]);
+
+      expect(store.get("__tag:/revalidate-tag-test")).toMatch(/^\d+$/);
+      expect(store.get("__tag:_N_T_/revalidate-tag-test")).toMatch(/^\d+$/);
+    });
+
+    it("slash-based path tags invalidate persisted APP_PAGE entries", async () => {
+      const entryTime = 1000;
+      const invalidatedTime = 2000;
+
+      store.set(
+        "cache:app-page",
+        JSON.stringify({
+          value: {
+            kind: "APP_PAGE",
+            html: "<html>cached</html>",
+            rscData: undefined,
+            headers: undefined,
+            postponed: undefined,
+            status: 200,
+          },
+          tags: ["/revalidate-tag-test", "_N_T_/revalidate-tag-test"],
+          lastModified: entryTime,
+          revalidateAt: null,
+        }),
+      );
+      store.set("__tag:/revalidate-tag-test", String(invalidatedTime));
+
+      const result = await handler.get("app-page");
+
+      expect(result).toBeNull();
+      expect(kv.delete).toHaveBeenCalledWith("cache:app-page");
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -454,6 +518,148 @@ describe("KVCacheHandler", () => {
         expect.any(String),
         expect.any(Object),
       );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // STALE → regen → HIT lifecycle
+  //
+  // Regression test for: KVCacheHandler.set() was returning Promise.resolve()
+  // immediately, so await __isrSet() in the background regen resolved BEFORE
+  // the KV put network operation completed. The renderFn() resolved early,
+  // ctx.waitUntil(renderFnPromise) expired, and the KV write was killed by
+  // the Workers runtime — leaving the entry perpetually STALE.
+  //
+  // Fix: KVCacheHandler.set() now returns the real kv.put() promise so
+  // await __isrSet() only resolves after the write is fully persisted.
+  // -------------------------------------------------------------------------
+
+  describe("STALE → regen → HIT lifecycle", () => {
+    it("set() resolves only after the KV put completes", async () => {
+      // Use a controlled put that we can observe — kv from createMockKV resolves
+      // synchronously in the mock, but what matters is that awaiting set() sees
+      // the key in the store before the await returns.
+      const handler2 = new KVCacheHandler(kv as any);
+
+      await handler2.set(
+        "stale-regen",
+        {
+          kind: "APP_PAGE",
+          html: "<html>fresh</html>",
+          rscData: undefined,
+          headers: undefined,
+          postponed: undefined,
+          status: 200,
+        },
+        { revalidate: 10 },
+      );
+
+      // After await, the KV store must already contain the key.
+      // Before the fix this would also pass (synchronous mock), but the
+      // important invariant is that the returned promise IS the kv.put promise.
+      expect(store.has("cache:stale-regen")).toBe(true);
+      const raw = store.get("cache:stale-regen")!;
+      const parsed = JSON.parse(raw);
+      expect(parsed.value.html).toBe("<html>fresh</html>");
+      expect(parsed.revalidateAt).toBeTypeOf("number");
+    });
+
+    it("set() returned promise is the kv.put promise (not an immediately-resolved stub)", async () => {
+      // Swap out kv.put with a delayed version so we can verify that the
+      // promise returned by set() is NOT resolved until the put completes.
+      let resolveKvPut!: () => void;
+      const kvPutLatch = new Promise<void>((r) => {
+        resolveKvPut = r;
+      });
+      kv.put = vi.fn(async (key: string, value: string) => {
+        await kvPutLatch;
+        store.set(key, value);
+      });
+
+      const setPromise = handler.set("delayed-put", {
+        kind: "PAGES",
+        html: "<p>test</p>",
+        pageData: {},
+        headers: undefined,
+        status: 200,
+      });
+
+      // The set() promise should NOT be resolved yet because the kv.put hasn't resolved.
+      let setSettled = false;
+      setPromise.then(() => {
+        setSettled = true;
+      });
+
+      // Give microtasks a chance to run
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(setSettled).toBe(false);
+      expect(store.has("cache:delayed-put")).toBe(false);
+
+      // Now let the kv.put complete
+      resolveKvPut();
+      await setPromise;
+
+      expect(setSettled).toBe(true);
+      expect(store.has("cache:delayed-put")).toBe(true);
+    });
+
+    it("background regen waitUntil covers actual KV write with delayed put", async () => {
+      // Simulate a delayed KV put (network latency) to prove that
+      // ctx.waitUntil keeps the isolate alive until the write completes.
+      let resolveKvPut!: () => void;
+      const kvPutLatch = new Promise<void>((r) => {
+        resolveKvPut = r;
+      });
+
+      kv.put = vi.fn(async (key: string, value: string) => {
+        await kvPutLatch;
+        store.set(key, value);
+      });
+
+      const ctx = createMockCtx();
+      const handlerWithCtx = new KVCacheHandler(kv as any, { ctx });
+
+      // Simulate the regen renderFn pattern from app-rsc-entry.ts
+      const renderFn = async () => {
+        await handlerWithCtx.set(
+          "regen-key",
+          {
+            kind: "APP_PAGE",
+            html: "<html>revalidated</html>",
+            rscData: undefined,
+            headers: undefined,
+            postponed: undefined,
+            status: 200,
+          },
+          { revalidate: 30 },
+        );
+      };
+
+      // Trigger background regen as the generated entry does
+      let regenSettled = false;
+      const regenPromise = renderFn()
+        .catch(() => {})
+        .finally(() => {
+          regenSettled = true;
+        });
+      ctx.waitUntil(regenPromise);
+
+      // Regen should not have settled yet (put is blocked)
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(regenSettled).toBe(false);
+      expect(store.has("cache:regen-key")).toBe(false);
+
+      // Unblock the KV put
+      resolveKvPut();
+      await Promise.all(ctx.registered);
+
+      expect(regenSettled).toBe(true);
+      expect(store.has("cache:regen-key")).toBe(true);
+      const entry = JSON.parse(store.get("cache:regen-key")!);
+      expect(entry.value.html).toBe("<html>revalidated</html>");
     });
   });
 });

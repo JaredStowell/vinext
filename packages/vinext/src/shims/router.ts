@@ -10,7 +10,12 @@ import { RouterContext } from "./internal/router-context.js";
 import { isValidModulePath } from "../client/validate-module-path.js";
 import { toSameOriginPath } from "./url-utils.js";
 import { stripBasePath } from "../utils/base-path.js";
-import { addQueryParam } from "../utils/query.js";
+import {
+  addQueryParam,
+  appendSearchParamsToUrl,
+  type UrlQuery,
+  urlQueryToSearchParams,
+} from "../utils/query.js";
 
 /** basePath from next.config.js, injected by the plugin at build time */
 const __basePath: string = process.env.__NEXT_ROUTER_BASEPATH ?? "";
@@ -69,7 +74,7 @@ interface NextRouter {
 
 interface UrlObject {
   pathname?: string;
-  query?: Record<string, string>;
+  query?: UrlQuery;
 }
 
 interface TransitionOptions {
@@ -112,10 +117,25 @@ function resolveUrl(url: string | UrlObject): string {
   if (typeof url === "string") return url;
   let result = url.pathname ?? "/";
   if (url.query) {
-    const params = new URLSearchParams(url.query);
-    result += `?${params.toString()}`;
+    const params = urlQueryToSearchParams(url.query);
+    result = appendSearchParamsToUrl(result, params);
   }
   return result;
+}
+
+/**
+ * When `as` is provided, use it as the navigation target. This is a
+ * simplification: Next.js keeps `url` and `as` as separate values (url for
+ * data fetching, as for the browser URL). We collapse them because vinext's
+ * navigateClient() fetches HTML from the target URL, so `as` must be a
+ * server-resolvable path. Purely decorative `as` values are not supported.
+ */
+function resolveNavigationTarget(
+  url: string | UrlObject,
+  as: string | undefined,
+  locale: string | undefined,
+): string {
+  return applyNavigationLocale(as ?? resolveUrl(url), locale);
 }
 
 /**
@@ -124,6 +144,11 @@ function resolveUrl(url: string | UrlObject): string {
  */
 export function applyNavigationLocale(url: string, locale?: string): string {
   if (!locale || typeof window === "undefined") return url;
+  // Absolute and protocol-relative URLs must not be prefixed — locale
+  // only applies to local paths.
+  if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("//")) {
+    return url;
+  }
   const defaultLocale = window.__VINEXT_DEFAULT_LOCALE__;
   // Default locale doesn't get a prefix
   if (locale === defaultLocale) return url;
@@ -453,19 +478,8 @@ function buildRouterValue(
 export function useRouter(): NextRouter {
   const [{ pathname, query, asPath }, setState] = useState(getPathnameAndQuery);
 
-  useEffect(() => {
-    const onPopState = (e: PopStateEvent) => {
-      setState(getPathnameAndQuery());
-      // Re-render with the new page on back/forward navigation
-      void navigateClient(window.location.pathname + window.location.search).then(() => {
-        restoreScrollPosition(e.state);
-      });
-    };
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
-  }, []);
-
-  // Listen for custom navigation events from Link component
+  // Popstate is handled by the module-level listener below so beforePopState()
+  // is consistently enforced even when multiple components mount useRouter().
   useEffect(() => {
     const onNavigate = ((_e: CustomEvent) => {
       setState(getPathnameAndQuery());
@@ -475,12 +489,8 @@ export function useRouter(): NextRouter {
   }, []);
 
   const push = useCallback(
-    async (
-      url: string | UrlObject,
-      _as?: string,
-      options?: TransitionOptions,
-    ): Promise<boolean> => {
-      let resolved = applyNavigationLocale(resolveUrl(url), options?.locale);
+    async (url: string | UrlObject, as?: string, options?: TransitionOptions): Promise<boolean> => {
+      let resolved = resolveNavigationTarget(url, as, options?.locale);
 
       // External URLs — delegate to browser (unless same-origin)
       if (isExternalUrl(resolved)) {
@@ -530,12 +540,8 @@ export function useRouter(): NextRouter {
   );
 
   const replace = useCallback(
-    async (
-      url: string | UrlObject,
-      _as?: string,
-      options?: TransitionOptions,
-    ): Promise<boolean> => {
-      let resolved = applyNavigationLocale(resolveUrl(url), options?.locale);
+    async (url: string | UrlObject, as?: string, options?: TransitionOptions): Promise<boolean> => {
+      let resolved = resolveNavigationTarget(url, as, options?.locale);
 
       // External URLs — delegate to browser (unless same-origin)
       if (isExternalUrl(resolved)) {
@@ -677,8 +683,8 @@ export function wrapWithRouterContext(element: ReactElement): ReactElement {
 
 // Also export a default Router singleton for `import Router from 'next/router'`
 const Router = {
-  push: async (url: string | UrlObject, _as?: string, options?: TransitionOptions) => {
-    let resolved = applyNavigationLocale(resolveUrl(url), options?.locale);
+  push: async (url: string | UrlObject, as?: string, options?: TransitionOptions) => {
+    let resolved = resolveNavigationTarget(url, as, options?.locale);
 
     // External URLs (unless same-origin)
     if (isExternalUrl(resolved)) {
@@ -721,8 +727,8 @@ const Router = {
     window.dispatchEvent(new CustomEvent("vinext:navigate"));
     return true;
   },
-  replace: async (url: string | UrlObject, _as?: string, options?: TransitionOptions) => {
-    let resolved = applyNavigationLocale(resolveUrl(url), options?.locale);
+  replace: async (url: string | UrlObject, as?: string, options?: TransitionOptions) => {
+    let resolved = resolveNavigationTarget(url, as, options?.locale);
 
     // External URLs (unless same-origin)
     if (isExternalUrl(resolved)) {
