@@ -369,9 +369,9 @@ Three Playwright spec files cover client-side behaviors that cannot be tested vi
 | 18. draft-mode           | 4        | 4       | 0     | 0        | 0     | Done          |
 | 20. revalidation         | 4        | 4       | 0     | 0        | 0     | Done          |
 | 21. prefetch             | 4        | 4       | 0     | 0        | 0     | Done          |
-| 22. metadata-suspense    | 3        | 2       | 1     | 0        | 0     | Done          |
+| 22. metadata-suspense    | 3        | 3       | 0     | 0        | 0     | Done          |
 | P5. shim/core unit tests | 230      | 230     | 0     | 0        | 0     | Done          |
-| **Total**                | **555+** | **362** | **6** | **188+** | **0** |               |
+| **Total**                | **555+** | **363** | **5** | **188+** | **0** |               |
 
 ### Playwright Browser Tests
 
@@ -387,17 +387,17 @@ Three Playwright spec files cover client-side behaviors that cannot be tested vi
 | 19. actions-nav        | 1      | 1      | 0     | 0     | Done   |
 | 20. actions-revalidate | 2      | 2      | 0     | 0     | Done   |
 | 21. prefetch           | 3      | 3      | 0     | 0     | Done   |
-| 24. external-redirect  | 1      | 0      | 1     | 0     | Done   |
+| 24. external-redirect  | 1      | 1      | 0     | 0     | Done   |
 | 25. search-params-key  | 2      | 2      | 0     | 0     | Done   |
-| **Total**              | **46** | **38** | **8** | **0** |        |
+| **Total**              | **46** | **39** | **7** | **0** |        |
 
 ### Combined Key Metrics
 
-- **400 tests passing** (362 Vitest + 38 Playwright) across 35 test files
-- **11 tests skipped** (6 Vitest + 5 Playwright) with detailed root-cause analysis and fix locations
+- **402 tests passing** (363 Vitest + 39 Playwright) across 35 test files
+- **12 tests skipped** (5 Vitest + 7 Playwright) with detailed root-cause analysis and fix locations
 - **0 failures** — all non-skipped tests pass
 - **188+ N/A** — build-only, or already covered by existing tests
-- **2 new issues found** in Phase 3: duplicate title with Suspense layout, external redirect in server actions
+- **Phase 3 issues cleared on current main**: metadata + Suspense now passes; external redirect passed locally after the browser-entry fix, but the Playwright spec was flaky on the first attempt
 
 ### Issues Found (Fix Backlog)
 
@@ -409,6 +409,8 @@ Three Playwright spec files cover client-side behaviors that cannot be tested vi
 6. ~~**Client-side notFound() crashes React tree**~~ — **FIXED**. Added `NotFoundBoundary` class component to `error-boundary.tsx` that catches `NEXT_NOT_FOUND`/`NEXT_HTTP_ERROR_FALLBACK;404` errors. Wrapped in `buildPageElement()` above `ErrorBoundary`, with pre-rendered not-found.tsx element as fallback. Playwright test now passes.
 7. ~~**useParams() returns empty on client after hydration**~~ — **FIXED**. Root cause: `setClientParams()` was never called in the browser. Fix: server now sends `X-Vinext-Params` header in RSC responses (`entries/app-rsc-entry.ts:1295`), browser entry reads it during hydration and client-side navigation (`entries/app-rsc-entry.ts:1594-1597, 1612-1617`). All 3 Playwright useParams tests now pass.
 8. ~~**Client-side error.tsx boundary doesn't activate during navigation**~~ — **FIXED**. Added `onCaughtError: function() {}` to `hydrateRoot()` call in `generateBrowserEntry()` to suppress Vite dev overlay for errors caught by React error boundaries. Combined with PR #51's `renderErrorBoundaryPage()` for SSR-side error rendering.
+9. ~~**Duplicate `<title>` tags with Suspense layout**~~ — **FIXED**. `buildPageElement()` now injects metadata head elements before wrapping the tree in `Suspense`; `tests/nextjs-compat/metadata-suspense.test.ts` now passes 3/3.
+10. ~~**External redirect in server actions**~~ — **FIXED**. `app-browser-entry.ts` now detects cross-origin `x-action-redirect` values and uses `window.location.href` for hard navigation. The compat Playwright spec passed locally after building `vinext`, but was flaky on the first attempt.
 
 ---
 
@@ -589,14 +591,12 @@ page reload (window marker preserved).
 
 **Next.js source**: `metadata-suspense`
 **Local**: `tests/nextjs-compat/metadata-suspense.test.ts`
-**Result**: Vitest 2/3 pass, 1 skip
+**Result**: Vitest 3/3 pass
 
 Metadata renders correctly in `<head>` when the layout wraps children in
 `<Suspense>`: title, description, and application-name are all present and correct.
-
-**1 skipped**: Duplicate `<title>` tags. Vinext emits the metadata twice — once in
-the shell and again when the Suspense boundary resolves. Fix: metadata should be
-hoisted above Suspense boundaries in `entries/app-rsc-entry.ts:buildPageElement()`.
+The previous duplicate-`<title>` issue is fixed; `buildPageElement()` now injects
+metadata before wrapping the tree in `Suspense`.
 
 ### Chunk 23: revalidate-dynamic — revalidatePath/Tag via route handlers ✅
 
@@ -611,13 +611,12 @@ both work correctly — return `{ revalidated: true }` with 200 status.
 
 **Next.js source**: `external-redirect`
 **Local**: `tests/e2e/app-router/nextjs-compat/external-redirect.spec.ts`
-**Result**: Playwright 0/1 pass, 1 skip
+**Result**: Playwright 1/1 pass
 
-**Skipped**: Vinext handles server action redirects via `x-action-redirect` headers
-and `window.history.replaceState` + RSC navigate. For external URLs, this tries to
-do a client-side RSC navigation instead of `window.location.href = url`. Fix: in
-the browser entry's server action callback, detect external redirects (different
-origin) and use `window.location.href` instead.
+Current implementation detects cross-origin `x-action-redirect` values in the
+browser entry and uses `window.location.href` for a hard redirect. On the local
+rerun used to refresh this file, the spec failed once and then passed on retry,
+so treat this as functionally fixed but still slightly flaky.
 
 ### Chunk 25: search-params-react-key — Component stability across param changes ✅
 
@@ -643,17 +642,17 @@ Next.js-specific and requires `createRouterAct` test infrastructure.
 | 19. actions-navigation | 1      | 1      | 0     | 0                 |
 | 20. actions-revalidate | 6      | 6      | 0     | 0                 |
 | 21. app-prefetch       | 7      | 7      | 0     | 0                 |
-| 22. metadata-suspense  | 3      | 2      | 1     | 0                 |
+| 22. metadata-suspense  | 3      | 3      | 0     | 0                 |
 | 23. revalidate-dynamic | —      | —      | —     | — (covered by 20) |
-| 24. external-redirect  | 1      | 0      | 1     | 0                 |
+| 24. external-redirect  | 1      | 1      | 0     | 0                 |
 | 25. search-params-key  | 2      | 2      | 0     | 0                 |
 | 26. concurrent-nav     | —      | —      | —     | N/A               |
-| **Total**              | **20** | **18** | **2** | **0**             |
+| **Total**              | **20** | **20** | **0** | **0**             |
 
-### New Issues Found
+### Phase 3 Follow-up
 
-9. **Duplicate `<title>` tags with Suspense layout** — When a layout wraps children in `<Suspense>`, metadata `<title>` tag appears twice. Fix: `packages/vinext/src/entries/app-rsc-entry.ts` — hoist metadata rendering above Suspense boundaries.
-10. **External redirect in server actions** — `redirect('https://example.com')` inside a server action does client-side RSC navigation instead of full page navigation. Fix: `packages/vinext/src/entries/app-rsc-entry.ts` browser entry — detect external origin and use `window.location.href`.
+- No remaining Phase 3 behavior gaps are currently tracked on `main`.
+- `external-redirect.spec.ts` passed locally after the browser-entry fix, but it was flaky on the first attempt.
 
 ---
 
@@ -694,34 +693,34 @@ against our Vite-based fixture apps. Each test links back to the OpenNext source
 **Local**: `tests/e2e/app-router/isr.spec.ts` (new tests)
 **Fixtures**: `app/revalidate-tag-test/`, `app/revalidate-tag-test/nested/`, `app/api/revalidate-tag/`, `app/api/revalidate-path/`
 
-| #   | OpenNext Test                                                  | Vinext Status | Notes                                                                                      |
-| --- | -------------------------------------------------------------- | ------------- | ------------------------------------------------------------------------------------------ |
-| 1   | Load tagged ISR page → HIT → call `/api/revalidate-tag` → MISS | PASS          | ISR cache entries now tagged with fetch tags; revalidateTag invalidates them               |
-| 2   | Nested page shares tag, also invalidated                       | FIXME         | Blocked: revalidateTag does not invalidate ISR cache in dev server                         |
-| 3   | After invalidation + regen, subsequent request is HIT          | PASS          | Full lifecycle test in isr.spec.ts (passes because no invalidation occurs, HIT is default) |
-| 4   | `revalidatePath` invalidates specific path                     | PASS          | ISR cache entries now tagged with path tags; revalidatePath invalidates them               |
+| #   | OpenNext Test                                                  | Vinext Status | Notes                                                                                                            |
+| --- | -------------------------------------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------- |
+| 1   | Load tagged ISR page → HIT → call `/api/revalidate-tag` → MISS | SKIP          | Current Playwright spec uses `test.skip()` in dev because ISR MISS/HIT invalidation semantics are disabled there |
+| 2   | Nested page shares tag, also invalidated                       | FIXME         | Still `test.fixme()` — nested shared-tag invalidation is not covered in the dev E2E project                      |
+| 3   | After invalidation + regen, subsequent request is HIT          | SKIP          | Same blocker as #1 — full lifecycle needs a production E2E target                                                |
+| 4   | `revalidatePath` invalidates specific path                     | SKIP          | Same blocker as #1 — currently skipped in dev-mode E2E                                                           |
 
 ### ON-3: Route Handler HTTP Methods (Exhaustive)
 
 **Source**: https://github.com/opennextjs/opennextjs-cloudflare/blob/main/examples/e2e/app-router/e2e/methods.test.ts
 **Local**: `tests/e2e/app-router/api-routes.spec.ts` (enhanced)
 
-| #   | OpenNext Test                                    | Vinext Status | Notes                                                        |
-| --- | ------------------------------------------------ | ------------- | ------------------------------------------------------------ |
-| 1   | GET returns 200 with JSON                        | PASS          | Already tested                                               |
-| 2   | POST with text body, status-based responses      | PASS          | Already tested                                               |
-| 3   | PUT returns 201 with JSON                        | PASS          | New test                                                     |
-| 4   | PATCH returns 202 with timestamp                 | PASS          | New test                                                     |
-| 5   | DELETE returns 204                               | PASS          | New test                                                     |
-| 6   | HEAD returns 200 with custom headers, empty body | PASS          | Already tested                                               |
-| 7   | OPTIONS returns 204 with Allow header            | FIXME         | vinext auto-OPTIONS does not set Allow header — feature gap  |
-| 8   | formData POST works                              | PASS          | New test                                                     |
-| 9   | Cookies set via route handler                    | PASS          | Already tested                                               |
-| 10  | redirect() in route handler returns 307          | PASS          | Already tested                                               |
-| 11  | Dynamic segment params in route handler          | PASS          | Already tested                                               |
-| 12  | Query parameters in route handler                | PASS          | New test                                                     |
-| 13  | Static GET route has `s-maxage` Cache-Control    | FIXME         | vinext does not read `revalidate` from route handler modules |
-| 14  | Revalidation timing in GET route handler         | FIXME         | Same: route handler cache headers not implemented            |
+| #   | OpenNext Test                                    | Vinext Status | Notes                                                           |
+| --- | ------------------------------------------------ | ------------- | --------------------------------------------------------------- |
+| 1   | GET returns 200 with JSON                        | PASS          | Already tested                                                  |
+| 2   | POST with text body, status-based responses      | PASS          | Already tested                                                  |
+| 3   | PUT returns 201 with JSON                        | PASS          | New test                                                        |
+| 4   | PATCH returns 202 with timestamp                 | PASS          | New test                                                        |
+| 5   | DELETE returns 204                               | PASS          | New test                                                        |
+| 6   | HEAD returns 200 with custom headers, empty body | PASS          | Already tested                                                  |
+| 7   | OPTIONS returns 204 with Allow header            | PASS          | Verified in `api-routes.spec.ts` rerun                          |
+| 8   | formData POST works                              | PASS          | New test                                                        |
+| 9   | Cookies set via route handler                    | PASS          | Already tested                                                  |
+| 10  | redirect() in route handler returns 307          | PASS          | Already tested                                                  |
+| 11  | Dynamic segment params in route handler          | PASS          | Already tested                                                  |
+| 12  | Query parameters in route handler                | PASS          | New test                                                        |
+| 13  | Static GET route has `s-maxage` Cache-Control    | PASS          | `export const revalidate` is read and emitted on route handlers |
+| 14  | Revalidation timing in GET route handler         | PASS          | Fresh data is served after the revalidation period elapses      |
 
 ### ON-4: SSR + loading.tsx Suspense Timing
 
@@ -818,28 +817,29 @@ against our Vite-based fixture apps. Each test links back to the OpenNext source
 | Chunk                       | Tests  | Pass   | Fixme | Pending | Skip  | Source                                          |
 | --------------------------- | ------ | ------ | ----- | ------- | ----- | ----------------------------------------------- |
 | ON-1. ISR Cache Headers     | 8      | 8      | 0     | 0       | 0     | `isr.test.ts`                                   |
-| ON-2. revalidateTag/Path    | 4      | 3      | 1     | 0       | 0     | `revalidateTag.test.ts`                         |
-| ON-3. Route Handler Methods | 14     | 11     | 3     | 0       | 0     | `methods.test.ts`                               |
-| ON-4. SSR + loading.tsx     | 3      | 2      | 1     | 0       | 0     | `ssr.test.ts`                                   |
+| ON-2. revalidateTag/Path    | 4      | 0      | 1     | 0       | 3     | `revalidateTag.test.ts`                         |
+| ON-3. Route Handler Methods | 14     | 14     | 0     | 0       | 0     | `methods.test.ts`                               |
+| ON-4. SSR + loading.tsx     | 3      | 3      | 0     | 0       | 0     | `ssr.test.ts`                                   |
 | ON-5. Streaming/SSE         | 3      | 3      | 0     | 0       | 0     | `sse.test.ts`, `streaming.test.ts`              |
 | ON-6. Middleware Headers    | 7      | 7      | 0     | 0       | 0     | `middleware.cookies.test.ts`, `headers.test.ts` |
 | ON-7. next/after            | 3      | 3      | 0     | 0       | 0     | `after.test.ts`                                 |
 | ON-8. Headers Precedence    | 3      | 3      | 0     | 0       | 0     | `headers.test.ts`                               |
 | ON-9. Parallel/Intercepting | 5      | 4      | 0     | 0       | 1     | `parallel.test.ts`, `modals.test.ts`            |
 | ON-10. Server Actions       | 5      | 5      | 0     | 0       | 0     | `serverActions.test.ts`                         |
-| **Total**                   | **55** | **49** | **5** | **0**   | **1** |                                                 |
+| **Total**                   | **55** | **50** | **1** | **0**   | **4** |                                                 |
 
 - **Pass**: Tests that pass in the E2E suite
 - **Fixme**: Tests written but marked `test.fixme()` due to vinext feature gaps
 - **Pending**: Need additional fixture/config work beyond what was created
 - **Skip**: Known vinext limitation (pre-existing)
 
-### Known Feature Gaps (Fixme)
+### Known Feature Gaps (Current Rerun)
 
-| Feature                | Test    | Issue                                                |
-| ---------------------- | ------- | ---------------------------------------------------- |
-| OPTIONS + Allow header | ON-3 #7 | vinext auto-OPTIONS does not set Allow header        |
-| Suspense streaming     | ON-4 #1 | loading.tsx fallback not shown in dev mode streaming |
+| Feature                                  | Test        | Issue                                                                                  |
+| ---------------------------------------- | ----------- | -------------------------------------------------------------------------------------- |
+| Dev-mode revalidation lifecycle coverage | ON-2 #1/3/4 | Current spec uses `test.skip()` because ISR invalidation semantics are disabled in dev |
+| Nested shared-tag invalidation           | ON-2 #2     | Still `test.fixme()` in the dev E2E project                                            |
+| Intercepting route modal timing          | ON-9 #5     | Still skipped due to embedded RSC hydration timing                                     |
 
 ### New Files Created
 
@@ -874,14 +874,14 @@ against our Vite-based fixture apps. Each test links back to the OpenNext source
 **Local**: `tests/e2e/app-router/middleware.spec.ts` (new file)
 **Fixtures**: `tests/fixtures/app-basic/middleware.ts` (modified)
 
-| #   | OpenNext Test                                     | Vinext Status | Notes                                                            |
-| --- | ------------------------------------------------- | ------------- | ---------------------------------------------------------------- |
-| 1   | Middleware redirect lands on target page          | PASS          | `/middleware-redirect` → `/about`                                |
-| 2   | Middleware redirect sets a cookie                 | PASS          | `middleware-redirect=success` cookie verified                    |
-| 3   | Direct load of redirect URL returns 3xx           | PASS          | Status 301/302/307/308 with Location header                      |
-| 4   | Middleware rewrite serves content at original URL | PASS          | `/middleware-rewrite` shows `/` content                          |
-| 5   | Middleware rewrite with custom status code        | FIXME         | vinext drops status from `NextResponse.rewrite(url, { status })` |
-| 6   | Middleware block returns 403                      | PASS          | Custom response body "Blocked by middleware"                     |
+| #   | OpenNext Test                                     | Vinext Status | Notes                                         |
+| --- | ------------------------------------------------- | ------------- | --------------------------------------------- |
+| 1   | Middleware redirect lands on target page          | PASS          | `/middleware-redirect` → `/about`             |
+| 2   | Middleware redirect sets a cookie                 | PASS          | `middleware-redirect=success` cookie verified |
+| 3   | Direct load of redirect URL returns 3xx           | PASS          | Status 301/302/307/308 with Location header   |
+| 4   | Middleware rewrite serves content at original URL | PASS          | `/middleware-rewrite` shows `/` content       |
+| 5   | Middleware rewrite with custom status code        | PASS          | Verified in `middleware.spec.ts` rerun        |
+| 6   | Middleware block returns 403                      | PASS          | Custom response body "Blocked by middleware"  |
 
 ### ON-12: Config Redirects and Rewrites
 
@@ -889,16 +889,16 @@ against our Vite-based fixture apps. Each test links back to the OpenNext source
 **Local**: `tests/e2e/app-router/config-redirect.spec.ts` (new file)
 **Fixtures**: `tests/fixtures/app-basic/next.config.ts` (new file)
 
-| #   | OpenNext Test                                           | Vinext Status | Notes                                                 |
-| --- | ------------------------------------------------------- | ------------- | ----------------------------------------------------- |
-| 1   | Simple redirect from config source to destination       | PASS          | `/config-redirect-source` → `/about`                  |
-| 2   | Permanent redirect returns 308                          | PASS          |                                                       |
-| 3   | Non-permanent redirect returns 307                      | PASS          | `/config-redirect-query` → `/about?from=config`       |
-| 4   | Parameterized redirect preserves slug                   | PASS          | `/old-blog/:slug` → `/blog/:slug`                     |
-| 5   | Redirect with has/missing cookie conditions             | FIXME         | vinext `matchRedirect()` does not support has/missing |
-| 6   | Config rewrite serves content at original URL           | PASS          | `/config-rewrite` → `/`                               |
-| 7   | Custom headers from next.config headers() on pages      | PASS          | `x-page-header` and `x-e2e-header` present            |
-| 8   | Custom headers from next.config headers() on API routes | PASS          | `x-custom-header` present                             |
+| #   | OpenNext Test                                           | Vinext Status | Notes                                           |
+| --- | ------------------------------------------------------- | ------------- | ----------------------------------------------- |
+| 1   | Simple redirect from config source to destination       | PASS          | `/config-redirect-source` → `/about`            |
+| 2   | Permanent redirect returns 308                          | PASS          |                                                 |
+| 3   | Non-permanent redirect returns 307                      | PASS          | `/config-redirect-query` → `/about?from=config` |
+| 4   | Parameterized redirect preserves slug                   | PASS          | `/old-blog/:slug` → `/blog/:slug`               |
+| 5   | Redirect with has/missing cookie conditions             | PASS          | Verified in `config-redirect.spec.ts` rerun     |
+| 6   | Config rewrite serves content at original URL           | PASS          | `/config-rewrite` → `/`                         |
+| 7   | Custom headers from next.config headers() on pages      | PASS          | `x-page-header` and `x-e2e-header` present      |
+| 8   | Custom headers from next.config headers() on API routes | PASS          | `x-custom-header` present                       |
 
 ### ON-13: Trailing Slash
 
@@ -919,14 +919,14 @@ against our Vite-based fixture apps. Each test links back to the OpenNext source
 **Local**: `tests/e2e/app-router/routing-misc.spec.ts` (new file)
 **Fixtures**: `app/api/catch-all/[...slugs]/route.ts`, `app/api/host/route.ts`, `app/search-query/page.tsx`
 
-| #   | OpenNext Test                                               | Vinext Status | Notes                                                                        |
-| --- | ----------------------------------------------------------- | ------------- | ---------------------------------------------------------------------------- |
-| 1   | Catch-all API route captures multiple segments with hyphens | PASS          | `/api/catch-all/open-next/is/really/cool`                                    |
-| 2   | Catch-all API route works with single segment               | PASS          | `/api/catch-all/single`                                                      |
-| 3   | Route handler request.url has correct host                  | PASS          | Returns `http://localhost:4174/api/host`                                     |
-| 4   | searchParams available via props in server component        | PASS          | Single-value params work                                                     |
-| 5   | Multi-value searchParams returned as arrays                 | FIXME         | vinext uses `URLSearchParams.forEach()` which overwrites duplicate keys      |
-| 6   | Middleware forwards search params as request header         | FIXME         | vinext does not unpack `x-middleware-request-*` headers into request context |
+| #   | OpenNext Test                                               | Vinext Status | Notes                                     |
+| --- | ----------------------------------------------------------- | ------------- | ----------------------------------------- |
+| 1   | Catch-all API route captures multiple segments with hyphens | PASS          | `/api/catch-all/open-next/is/really/cool` |
+| 2   | Catch-all API route works with single segment               | PASS          | `/api/catch-all/single`                   |
+| 3   | Route handler request.url has correct host                  | PASS          | Returns `http://localhost:4174/api/host`  |
+| 4   | searchParams available via props in server component        | PASS          | Single-value params work                  |
+| 5   | Multi-value searchParams returned as arrays                 | PASS          | Verified in `routing-misc.spec.ts` rerun  |
+| 6   | Middleware forwards search params as request header         | PASS          | Verified in `routing-misc.spec.ts` rerun  |
 
 ### ON-15: Config Headers and poweredByHeader
 
@@ -940,38 +940,36 @@ against our Vite-based fixture apps. Each test links back to the OpenNext source
 | 3   | Catch-all header pattern `/(.*)` applies to all routes  | PASS           | `x-e2e-header: vinext-e2e` on both page and API      |
 | 4   | `poweredByHeader: false` suppresses X-Powered-By        | PASS (passive) | vinext never sends X-Powered-By regardless of config |
 | 5   | Config headers NOT applied to redirect responses        | PASS           | Bug fix: skip headers on 3xx responses               |
-| 6   | Middleware headers with has/missing conditions          | FIXME          | Needs has/missing support in `matchHeaders()`        |
+| 6   | Middleware headers with has/missing conditions          | PASS           | Verified in `config-redirect.spec.ts` rerun          |
 
 ### Updated Summary (OpenNext Compat)
 
-| Chunk                              | Tests  | Pass   | Fixme  | Pending | Skip  | Source                                               |
-| ---------------------------------- | ------ | ------ | ------ | ------- | ----- | ---------------------------------------------------- |
-| ON-1. ISR Cache Headers            | 8      | 8      | 0      | 0       | 0     | `isr.test.ts`                                        |
-| ON-2. revalidateTag/Path           | 4      | 3      | 1      | 0       | 0     | `revalidateTag.test.ts`                              |
-| ON-3. Route Handler Methods        | 14     | 11     | 3      | 0       | 0     | `methods.test.ts`                                    |
-| ON-4. SSR + loading.tsx            | 3      | 2      | 1      | 0       | 0     | `ssr.test.ts`                                        |
-| ON-5. Streaming/SSE                | 3      | 3      | 0      | 0       | 0     | `sse.test.ts`, `streaming.test.ts`                   |
-| ON-6. Middleware Headers           | 7      | 7      | 0      | 0       | 0     | `middleware.cookies.test.ts`, `headers.test.ts`      |
-| ON-7. next/after                   | 3      | 3      | 0      | 0       | 0     | `after.test.ts`                                      |
-| ON-8. Headers Precedence           | 3      | 3      | 0      | 0       | 0     | `headers.test.ts`                                    |
-| ON-9. Parallel/Intercepting        | 5      | 4      | 0      | 0       | 1     | `parallel.test.ts`, `modals.test.ts`                 |
-| ON-10. Server Actions              | 5      | 5      | 0      | 0       | 0     | `serverActions.test.ts`                              |
-| ON-11. Middleware Redirect/Rewrite | 6      | 5      | 1      | 0       | 0     | `middleware.redirect.test.ts`                        |
-| ON-12. Config Redirects/Rewrites   | 8      | 7      | 1      | 0       | 0     | `config.redirect.test.ts`                            |
-| ON-13. Trailing Slash              | 3      | 3      | 0      | 0       | 0     | `trailing.test.ts`                                   |
-| ON-14. Catch-all/Host/Query        | 6      | 4      | 2      | 0       | 0     | `catch-all.test.ts`, `host.test.ts`, `query.test.ts` |
-| ON-15. Config Headers              | 6      | 5      | 1      | 0       | 0     | `headers.test.ts`                                    |
-| **Total**                          | **84** | **73** | **10** | **0**   | **1** |                                                      |
+| Chunk                              | Tests  | Pass   | Fixme | Pending | Skip  | Source                                               |
+| ---------------------------------- | ------ | ------ | ----- | ------- | ----- | ---------------------------------------------------- |
+| ON-1. ISR Cache Headers            | 8      | 8      | 0     | 0       | 0     | `isr.test.ts`                                        |
+| ON-2. revalidateTag/Path           | 4      | 0      | 1     | 0       | 3     | `revalidateTag.test.ts`                              |
+| ON-3. Route Handler Methods        | 14     | 14     | 0     | 0       | 0     | `methods.test.ts`                                    |
+| ON-4. SSR + loading.tsx            | 3      | 3      | 0     | 0       | 0     | `ssr.test.ts`                                        |
+| ON-5. Streaming/SSE                | 3      | 3      | 0     | 0       | 0     | `sse.test.ts`, `streaming.test.ts`                   |
+| ON-6. Middleware Headers           | 7      | 7      | 0     | 0       | 0     | `middleware.cookies.test.ts`, `headers.test.ts`      |
+| ON-7. next/after                   | 3      | 3      | 0     | 0       | 0     | `after.test.ts`                                      |
+| ON-8. Headers Precedence           | 3      | 3      | 0     | 0       | 0     | `headers.test.ts`                                    |
+| ON-9. Parallel/Intercepting        | 5      | 4      | 0     | 0       | 1     | `parallel.test.ts`, `modals.test.ts`                 |
+| ON-10. Server Actions              | 5      | 5      | 0     | 0       | 0     | `serverActions.test.ts`                              |
+| ON-11. Middleware Redirect/Rewrite | 6      | 6      | 0     | 0       | 0     | `middleware.redirect.test.ts`                        |
+| ON-12. Config Redirects/Rewrites   | 8      | 8      | 0     | 0       | 0     | `config.redirect.test.ts`                            |
+| ON-13. Trailing Slash              | 3      | 3      | 0     | 0       | 0     | `trailing.test.ts`                                   |
+| ON-14. Catch-all/Host/Query        | 6      | 6      | 0     | 0       | 0     | `catch-all.test.ts`, `host.test.ts`, `query.test.ts` |
+| ON-15. Config Headers              | 6      | 6      | 0     | 0       | 0     | `headers.test.ts`                                    |
+| **Total**                          | **84** | **79** | **1** | **0**   | **4** |                                                      |
 
-### New Feature Gaps Found (ON-11 through ON-15)
+### Remaining Verified Gaps
 
-| Feature                                        | Test         | Issue                                                                             |
-| ---------------------------------------------- | ------------ | --------------------------------------------------------------------------------- |
-| `NextResponse.rewrite()` status propagation    | ON-11 #5     | Status code from `NextResponse.rewrite(url, { status: 403 })` is silently dropped |
-| `has`/`missing` conditions on config redirects | ON-12 #5     | `matchRedirect()` in `config-matchers.ts` only checks source pattern              |
-| ~~Double-slash open redirect protection~~      | ~~ON-13 #3~~ | **FIXED** — `//` guard added to all entry points (PR #151)                        |
-| Multi-value searchParams as arrays             | ON-14 #5     | `URLSearchParams.forEach()` overwrites duplicate keys; need `getAll()`            |
-| Middleware request header forwarding           | ON-14 #6     | `x-middleware-request-*` headers not unpacked into `headers()` context            |
+| Feature                                  | Test        | Issue                                                                                  |
+| ---------------------------------------- | ----------- | -------------------------------------------------------------------------------------- |
+| Dev-mode revalidation lifecycle coverage | ON-2 #1/3/4 | Current spec uses `test.skip()` because ISR invalidation semantics are disabled in dev |
+| Nested shared-tag invalidation           | ON-2 #2     | Still `test.fixme()` in the dev E2E project                                            |
+| Intercepting route modal timing          | ON-9 #5     | Still skipped due to embedded RSC hydration timing                                     |
 
 ### Bug Fixed
 
