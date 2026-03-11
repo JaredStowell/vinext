@@ -236,10 +236,9 @@ function discoverSlotSubRoutes(
       }
     }
 
-    if (subPathMap.size === 0) continue;
-
     // Find the default.tsx for the children slot at the parent directory
     const childrenDefault = findFile(parentPageDir, "default", matcher);
+    if (subPathMap.size === 0 || !childrenDefault) continue;
 
     for (const [subPath, slotPages] of subPathMap) {
       // Convert sub-path segments to URL pattern parts
@@ -329,25 +328,6 @@ function findSlotSubPages(
 
   scan(slotDir);
   return results;
-}
-
-function hasNestedSlotSubPages(slotDir: string, matcher: ValidFileMatcher): boolean {
-  function scan(dir: string): boolean {
-    if (!fs.existsSync(dir)) return false;
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      if (matchInterceptConvention(entry.name)) continue;
-      if (entry.name.startsWith("_")) continue;
-
-      const subDir = path.join(dir, entry.name);
-      if (findFile(subDir, "page", matcher)) return true;
-      if (scan(subDir)) return true;
-    }
-    return false;
-  }
-
-  return scan(slotDir);
 }
 
 /**
@@ -644,9 +624,7 @@ function discoverInheritedParallelSlots(
 
 /**
  * Discover parallel route slots (@team, @analytics, etc.) in a directory.
- * Returns a ParallelSlot for each @-prefixed subdirectory that participates in routing.
- * A slot can be routable via its own page/default, intercepting routes, or nested pages
- * that create synthetic sub-routes like /inbox/profile from @modal/profile/page.tsx.
+ * Returns a ParallelSlot for each @-prefixed subdirectory that has a page or default component.
  */
 function discoverParallelSlots(
   dir: string,
@@ -667,13 +645,9 @@ function discoverParallelSlots(
     const pagePath = findFile(slotDir, "page", matcher);
     const defaultPath = findFile(slotDir, "default", matcher);
     const interceptingRoutes = discoverInterceptingRoutes(slotDir, dir, appDir, matcher);
-    const hasNestedSubPages = hasNestedSlotSubPages(slotDir, matcher);
 
-    // Keep slots that only define nested pages. Those nested pages create
-    // additional URL routes even when the slot root itself has no page/default.
-    if (!pagePath && !defaultPath && interceptingRoutes.length === 0 && !hasNestedSubPages) {
-      continue;
-    }
+    // Only include slots that have at least a page, default, or intercepting route
+    if (!pagePath && !defaultPath && interceptingRoutes.length === 0) continue;
 
     slots.push({
       name: slotName,
