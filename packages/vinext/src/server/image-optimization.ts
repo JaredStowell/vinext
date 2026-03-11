@@ -111,7 +111,8 @@ export function negotiateImageFormat(acceptHeader: string | null): string {
   if (!acceptHeader) return "image/jpeg";
   const preferredFormat = mediaType(acceptHeader, ["image/avif", "image/webp"]);
   if (!preferredFormat) return "image/jpeg";
-  return acceptHeader.includes(preferredFormat) ? preferredFormat : "image/jpeg";
+  if (!acceptHeader.includes(preferredFormat)) return "image/jpeg";
+  return preferredFormat.split(";")[0].trim().toLowerCase();
 }
 
 /**

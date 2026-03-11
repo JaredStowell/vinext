@@ -7629,6 +7629,12 @@ describe("image optimization request parsing", () => {
     expect(negotiateImageFormat("image/avif;q=1.5,image/webp;q=0.9")).toBe("image/avif");
   });
 
+  it("negotiateImageFormat returns a canonical media type for parameterized matches", async () => {
+    const { negotiateImageFormat } =
+      await import("../packages/vinext/src/server/image-optimization.js");
+    expect(negotiateImageFormat("image/avif;charset=utf-8,image/webp;q=0.8")).toBe("image/avif");
+  });
+
   it("IMAGE_OPTIMIZATION_PATH is /_vinext/image", async () => {
     const { IMAGE_OPTIMIZATION_PATH } =
       await import("../packages/vinext/src/server/image-optimization.js");
@@ -7779,6 +7785,33 @@ describe("handleImageOptimization", () => {
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("transformed");
     expect(capturedOptions).toEqual({ width: 800, format: "image/webp", quality: 90 });
+  });
+
+  it("passes a canonical format to transformImage for parameterized Accept values", async () => {
+    const { handleImageOptimization } =
+      await import("../packages/vinext/src/server/image-optimization.js");
+    const request = new Request("http://localhost/_vinext/image?url=%2Fimg.jpg&w=800&q=90", {
+      headers: { Accept: "image/avif;charset=utf-8,image/webp;q=0.8" },
+    });
+    let capturedOptions: { width: number; format: string; quality: number } | null = null;
+    const handlers = {
+      fetchAsset: async () =>
+        new Response("original", {
+          status: 200,
+          headers: { "Content-Type": "image/jpeg" },
+        }),
+      transformImage: async (
+        _body: ReadableStream,
+        options: { width: number; format: string; quality: number },
+      ) => {
+        capturedOptions = options;
+        return new Response("transformed", { headers: { "Content-Type": options.format } });
+      },
+    };
+    const response = await handleImageOptimization(request, handlers);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("transformed");
+    expect(capturedOptions).toEqual({ width: 800, format: "image/avif", quality: 90 });
   });
 
   it("falls back to original on transform error", async () => {
