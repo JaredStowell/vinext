@@ -41,4 +41,12 @@ test.describe("Pages Router on Cloudflare Workers (vite dev)", () => {
     expect(res.status()).toBe(307);
     expect(res.headers()["location"]).toContain("/about");
   });
+
+  test("config redirects still win before middleware rewrites", async ({ request }) => {
+    const res = await request.get(`${BASE}/redirect-before-middleware-rewrite`, {
+      maxRedirects: 0,
+    });
+    expect(res.status()).toBe(307);
+    expect(res.headers()["location"]).toContain("/about");
+  });
 });

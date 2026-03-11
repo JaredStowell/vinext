@@ -1947,6 +1947,11 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     // page responses. This keeps middleware response headers visible on API
     // routes in Workers/dev, and preserves custom rewrite status overrides.
     function attachRouteHandlerMiddlewareContext(response) {
+      // _mwCtx.headers is only set (non-null) when middleware actually ran and
+      // produced a continue/rewrite response. An empty Headers object (middleware
+      // ran but produced no response headers) is a harmless edge case: the early
+      // return is skipped, but the copy loop below is a no-op, so no incorrect
+      // headers are added. The allocation cost in that case is acceptable.
       if (!_mwCtx.headers && _mwCtx.status == null) return response;
       const responseHeaders = new Headers(response.headers);
       if (_mwCtx.headers) {

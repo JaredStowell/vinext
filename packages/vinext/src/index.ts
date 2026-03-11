@@ -2026,6 +2026,10 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
               // host request and forwarding post-middleware state downstream.
               if (hasCloudflarePlugin) return next();
 
+              // Snapshot of req.headers before middleware runs. Used for both
+              // preMiddlewareReqCtx and the middleware Request itself. Intentionally
+              // captured once here — applyRequestHeadersToNodeRequest() mutates
+              // req.headers later, but by then this Headers object is no longer read.
               const nodeRequestHeaders = new Headers(
                 Object.fromEntries(
                   Object.entries(req.headers)

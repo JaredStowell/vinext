@@ -17,6 +17,7 @@ import {
   requestContextFromRequest,
   isExternalUrl,
   proxyExternalRequest,
+  sanitizeDestination,
 } from "vinext/config/config-matchers";
 import { mergeHeaders } from "vinext/server/worker-utils";
 
@@ -80,9 +81,11 @@ export default {
       if (configRedirects.length) {
         const redirect = matchRedirect(pathname, configRedirects, reqCtx);
         if (redirect) {
-          const dest = basePath && !redirect.destination.startsWith(basePath)
-            ? basePath + redirect.destination
-            : redirect.destination;
+          const dest = sanitizeDestination(
+            basePath && !isExternalUrl(redirect.destination) && !redirect.destination.startsWith(basePath)
+              ? basePath + redirect.destination
+              : redirect.destination,
+          );
           return new Response(null, {
             status: redirect.permanent ? 308 : 307,
             headers: { Location: dest },
