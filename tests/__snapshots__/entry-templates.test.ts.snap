@@ -18651,7 +18651,7 @@ export async function handleApiRoute(request, url) {
     return await responsePromise;
   } catch (e) {
     if (e instanceof ApiBodyParseError) {
-      return new Response(e.message, { status: e.statusCode });
+      return new Response(e.message, { status: e.statusCode, statusText: e.message });
     }
     console.error("[vinext] API error:", e);
     return new Response("Internal Server Error", { status: 500 });
