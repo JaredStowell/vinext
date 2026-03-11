@@ -2722,6 +2722,12 @@ describe("production server compression", () => {
     expect(negotiateEncoding(req as any)).toBe("gzip");
   });
 
+  it("negotiateEncoding preserves Next.js' gzip-over-deflate fallback", async () => {
+    const { negotiateEncoding } = await import("../packages/vinext/src/server/prod-server.js");
+    const req = { headers: { "accept-encoding": "deflate;q=1, gzip;q=0.5" } };
+    expect(negotiateEncoding(req as any)).toBe("gzip");
+  });
+
   it("negotiateEncoding falls back to wildcard-supported encodings", async () => {
     const { negotiateEncoding } = await import("../packages/vinext/src/server/prod-server.js");
     const req = { headers: { "accept-encoding": "gzip;q=0, *;q=0.7" } };

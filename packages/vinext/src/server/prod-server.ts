@@ -205,7 +205,15 @@ function negotiateEncoding(req: IncomingMessage): "br" | "gzip" | "deflate" | nu
     );
 
   const best = ranked[0]?.encoding;
-  return !best || best === "identity" ? null : best;
+  if (!best || best === "identity") return null;
+
+  // Next.js' compiled compression middleware prefers gzip over deflate
+  // whenever deflate wins but gzip is still acceptable.
+  if (best === "deflate" && getPriority("gzip", supported.indexOf("gzip")).q > 0) {
+    return "gzip";
+  }
+
+  return best;
 }
 
 /**
