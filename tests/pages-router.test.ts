@@ -17,7 +17,10 @@ const PAGES_APP_COMPONENT = `export default function App({ Component, pageProps 
 
 function writeEncodedSlashPagesFixture(rootDir: string): void {
   fs.mkdirSync(path.join(rootDir, "pages", "a"), { recursive: true });
-  fs.symlinkSync(path.join(process.cwd(), "node_modules"), path.join(rootDir, "node_modules"));
+  const nmLink = path.join(rootDir, "node_modules");
+  if (!fs.existsSync(nmLink)) {
+    fs.symlinkSync(path.join(process.cwd(), "node_modules"), nmLink);
+  }
   fs.writeFileSync(path.join(rootDir, "pages", "_app.tsx"), PAGES_APP_COMPONENT);
   fs.writeFileSync(
     path.join(rootDir, "pages", "a", "b.tsx"),

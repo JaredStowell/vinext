@@ -79,6 +79,11 @@ export function compareRoutes<T extends { pattern: string }>(a: T, b: T): number
   return diff !== 0 ? diff : a.pattern.localeCompare(b.pattern);
 }
 
+// Matches literal delimiter characters and their percent-encoded equivalents.
+// Literal `/`, `#`, `?` can appear after decodeURIComponent when the input was
+// originally encoded (e.g. `%2F` → `/`); they are re-encoded to preserve their
+// role as delimiters. `\` is included to handle both `%5C` and Windows-style
+// path separators that may appear in filesystem-derived route segments.
 const PATH_DELIMITER_REGEX = /([/#?\\]|%(2f|23|3f|5c))/gi;
 
 function encodePathDelimiters(segment: string): string {

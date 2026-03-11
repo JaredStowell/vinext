@@ -1548,11 +1548,14 @@ function __decodeRouteSegment(segment) {
     return encodeURIComponent(char);
   });
 }
+function __decodeRouteSegmentSafe(segment) {
+  try { return __decodeRouteSegment(segment); } catch (e) { return segment; }
+}
 function __normalizePathnameForRouteMatch(pathname) {
   const segments = pathname.split("/");
   const normalized = [];
   for (let i = 0; i < segments.length; i++) {
-    normalized.push(__decodeRouteSegment(segments[i]));
+    normalized.push(__decodeRouteSegmentSafe(segments[i]));
   }
   return normalized.join("/");
 }
@@ -4310,11 +4313,14 @@ function __decodeRouteSegment(segment) {
     return encodeURIComponent(char);
   });
 }
+function __decodeRouteSegmentSafe(segment) {
+  try { return __decodeRouteSegment(segment); } catch (e) { return segment; }
+}
 function __normalizePathnameForRouteMatch(pathname) {
   const segments = pathname.split("/");
   const normalized = [];
   for (let i = 0; i < segments.length; i++) {
-    normalized.push(__decodeRouteSegment(segments[i]));
+    normalized.push(__decodeRouteSegmentSafe(segments[i]));
   }
   return normalized.join("/");
 }
@@ -7105,11 +7111,14 @@ function __decodeRouteSegment(segment) {
     return encodeURIComponent(char);
   });
 }
+function __decodeRouteSegmentSafe(segment) {
+  try { return __decodeRouteSegment(segment); } catch (e) { return segment; }
+}
 function __normalizePathnameForRouteMatch(pathname) {
   const segments = pathname.split("/");
   const normalized = [];
   for (let i = 0; i < segments.length; i++) {
-    normalized.push(__decodeRouteSegment(segments[i]));
+    normalized.push(__decodeRouteSegmentSafe(segments[i]));
   }
   return normalized.join("/");
 }
@@ -9904,11 +9913,14 @@ function __decodeRouteSegment(segment) {
     return encodeURIComponent(char);
   });
 }
+function __decodeRouteSegmentSafe(segment) {
+  try { return __decodeRouteSegment(segment); } catch (e) { return segment; }
+}
 function __normalizePathnameForRouteMatch(pathname) {
   const segments = pathname.split("/");
   const normalized = [];
   for (let i = 0; i < segments.length; i++) {
-    normalized.push(__decodeRouteSegment(segments[i]));
+    normalized.push(__decodeRouteSegmentSafe(segments[i]));
   }
   return normalized.join("/");
 }
@@ -12676,11 +12688,14 @@ function __decodeRouteSegment(segment) {
     return encodeURIComponent(char);
   });
 }
+function __decodeRouteSegmentSafe(segment) {
+  try { return __decodeRouteSegment(segment); } catch (e) { return segment; }
+}
 function __normalizePathnameForRouteMatch(pathname) {
   const segments = pathname.split("/");
   const normalized = [];
   for (let i = 0; i < segments.length; i++) {
-    normalized.push(__decodeRouteSegment(segments[i]));
+    normalized.push(__decodeRouteSegmentSafe(segments[i]));
   }
   return normalized.join("/");
 }
@@ -15634,11 +15649,14 @@ function __decodeRouteSegment(segment) {
     return encodeURIComponent(char);
   });
 }
+function __decodeRouteSegmentSafe(segment) {
+  try { return __decodeRouteSegment(segment); } catch (e) { return segment; }
+}
 function __normalizePathnameForRouteMatch(pathname) {
   const segments = pathname.split("/");
   const normalized = [];
   for (let i = 0; i < segments.length; i++) {
-    normalized.push(__decodeRouteSegment(segments[i]));
+    normalized.push(__decodeRouteSegmentSafe(segments[i]));
   }
   return normalized.join("/");
 }
@@ -18781,11 +18799,14 @@ function __decodeRouteSegment(segment) {
     return encodeURIComponent(char);
   });
 }
+function __decodeRouteSegmentSafe(segment) {
+  try { return __decodeRouteSegment(segment); } catch (e) { return segment; }
+}
 function __normalizePathnameForRouteMatch(pathname) {
   var segments = pathname.split("/");
   var normalized = [];
   for (var i = 0; i < segments.length; i++) {
-    normalized.push(__decodeRouteSegment(segments[i]));
+    normalized.push(__decodeRouteSegmentSafe(segments[i]));
   }
   return normalized.join("/");
 }

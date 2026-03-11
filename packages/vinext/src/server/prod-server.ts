@@ -259,7 +259,7 @@ function tryServeStatic(
   const resolvedClient = path.resolve(clientDir);
   let decodedPathname: string;
   try {
-    decodedPathname = normalizePathnameForRouteMatchStrict(pathname);
+    decodedPathname = decodeURIComponent(pathname);
   } catch {
     return false;
   }

@@ -165,6 +165,9 @@ describe("matchRoute - URL matching", () => {
 
     expect(matchRoute("/a%2Fb", [encodedRoute, nestedRoute])?.route.pattern).toBe("/a%2Fb");
     expect(matchRoute("/a/b", [encodedRoute, nestedRoute])?.route.pattern).toBe("/a/b");
+    // Lowercase %2f should also match: normalizePathnameForRouteMatch decodes
+    // then re-encodes via encodeURIComponent, which always produces uppercase.
+    expect(matchRoute("/a%2fb", [encodedRoute, nestedRoute])?.route.pattern).toBe("/a%2Fb");
   });
 
   it("returns null for unmatched routes", async () => {
