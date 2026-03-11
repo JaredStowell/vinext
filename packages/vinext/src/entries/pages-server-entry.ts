@@ -642,6 +642,7 @@ function createReqRes(request, url, query, body) {
     send: function(data) {
       if (Buffer.isBuffer(data)) {
         if (!resHeaders["content-type"]) resHeaders["content-type"] = "application/octet-stream";
+        resHeaders["content-length"] = String(data.length);
         res.end(data);
       } else if (typeof data === "object" && data !== null) {
         res.json(data);
