@@ -81,18 +81,27 @@ export function compareRoutes<T extends { pattern: string }>(a: T, b: T): number
 
 const PATH_DELIMITER_REGEX = /([/#?\\]|%(2f|23|3f|5c))/gi;
 
+function encodePathDelimiters(segment: string): string {
+  return segment.replace(PATH_DELIMITER_REGEX, (char) => encodeURIComponent(char));
+}
+
 /**
  * Decode a filesystem or URL path segment while preserving encoded path delimiters.
  * Mirrors Next.js segment-wise decoding so "%5F" becomes "_" but "%2F" stays "%2F".
  */
 export function decodeRouteSegment(segment: string): string {
   try {
-    return decodeURIComponent(segment).replace(PATH_DELIMITER_REGEX, (char) =>
-      encodeURIComponent(char),
-    );
+    return encodePathDelimiters(decodeURIComponent(segment));
   } catch {
     return segment;
   }
+}
+
+/**
+ * Strict variant for request pipelines that should reject malformed percent-encoding.
+ */
+export function decodeRouteSegmentStrict(segment: string): string {
+  return encodePathDelimiters(decodeURIComponent(segment));
 }
 
 /**
@@ -103,5 +112,16 @@ export function normalizePathnameForRouteMatch(pathname: string): string {
   return pathname
     .split("/")
     .map((segment) => decodeRouteSegment(segment))
+    .join("/");
+}
+
+/**
+ * Strict pathname normalization for live request handling.
+ * Throws on malformed percent-encoding so callers can return 400.
+ */
+export function normalizePathnameForRouteMatchStrict(pathname: string): string {
+  return pathname
+    .split("/")
+    .map((segment) => decodeRouteSegmentStrict(segment))
     .join("/");
 }

@@ -47,6 +47,7 @@ import { normalizePath } from "./normalize-path.js";
 import { hasBasePath, stripBasePath } from "../utils/base-path.js";
 import { computeLazyChunks } from "../index.js";
 import { manifestFileWithBase } from "../utils/manifest-paths.js";
+import { normalizePathnameForRouteMatchStrict } from "../routing/utils.js";
 
 /** Convert a Node.js IncomingMessage into a ReadableStream for Web Request body. */
 function readNodeStream(req: IncomingMessage): ReadableStream<Uint8Array> {
@@ -245,7 +246,7 @@ function tryServeStatic(
   const resolvedClient = path.resolve(clientDir);
   let decodedPathname: string;
   try {
-    decodedPathname = decodeURIComponent(pathname);
+    decodedPathname = normalizePathnameForRouteMatchStrict(pathname);
   } catch {
     return false;
   }
@@ -554,7 +555,7 @@ async function startAppRouterServer(options: AppRouterServerOptions) {
     const rawPathname = url.split("?")[0].replaceAll("\\", "/");
     let pathname: string;
     try {
-      pathname = normalizePath(decodeURIComponent(rawPathname));
+      pathname = normalizePath(normalizePathnameForRouteMatchStrict(rawPathname));
     } catch {
       // Malformed percent-encoding (e.g. /%E0%A4%A) — return 400 instead of crashing.
       res.writeHead(400);
@@ -724,7 +725,7 @@ async function startPagesRouterServer(options: PagesRouterServerOptions) {
     const rawQs = rawUrl.includes("?") ? rawUrl.slice(rawUrl.indexOf("?")) : "";
     let pathname: string;
     try {
-      pathname = normalizePath(decodeURIComponent(rawPagesPathname));
+      pathname = normalizePath(normalizePathnameForRouteMatchStrict(rawPagesPathname));
     } catch {
       // Malformed percent-encoding (e.g. /%E0%A4%A) — return 400 instead of crashing.
       res.writeHead(400);
