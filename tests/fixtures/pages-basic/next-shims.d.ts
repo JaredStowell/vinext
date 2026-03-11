@@ -15,7 +15,8 @@ declare module "next/head" {
 
 declare module "next/link" {
   import { ComponentType, AnchorHTMLAttributes, ReactNode } from "react";
-  type UrlQuery = Record<string, string | readonly string[]>;
+  type UrlQueryValue = string | number | boolean | null | undefined;
+  type UrlQuery = Record<string, UrlQueryValue | readonly UrlQueryValue[]>;
   interface LinkProps extends Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "href"> {
     href: string | { pathname?: string; query?: UrlQuery };
     as?: string;

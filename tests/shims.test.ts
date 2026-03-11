@@ -6779,6 +6779,65 @@ describe("Pages Router router helpers", () => {
     }
   });
 
+  it("stringifies scalar query values like Next.js for object-form router URLs", async () => {
+    const previousWindow = (globalThis as any).window;
+    const pushState = vi.fn();
+    const replaceState = vi.fn();
+
+    (globalThis as any).window = {
+      location: {
+        pathname: "/",
+        search: "",
+        hash: "",
+        assign: vi.fn(),
+        replace: vi.fn(),
+        reload: vi.fn(),
+      },
+      history: {
+        state: null,
+        pushState,
+        replaceState,
+        back: vi.fn(),
+      },
+      dispatchEvent: vi.fn(),
+      scrollTo: vi.fn(),
+      scrollX: 0,
+      scrollY: 0,
+      __NEXT_DATA__: {
+        page: "/",
+        query: {},
+        isFallback: false,
+      },
+      __VINEXT_LOCALE__: undefined,
+      __VINEXT_LOCALES__: undefined,
+      __VINEXT_DEFAULT_LOCALE__: undefined,
+    };
+
+    try {
+      const routerModule = await import("../packages/vinext/src/shims/router.js");
+      await routerModule.default.push(
+        {
+          pathname: "/search",
+          query: { page: 2, draft: false, empty: null, missing: undefined, tag: ["a", "b"] },
+        },
+        undefined,
+        { shallow: true },
+      );
+
+      expect(pushState).toHaveBeenCalledWith(
+        {},
+        "",
+        "/search?page=2&draft=false&empty=&missing=&tag=a&tag=b",
+      );
+    } finally {
+      if (previousWindow === undefined) {
+        delete (globalThis as any).window;
+      } else {
+        (globalThis as any).window = previousWindow;
+      }
+    }
+  });
+
   it("exposes beforePopState on both the Router singleton and wrapped router context", async () => {
     const React = await import("react");
     const { renderToStaticMarkup } = await import("react-dom/server");
