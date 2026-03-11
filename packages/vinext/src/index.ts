@@ -2026,19 +2026,18 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
               // host request and forwarding post-middleware state downstream.
               if (hasCloudflarePlugin) return next();
 
-              const buildNodeRequestHeaders = () =>
-                new Headers(
-                  Object.fromEntries(
-                    Object.entries(req.headers)
-                      .filter(([, v]) => v !== undefined)
-                      .map(([k, v]) => [k, Array.isArray(v) ? v.join(", ") : String(v)]),
-                  ),
-                );
+              const nodeRequestHeaders = new Headers(
+                Object.fromEntries(
+                  Object.entries(req.headers)
+                    .filter(([, v]) => v !== undefined)
+                    .map(([k, v]) => [k, Array.isArray(v) ? v.join(", ") : String(v)]),
+                ),
+              );
 
               const requestOrigin = `http://${req.headers.host || "localhost"}`;
               const preMiddlewareReqUrl = new URL(url, requestOrigin);
               const preMiddlewareReqCtx: RequestContext = requestContextFromRequest(
-                new Request(preMiddlewareReqUrl, { headers: buildNodeRequestHeaders() }),
+                new Request(preMiddlewareReqUrl, { headers: nodeRequestHeaders }),
               );
 
               // Config redirects run before middleware, but still match against
@@ -2080,11 +2079,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                 const origin = `${mwProto}://${req.headers.host || "localhost"}`;
                 const middlewareRequest = new Request(new URL(url, origin), {
                   method: req.method,
-                  headers: Object.fromEntries(
-                    Object.entries(req.headers)
-                      .filter(([, v]) => v !== undefined)
-                      .map(([k, v]) => [k, Array.isArray(v) ? v.join(", ") : String(v)]),
-                  ),
+                  headers: nodeRequestHeaders,
                 });
                 const result = await runMiddleware(
                   getPagesRunner(),
@@ -2178,7 +2173,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
               // Convert Node.js IncomingMessage headers to a Web Request for
               // requestContextFromRequest(), which uses the standard Web API.
               const reqUrl = new URL(url, requestOrigin);
-              const reqCtxHeaders = middlewareRequestHeaders ?? buildNodeRequestHeaders();
+              const reqCtxHeaders = middlewareRequestHeaders ?? nodeRequestHeaders;
               const reqCtx: RequestContext = requestContextFromRequest(
                 new Request(reqUrl, { headers: reqCtxHeaders }),
               );

@@ -270,6 +270,20 @@ describe("Pages Router integration", () => {
   // Ported from Next.js:
   // test/e2e/app-dir/rewrites-redirects/rewrites-redirects.test.ts
   // https://github.com/vercel/next.js/blob/canary/test/e2e/app-dir/rewrites-redirects/rewrites-redirects.test.ts
+  // and
+  // test/e2e/middleware-rewrites/test/index.test.ts
+  // https://github.com/vercel/next.js/blob/canary/test/e2e/middleware-rewrites/test/index.test.ts
+  it("applies next.config.js redirects before middleware rewrites in dev", async () => {
+    const res = await fetch(`${baseUrl}/redirect-before-middleware-rewrite`, {
+      redirect: "manual",
+    });
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toContain("/about");
+  });
+
+  // Ported from Next.js:
+  // test/e2e/app-dir/rewrites-redirects/rewrites-redirects.test.ts
+  // https://github.com/vercel/next.js/blob/canary/test/e2e/app-dir/rewrites-redirects/rewrites-redirects.test.ts
   it("applies next.config.js redirects before middleware responses in dev", async () => {
     const res = await fetch(`${baseUrl}/redirect-before-middleware-response`, {
       redirect: "manual",

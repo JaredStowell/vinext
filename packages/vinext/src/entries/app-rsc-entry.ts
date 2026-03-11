@@ -1947,6 +1947,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     // page responses. This keeps middleware response headers visible on API
     // routes in Workers/dev, and preserves custom rewrite status overrides.
     function attachRouteHandlerMiddlewareContext(response) {
+      if (!_mwCtx.headers && _mwCtx.status == null) return response;
       const responseHeaders = new Headers(response.headers);
       if (_mwCtx.headers) {
         for (const [key, value] of _mwCtx.headers) {

@@ -175,7 +175,7 @@ export default {
             }
           } else if (lk === "vary" && middlewareHeaders[lk]) {
             middlewareHeaders[lk] += ", " + h.value;
-          } else {
+          } else if (!(lk in middlewareHeaders)) {
             middlewareHeaders[lk] = h.value;
           }
         }
@@ -220,7 +220,7 @@ export default {
 
         // Fallback rewrites (if SSR returned 404)
         if (response && response.status === 404 && configRewrites.fallback?.length) {
-          const fallbackRewrite = matchRewrite(resolvedPathname, configRewrites.fallback, reqCtx);
+          const fallbackRewrite = matchRewrite(resolvedPathname, configRewrites.fallback, postMwReqCtx);
           if (fallbackRewrite) {
             if (isExternalUrl(fallbackRewrite)) {
               return proxyExternalRequest(request, fallbackRewrite);
