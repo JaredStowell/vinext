@@ -253,6 +253,31 @@ describe("Pages Router integration", () => {
     expect(res.headers.get("location")).toBe("/about");
   });
 
+  // Ported from Next.js:
+  // test/e2e/app-dir/rewrites-redirects/rewrites-redirects.test.ts
+  // https://github.com/vercel/next.js/blob/canary/test/e2e/app-dir/rewrites-redirects/rewrites-redirects.test.ts
+  // and
+  // test/e2e/middleware-rewrites/test/index.test.ts
+  // https://github.com/vercel/next.js/blob/canary/test/e2e/middleware-rewrites/test/index.test.ts
+  it("applies next.config.js headers using the pre-middleware pathname after a rewrite in dev", async () => {
+    const res = await fetch(`${baseUrl}/headers-before-middleware-rewrite`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-rewrite-source-header")).toBe("1");
+    const html = await res.text();
+    expect(html).toContain("Server-Side Rendered");
+  });
+
+  // Ported from Next.js:
+  // test/e2e/app-dir/rewrites-redirects/rewrites-redirects.test.ts
+  // https://github.com/vercel/next.js/blob/canary/test/e2e/app-dir/rewrites-redirects/rewrites-redirects.test.ts
+  it("applies next.config.js redirects before middleware responses in dev", async () => {
+    const res = await fetch(`${baseUrl}/redirect-before-middleware-response`, {
+      redirect: "manual",
+    });
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toContain("/about");
+  });
+
   it("applies redirects with repeated dynamic params in the destination", async () => {
     const res = await fetch(`${baseUrl}/repeat-redirect/hello`, { redirect: "manual" });
     expect(res.status).toBe(307);
