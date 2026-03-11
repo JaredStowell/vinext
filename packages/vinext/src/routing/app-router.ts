@@ -38,7 +38,7 @@ export interface ParallelSlot {
   /** Slot name (e.g. "team" from @team) */
   name: string;
   /** Absolute path to the @slot directory that owns this slot. Internal routing metadata. */
-  ownerDir?: string;
+  ownerDir: string;
   /** Absolute path to the slot's page component */
   pagePath: string | null;
   /** Absolute path to the slot's default.tsx fallback */
@@ -214,8 +214,11 @@ function discoverSlotSubRoutes(
 ): AppRoute[] {
   const syntheticRoutes: AppRoute[] = [];
 
-  const slotKey = (slotName: string, ownerDir: string | undefined): string =>
-    `${slotName}\u0000${ownerDir ?? ""}`;
+  // O(1) lookup for existing routes by pattern — avoids O(n) routes.find() per sub-path per parent.
+  // Updated as new synthetic routes are pushed so that later parents can see earlier synthetic entries.
+  const routesByPattern = new Map<string, AppRoute>(routes.map((r) => [r.pattern, r]));
+
+  const slotKey = (slotName: string, ownerDir: string): string => `${slotName}\u0000${ownerDir}`;
 
   const applySlotSubPages = (route: AppRoute, slotPages: Map<string, string>): void => {
     route.parallelSlots = route.parallelSlots.map((slot) => ({
@@ -231,11 +234,16 @@ function discoverSlotSubRoutes(
     const parentPageDir = path.dirname(parentRoute.pagePath);
 
     // Collect sub-paths from all slots.
-    // Map: normalized visible sub-path -> slot pages and visible route segments.
+    // Map: normalized visible sub-path -> slot pages, raw filesystem segments (for routeSegments),
+    // and the pre-computed convertedSubRoute (to avoid a redundant re-conversion in the merge loop).
     const subPathMap = new Map<
       string,
       {
-        routeSegments: string[];
+        // Raw filesystem segments (with route groups, @slots, etc.) used for routeSegments so
+        // that useSelectedLayoutSegments() sees the correct segment list at runtime.
+        rawSegments: string[];
+        // Pre-computed URL parts, params, isDynamic from convertSegmentsToRouteParts.
+        converted: { urlSegments: string[]; params: string[]; isDynamic: boolean };
         slotPages: Map<string, string>;
       }
     >();
@@ -256,7 +264,8 @@ function discoverSlotSubRoutes(
 
         if (!subPathEntry) {
           subPathEntry = {
-            routeSegments: normalizeVisibleRouteSegments(subSegments),
+            rawSegments: subSegments,
+            converted: convertedSubRoute,
             slotPages: new Map(),
           };
           subPathMap.set(normalizedSubPath, subPathEntry);
@@ -280,10 +289,7 @@ function discoverSlotSubRoutes(
     // Find the default.tsx for the children slot at the parent directory
     const childrenDefault = findFile(parentPageDir, "default", matcher);
 
-    for (const { routeSegments: subSegments, slotPages } of subPathMap.values()) {
-      const convertedSubRoute = convertSegmentsToRouteParts(subSegments);
-      if (!convertedSubRoute) continue;
-
+    for (const { rawSegments, converted: convertedSubRoute, slotPages } of subPathMap.values()) {
       const {
         urlSegments: urlParts,
         params: subParams,
@@ -293,7 +299,7 @@ function discoverSlotSubRoutes(
       const subUrlPath = urlParts.join("/");
       const pattern = joinRoutePattern(parentRoute.pattern, subUrlPath);
 
-      const existingRoute = routes.find((route) => route.pattern === pattern);
+      const existingRoute = routesByPattern.get(pattern);
       if (existingRoute) {
         if (existingRoute.routePath && !existingRoute.pagePath) {
           throw new Error(
@@ -311,7 +317,7 @@ function discoverSlotSubRoutes(
         pagePath: slotPages.get(slotKey(slot.name, slot.ownerDir)) || null,
       }));
 
-      syntheticRoutes.push({
+      const newRoute: AppRoute = {
         pattern,
         pagePath: childrenDefault, // children slot uses parent's default.tsx as page
         routePath: null,
@@ -325,12 +331,14 @@ function discoverSlotSubRoutes(
         notFoundPaths: parentRoute.notFoundPaths,
         forbiddenPath: parentRoute.forbiddenPath,
         unauthorizedPath: parentRoute.unauthorizedPath,
-        routeSegments: [...parentRoute.routeSegments, ...subSegments],
+        routeSegments: [...parentRoute.routeSegments, ...rawSegments],
         layoutTreePositions: parentRoute.layoutTreePositions,
         isDynamic: parentRoute.isDynamic || subIsDynamic,
         params: [...parentRoute.params, ...subParams],
         patternParts: [...parentRoute.patternParts, ...urlParts],
-      });
+      };
+      syntheticRoutes.push(newRoute);
+      routesByPattern.set(pattern, newRoute);
     }
   }
 
@@ -991,6 +999,16 @@ function hasRemainingVisibleSegments(segments: string[], startIndex: number): bo
   return false;
 }
 
+/**
+ * Filter filesystem path segments down to only the segments that are visible in the URL
+ * (i.e. strip route groups, @slots, and "." entries) while preserving dynamic segment
+ * syntax (e.g. "[id]" stays as "[id]", not converted to ":id").
+ *
+ * This is intentionally different from convertSegmentsToRouteParts, which additionally
+ * converts dynamic segments to ":id" / ":id+" / ":id*" Express-style patterns.  Both
+ * functions skip the same invisible segment types (route groups, @slots, "."), so they
+ * must be kept in sync if new invisible segment types are introduced.
+ */
 function normalizeVisibleRouteSegments(segments: string[]): string[] {
   const visibleSegments: string[] = [];
 

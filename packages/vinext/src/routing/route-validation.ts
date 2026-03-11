@@ -156,7 +156,7 @@ export function patternToNextFormat(pattern: string): string {
 
 function normalizeRoutePattern(pattern: string): string {
   if (pattern === "/") return "/";
-  const normalized = pattern.replace(/\/+$/g, "");
+  const normalized = pattern.replace(/\/+$/, "");
   return normalized === "" ? "/" : normalized;
 }
 
