@@ -15,7 +15,7 @@
  */
 import path from "node:path";
 import fs from "node:fs";
-import { compareRoutes } from "./utils.js";
+import { compareRoutes, decodeRouteSegment, normalizePathnameForRouteMatch } from "./utils.js";
 import {
   createValidFileMatcher,
   scanWithExtensions,
@@ -926,11 +926,7 @@ function convertSegmentsToRouteParts(
       continue;
     }
 
-    try {
-      urlSegments.push(decodeURIComponent(segment));
-    } catch {
-      urlSegments.push(segment);
-    }
+    urlSegments.push(decodeRouteSegment(segment));
   }
 
   return { urlSegments, params, isDynamic };
@@ -956,11 +952,7 @@ export function matchAppRoute(
 ): { route: AppRoute; params: Record<string, string | string[]> } | null {
   const pathname = url.split("?")[0];
   let normalizedUrl = pathname === "/" ? "/" : pathname.replace(/\/$/, "");
-  try {
-    normalizedUrl = decodeURIComponent(normalizedUrl);
-  } catch {
-    /* malformed percent-encoding — match as-is */
-  }
+  normalizedUrl = normalizePathnameForRouteMatch(normalizedUrl);
 
   // Split URL once, reuse across all route match attempts
   const urlParts = normalizedUrl.split("/").filter(Boolean);

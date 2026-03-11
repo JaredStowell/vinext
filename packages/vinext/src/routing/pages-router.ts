@@ -1,5 +1,5 @@
 import path from "node:path";
-import { compareRoutes } from "./utils.js";
+import { compareRoutes, decodeRouteSegment, normalizePathnameForRouteMatch } from "./utils.js";
 import {
   createValidFileMatcher,
   scanWithExtensions,
@@ -141,7 +141,7 @@ function fileToRoute(file: string, pagesDir: string, matcher: ValidFileMatcher):
       continue;
     }
 
-    urlSegments.push(segment);
+    urlSegments.push(decodeRouteSegment(segment));
   }
 
   const pattern = "/" + urlSegments.join("/");
@@ -166,11 +166,7 @@ export function matchRoute(
   // Normalize: strip query string and trailing slash
   const pathname = url.split("?")[0];
   let normalizedUrl = pathname === "/" ? "/" : pathname.replace(/\/$/, "");
-  try {
-    normalizedUrl = decodeURIComponent(normalizedUrl);
-  } catch {
-    /* malformed percent-encoding — match as-is */
-  }
+  normalizedUrl = normalizePathnameForRouteMatch(normalizedUrl);
 
   // Split URL once, reuse across all route match attempts
   const urlParts = normalizedUrl.split("/").filter(Boolean);

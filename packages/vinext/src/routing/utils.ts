@@ -78,3 +78,30 @@ export function compareRoutes<T extends { pattern: string }>(a: T, b: T): number
   const diff = routePrecedence(a.pattern) - routePrecedence(b.pattern);
   return diff !== 0 ? diff : a.pattern.localeCompare(b.pattern);
 }
+
+const PATH_DELIMITER_REGEX = /([/#?\\]|%(2f|23|3f|5c))/gi;
+
+/**
+ * Decode a filesystem or URL path segment while preserving encoded path delimiters.
+ * Mirrors Next.js segment-wise decoding so "%5F" becomes "_" but "%2F" stays "%2F".
+ */
+export function decodeRouteSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment).replace(PATH_DELIMITER_REGEX, (char) =>
+      encodeURIComponent(char),
+    );
+  } catch {
+    return segment;
+  }
+}
+
+/**
+ * Normalize a pathname for route matching by decoding each segment independently.
+ * This prevents encoded slashes from turning into real path separators.
+ */
+export function normalizePathnameForRouteMatch(pathname: string): string {
+  return pathname
+    .split("/")
+    .map((segment) => decodeRouteSegment(segment))
+    .join("/");
+}
