@@ -26,7 +26,6 @@ import {
   resolveRelativeHref,
   toBrowserNavigationHref,
   toSameOriginAppPath,
-  toSameOriginPath,
   withBasePath,
 } from "./url-utils.js";
 import { appendSearchParamsToUrl, type UrlQuery, urlQueryToSearchParams } from "../utils/query.js";

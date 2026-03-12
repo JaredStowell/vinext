@@ -422,8 +422,8 @@ describe("toBrowserNavigationHref", () => {
     };
 
     try {
-      const normalized = toSameOriginPath("http://localhost:3000/base/about");
-      expect(normalized).toBe("/base/about");
+      const normalized = toSameOriginAppPath("http://localhost:3000/base/about", "/base");
+      expect(normalized).toBe("/about");
       expect(
         toBrowserNavigationHref(normalized!, "http://localhost:3000/base/posts/1", "/base"),
       ).toBe("/base/about");
