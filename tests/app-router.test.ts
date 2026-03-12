@@ -4016,12 +4016,11 @@ describe("generateRscEntry ISR code generation", () => {
     // This lets subsequent RSC requests hit cache immediately without waiting
     // for an HTML request to come in and populate a complete entry.
     expect(code).toContain('html: ""');
-    // The RSC write must use __isrKeyRsc / __rscDataForCache variable names
-    expect(code).toContain("__rscDataForCache");
+    // The RSC MISS path now resolves the captured payload before returning so
+    // final render-time response headers can be applied to the live response.
+    expect(code).toContain("const __rscDataForResponse = await __isrRscDataPromise");
     expect(code).toContain("__isrKeyRsc");
-    // The live MISS response must still stream __rscForResponse while the cache
-    // write awaits __isrRscDataPromise in the background.
-    expect(code).not.toContain("new Response(__rscDataForCache");
+    expect(code).toContain("new Response(__rscDataForResponse");
   });
 
   it("generated code treats html:'' partial entries as MISS for HTML requests", () => {
