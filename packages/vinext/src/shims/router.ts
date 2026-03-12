@@ -8,7 +8,7 @@
 import { useState, useEffect, useCallback, useMemo, createElement, type ReactElement } from "react";
 import { RouterContext } from "./internal/router-context.js";
 import { isValidModulePath } from "../client/validate-module-path.js";
-import { toBrowserNavigationHref, toSameOriginPath } from "./url-utils.js";
+import { toBrowserNavigationHref, toSameOriginAppPath } from "./url-utils.js";
 import { stripBasePath } from "../utils/base-path.js";
 import {
   addQueryParam,
@@ -493,7 +493,7 @@ export function useRouter(): NextRouter {
 
       // External URLs — delegate to browser (unless same-origin)
       if (isExternalUrl(resolved)) {
-        const localPath = toSameOriginPath(resolved);
+        const localPath = toSameOriginAppPath(resolved, __basePath);
         if (localPath == null) {
           window.location.assign(resolved);
           return true;
@@ -541,7 +541,7 @@ export function useRouter(): NextRouter {
 
       // External URLs — delegate to browser (unless same-origin)
       if (isExternalUrl(resolved)) {
-        const localPath = toSameOriginPath(resolved);
+        const localPath = toSameOriginAppPath(resolved, __basePath);
         if (localPath == null) {
           window.location.replace(resolved);
           return true;
@@ -681,7 +681,7 @@ const Router = {
 
     // External URLs (unless same-origin)
     if (isExternalUrl(resolved)) {
-      const localPath = toSameOriginPath(resolved);
+      const localPath = toSameOriginAppPath(resolved, __basePath);
       if (localPath == null) {
         window.location.assign(resolved);
         return true;
@@ -722,7 +722,7 @@ const Router = {
 
     // External URLs (unless same-origin)
     if (isExternalUrl(resolved)) {
-      const localPath = toSameOriginPath(resolved);
+      const localPath = toSameOriginAppPath(resolved, __basePath);
       if (localPath == null) {
         window.location.replace(resolved);
         return true;

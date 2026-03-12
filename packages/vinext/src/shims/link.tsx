@@ -25,6 +25,7 @@ import { isDangerousScheme } from "./url-safety.js";
 import {
   resolveRelativeHref,
   toBrowserNavigationHref,
+  toSameOriginAppPath,
   toSameOriginPath,
   withBasePath,
 } from "./url-utils.js";
@@ -140,7 +141,7 @@ function prefetchUrl(href: string): void {
   // Normalize same-origin absolute URLs to local paths before prefetching
   let prefetchHref = href;
   if (href.startsWith("http://") || href.startsWith("https://") || href.startsWith("//")) {
-    const localPath = toSameOriginPath(href);
+    const localPath = toSameOriginAppPath(href, __basePath);
     if (localPath == null) return; // truly external — don't prefetch
     prefetchHref = localPath;
   }
@@ -338,7 +339,7 @@ const Link = forwardRef<HTMLAnchorElement, LinkProps>(function Link(
       localizedHref.startsWith("https://") ||
       localizedHref.startsWith("//")
     ) {
-      const localPath = toSameOriginPath(localizedHref);
+      const localPath = toSameOriginAppPath(localizedHref, __basePath);
       if (localPath == null) return; // truly external
       hrefToPrefetch = localPath;
     }
@@ -378,7 +379,7 @@ const Link = forwardRef<HTMLAnchorElement, LinkProps>(function Link(
       resolvedHref.startsWith("https://") ||
       resolvedHref.startsWith("//")
     ) {
-      const localPath = toSameOriginPath(resolvedHref);
+      const localPath = toSameOriginAppPath(resolvedHref, __basePath);
       if (localPath == null) return; // truly external
       navigateHref = localPath;
     }

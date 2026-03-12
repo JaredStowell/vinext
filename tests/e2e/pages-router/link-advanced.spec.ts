@@ -100,6 +100,7 @@ test.describe("Link advanced props (Pages Router)", () => {
     await page.waitForFunction(() => (window as any).__VINEXT_ROOT__);
 
     await page.evaluate(() => {
+      (window as any).__NAV_MARKER__ = true;
       sessionStorage.removeItem("pages-relative-onNavigate-url");
     });
 
@@ -107,6 +108,8 @@ test.describe("Link advanced props (Pages Router)", () => {
 
     await expect(page.locator('[data-testid="current-path"]')).toHaveText("/link-test?page=2");
     expect(page.url()).toBe(`${BASE}/link-test?page=2`);
+    const marker = await page.evaluate(() => (window as any).__NAV_MARKER__);
+    expect(marker).toBe(true);
 
     const reportedUrl = await page.evaluate(() =>
       sessionStorage.getItem("pages-relative-onNavigate-url"),

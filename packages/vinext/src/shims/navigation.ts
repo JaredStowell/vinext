@@ -11,7 +11,7 @@
 // would throw at link time for missing bindings. With `import * as React`, the
 // bindings are just `undefined` on the namespace object and we can guard at runtime.
 import * as React from "react";
-import { toBrowserNavigationHref, toSameOriginPath } from "./url-utils.js";
+import { toBrowserNavigationHref, toSameOriginAppPath } from "./url-utils.js";
 import { stripBasePath } from "../utils/base-path.js";
 import { ReadonlyURLSearchParams } from "./readonly-url-search-params.js";
 
@@ -486,7 +486,7 @@ async function navigateImpl(
   // Normalize same-origin absolute URLs to local paths for SPA navigation
   let normalizedHref = href;
   if (isExternalUrl(href)) {
-    const localPath = toSameOriginPath(href);
+    const localPath = toSameOriginAppPath(href, __basePath);
     if (localPath == null) {
       // Truly external: use full page navigation
       if (mode === "replace") {

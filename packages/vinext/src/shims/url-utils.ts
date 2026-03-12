@@ -4,7 +4,7 @@
  * Used by link.tsx, navigation.ts, and router.ts to normalize
  * same-origin absolute URLs to local paths for client-side navigation.
  */
-import { hasBasePath, stripBasePath } from "../utils/base-path.js";
+import { stripBasePath } from "../utils/base-path.js";
 
 /**
  * If `url` is an absolute same-origin URL, return the local path
@@ -25,6 +25,24 @@ export function toSameOriginPath(url: string): string | null {
 }
 
 /**
+ * If `url` is an absolute same-origin URL, return the app-relative path
+ * (basePath stripped from the pathname, if configured). Returns null for
+ * truly external URLs or on the server.
+ */
+export function toSameOriginAppPath(url: string, basePath: string): string | null {
+  const localPath = toSameOriginPath(url);
+  if (localPath == null || !basePath) return localPath;
+
+  try {
+    const parsed = new URL(localPath, "http://vinext.local");
+    const pathname = stripBasePath(parsed.pathname, basePath);
+    return pathname + parsed.search + parsed.hash;
+  } catch {
+    return localPath;
+  }
+}
+
+/**
  * Prepend basePath to a local path for browser URLs / fetches.
  */
 export function withBasePath(path: string, basePath: string): string {
@@ -35,16 +53,6 @@ export function withBasePath(path: string, basePath: string): string {
     path.startsWith("https://") ||
     path.startsWith("//")
   ) {
-    return path;
-  }
-
-  const queryIndex = path.indexOf("?");
-  const hashIndex = path.indexOf("#");
-  const pathEnd =
-    queryIndex === -1 ? hashIndex : hashIndex === -1 ? queryIndex : Math.min(queryIndex, hashIndex);
-  const pathname = pathEnd === -1 ? path : path.slice(0, pathEnd);
-
-  if (hasBasePath(pathname, basePath)) {
     return path;
   }
 

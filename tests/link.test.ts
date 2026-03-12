@@ -304,6 +304,7 @@ describe("Link locale handling", () => {
 import {
   resolveRelativeHref,
   toBrowserNavigationHref,
+  toSameOriginAppPath,
   toSameOriginPath,
 } from "../packages/vinext/src/shims/url-utils.js";
 
@@ -434,6 +435,12 @@ describe("toBrowserNavigationHref", () => {
       }
     }
   });
+
+  it("still prefixes app-relative paths that happen to start with the basePath segment", () => {
+    expect(
+      toBrowserNavigationHref("/docs/getting-started", "http://localhost:3000/docs", "/docs"),
+    ).toBe("/docs/docs/getting-started");
+  });
 });
 
 // ─── Link with same-origin absolute URL (SSR rendering) ─────────────────
@@ -473,6 +480,11 @@ describe("Link with absolute URL", () => {
         React.createElement(BasePathLink, { href: "/about" }, "About"),
       );
       expect(absoluteHtml).toContain('href="/base/about"');
+
+      const sharedPrefixHtml = ReactDOMServer.renderToString(
+        React.createElement(BasePathLink, { href: "/base/getting-started" }, "Shared Prefix"),
+      );
+      expect(sharedPrefixHtml).toContain('href="/base/base/getting-started"');
     } finally {
       if (previousBasePath === undefined) {
         delete process.env.__NEXT_ROUTER_BASEPATH;
@@ -480,6 +492,28 @@ describe("Link with absolute URL", () => {
         process.env.__NEXT_ROUTER_BASEPATH = previousBasePath;
       }
       vi.resetModules();
+    }
+  });
+});
+
+describe("toSameOriginAppPath", () => {
+  it("strips the configured basePath from same-origin absolute URLs", () => {
+    const originalWindow = globalThis.window;
+    (globalThis as any).window = {
+      location: {
+        origin: "http://localhost:3000",
+        href: "http://localhost:3000/base/posts/1",
+      },
+    };
+
+    try {
+      expect(toSameOriginAppPath("http://localhost:3000/base/about", "/base")).toBe("/about");
+    } finally {
+      if (originalWindow === undefined) {
+        delete (globalThis as any).window;
+      } else {
+        (globalThis as any).window = originalWindow;
+      }
     }
   });
 });
