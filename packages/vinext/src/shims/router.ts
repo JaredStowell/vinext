@@ -8,7 +8,7 @@
 import { useState, useEffect, useCallback, useMemo, createElement, type ReactElement } from "react";
 import { RouterContext } from "./internal/router-context.js";
 import { isValidModulePath } from "../client/validate-module-path.js";
-import { toSameOriginPath } from "./url-utils.js";
+import { toBrowserNavigationHref, toSameOriginPath } from "./url-utils.js";
 import { stripBasePath } from "../utils/base-path.js";
 import {
   addQueryParam,
@@ -19,12 +19,6 @@ import {
 
 /** basePath from next.config.js, injected by the plugin at build time */
 const __basePath: string = process.env.__NEXT_ROUTER_BASEPATH ?? "";
-
-/** Prepend basePath to a path for browser URLs / fetches */
-function withBasePath(p: string): string {
-  if (!__basePath) return p;
-  return __basePath + p;
-}
 
 type BeforePopStateCallback = (state: {
   url: string;
@@ -507,14 +501,12 @@ export function useRouter(): NextRouter {
         resolved = localPath;
       }
 
+      const full = toBrowserNavigationHref(resolved, window.location.href, __basePath);
+
       // Hash-only change — no page fetch needed
       if (isHashOnlyChange(resolved)) {
         const hash = resolved.includes("#") ? resolved.slice(resolved.indexOf("#")) : "";
-        window.history.pushState(
-          {},
-          "",
-          resolved.startsWith("#") ? resolved : withBasePath(resolved),
-        );
+        window.history.pushState({}, "", resolved.startsWith("#") ? resolved : full);
         scrollToHash(hash);
         setState(getPathnameAndQuery());
         window.dispatchEvent(new CustomEvent("vinext:navigate"));
@@ -522,7 +514,6 @@ export function useRouter(): NextRouter {
       }
 
       saveScrollPosition();
-      const full = withBasePath(resolved);
       routerEvents.emit("routeChangeStart", resolved);
       window.history.pushState({}, "", full);
       if (!options?.shallow) {
@@ -558,21 +549,18 @@ export function useRouter(): NextRouter {
         resolved = localPath;
       }
 
+      const full = toBrowserNavigationHref(resolved, window.location.href, __basePath);
+
       // Hash-only change — no page fetch needed
       if (isHashOnlyChange(resolved)) {
         const hash = resolved.includes("#") ? resolved.slice(resolved.indexOf("#")) : "";
-        window.history.replaceState(
-          {},
-          "",
-          resolved.startsWith("#") ? resolved : withBasePath(resolved),
-        );
+        window.history.replaceState({}, "", resolved.startsWith("#") ? resolved : full);
         scrollToHash(hash);
         setState(getPathnameAndQuery());
         window.dispatchEvent(new CustomEvent("vinext:navigate"));
         return true;
       }
 
-      const full = withBasePath(resolved);
       routerEvents.emit("routeChangeStart", resolved);
       window.history.replaceState({}, "", full);
       if (!options?.shallow) {
@@ -701,21 +689,18 @@ const Router = {
       resolved = localPath;
     }
 
+    const full = toBrowserNavigationHref(resolved, window.location.href, __basePath);
+
     // Hash-only change
     if (isHashOnlyChange(resolved)) {
       const hash = resolved.includes("#") ? resolved.slice(resolved.indexOf("#")) : "";
-      window.history.pushState(
-        {},
-        "",
-        resolved.startsWith("#") ? resolved : withBasePath(resolved),
-      );
+      window.history.pushState({}, "", resolved.startsWith("#") ? resolved : full);
       scrollToHash(hash);
       window.dispatchEvent(new CustomEvent("vinext:navigate"));
       return true;
     }
 
     saveScrollPosition();
-    const full = withBasePath(resolved);
     routerEvents.emit("routeChangeStart", resolved);
     window.history.pushState({}, "", full);
     if (!options?.shallow) {
@@ -745,20 +730,17 @@ const Router = {
       resolved = localPath;
     }
 
+    const full = toBrowserNavigationHref(resolved, window.location.href, __basePath);
+
     // Hash-only change
     if (isHashOnlyChange(resolved)) {
       const hash = resolved.includes("#") ? resolved.slice(resolved.indexOf("#")) : "";
-      window.history.replaceState(
-        {},
-        "",
-        resolved.startsWith("#") ? resolved : withBasePath(resolved),
-      );
+      window.history.replaceState({}, "", resolved.startsWith("#") ? resolved : full);
       scrollToHash(hash);
       window.dispatchEvent(new CustomEvent("vinext:navigate"));
       return true;
     }
 
-    const full = withBasePath(resolved);
     routerEvents.emit("routeChangeStart", resolved);
     window.history.replaceState({}, "", full);
     if (!options?.shallow) {
