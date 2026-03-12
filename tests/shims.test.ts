@@ -1081,6 +1081,122 @@ describe("next/headers phase-aware cookies", () => {
   });
 });
 
+describe("next/headers render response headers", () => {
+  it("serializes append, set, delete, and multi-value Set-Cookie deterministically", async () => {
+    const {
+      setHeadersContext,
+      appendRenderResponseHeader,
+      peekRenderResponseHeaders,
+      setRenderResponseHeader,
+      deleteRenderResponseHeader,
+      consumeRenderResponseHeaders,
+    } = await import("../packages/vinext/src/shims/headers.js");
+
+    setHeadersContext({
+      headers: new Headers(),
+      cookies: new Map(),
+    });
+
+    try {
+      appendRenderResponseHeader("x-test", "one");
+      appendRenderResponseHeader("x-test", "two");
+      setRenderResponseHeader("x-test", "final");
+      appendRenderResponseHeader("Set-Cookie", "a=1; Path=/");
+      appendRenderResponseHeader("Set-Cookie", "b=2; Path=/");
+      deleteRenderResponseHeader("x-missing");
+      appendRenderResponseHeader("x-delete-me", "temp");
+      deleteRenderResponseHeader("x-delete-me");
+
+      expect(peekRenderResponseHeaders()).toEqual({
+        "set-cookie": ["a=1; Path=/", "b=2; Path=/"],
+        "x-test": "final",
+      });
+      expect(peekRenderResponseHeaders()).toEqual({
+        "set-cookie": ["a=1; Path=/", "b=2; Path=/"],
+        "x-test": "final",
+      });
+      expect(consumeRenderResponseHeaders()).toEqual({
+        "set-cookie": ["a=1; Path=/", "b=2; Path=/"],
+        "x-test": "final",
+      });
+      expect(consumeRenderResponseHeaders()).toBeUndefined();
+    } finally {
+      setHeadersContext(null);
+    }
+  });
+
+  it("keeps cookie helper queues separate from generic header serialization until consumed", async () => {
+    const {
+      setHeadersContext,
+      setHeadersAccessPhase,
+      cookies,
+      draftMode,
+      getAndClearPendingCookies,
+      getDraftModeCookieHeader,
+      consumeRenderResponseHeaders,
+    } = await import("../packages/vinext/src/shims/headers.js");
+
+    setHeadersContext({
+      headers: new Headers(),
+      cookies: new Map(),
+    });
+
+    const previousPhase = setHeadersAccessPhase("action");
+    try {
+      const cookieStore = await cookies();
+      cookieStore.set("session", "abc");
+      const draft = await draftMode();
+      draft.enable();
+
+      expect(getAndClearPendingCookies()).toEqual([expect.stringContaining("session=abc")]);
+      expect(getDraftModeCookieHeader()).toContain("__prerender_bypass=");
+      expect(consumeRenderResponseHeaders()).toBeUndefined();
+    } finally {
+      setHeadersAccessPhase(previousPhase);
+      setHeadersContext(null);
+    }
+  });
+
+  it("serializes public cookie and draft-mode mutations into render response headers", async () => {
+    const {
+      setHeadersContext,
+      setHeadersAccessPhase,
+      cookies,
+      draftMode,
+      consumeRenderResponseHeaders,
+    } = await import("../packages/vinext/src/shims/headers.js");
+
+    setHeadersContext({
+      headers: new Headers(),
+      cookies: new Map(),
+    });
+
+    const previousPhase = setHeadersAccessPhase("action");
+    try {
+      const cookieStore = await cookies();
+      cookieStore.set("session", "abc", { path: "/", httpOnly: true });
+      cookieStore.delete("session");
+
+      const draft = await draftMode();
+      draft.enable();
+      draft.disable();
+
+      expect(consumeRenderResponseHeaders()).toEqual({
+        "set-cookie": [
+          "session=abc; Path=/; HttpOnly",
+          "session=; Path=/; Max-Age=0",
+          expect.stringContaining("__prerender_bypass="),
+          expect.stringContaining("__prerender_bypass=; Path=/; HttpOnly; SameSite=Lax"),
+        ],
+      });
+      expect(consumeRenderResponseHeaders()).toBeUndefined();
+    } finally {
+      setHeadersAccessPhase(previousPhase);
+      setHeadersContext(null);
+    }
+  });
+});
+
 describe("next/server shim", () => {
   it("NextRequest wraps a standard Request with nextUrl and cookies", async () => {
     const { NextRequest } = await import("../packages/vinext/src/shims/server.js");
