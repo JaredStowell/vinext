@@ -2214,7 +2214,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
               _runWithCacheState(() =>
                 _runWithPrivateCache(() =>
                   runWithFetchCache(async () => {
-                    setNavigationContext({ pathname: cleanPathname, searchParams: url.searchParams, params });
+                    setNavigationContext({ pathname: navigationPathname, searchParams: url.searchParams, params });
                     const __revalElement = await buildPageElement(route, params, undefined, url.searchParams);
                     const __revalOnError = createRscOnErrorHandler(request, cleanPathname, route.pattern);
                     const __revalRscStream = renderToReadableStream(__revalElement, { onError: __revalOnError });
