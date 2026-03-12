@@ -1086,10 +1086,15 @@ describe("next/headers render response headers", () => {
     const {
       setHeadersContext,
       appendRenderResponseHeader,
+      restoreRenderResponseHeaders,
       peekRenderResponseHeaders,
       setRenderResponseHeader,
       deleteRenderResponseHeader,
       consumeRenderResponseHeaders,
+      markDynamicUsage,
+      peekDynamicUsage,
+      restoreDynamicUsage,
+      consumeDynamicUsage,
     } = await import("../packages/vinext/src/shims/headers.js");
 
     setHeadersContext({
@@ -1120,6 +1125,25 @@ describe("next/headers render response headers", () => {
         "x-test": "final",
       });
       expect(consumeRenderResponseHeaders()).toBeUndefined();
+
+      restoreRenderResponseHeaders({
+        "set-cookie": ["restored=1; Path=/"],
+        "x-restored": "yes",
+      });
+      expect(peekRenderResponseHeaders()).toEqual({
+        "set-cookie": ["restored=1; Path=/"],
+        "x-restored": "yes",
+      });
+
+      expect(peekDynamicUsage()).toBe(false);
+      markDynamicUsage();
+      expect(peekDynamicUsage()).toBe(true);
+      restoreDynamicUsage(false);
+      expect(peekDynamicUsage()).toBe(false);
+      restoreDynamicUsage(true);
+      expect(peekDynamicUsage()).toBe(true);
+      expect(consumeDynamicUsage()).toBe(true);
+      expect(peekDynamicUsage()).toBe(false);
     } finally {
       setHeadersContext(null);
     }

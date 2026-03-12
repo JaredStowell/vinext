@@ -44,6 +44,7 @@ export function middleware(request: NextRequest) {
 
   if (
     pathname === "/nextjs-compat/cached-render-headers" ||
+    pathname === "/nextjs-compat/cached-render-headers-stream" ||
     pathname === "/nextjs-compat/cached-render-headers-rsc-first" ||
     pathname === "/nextjs-compat/render-headers-metadata-redirect" ||
     pathname.startsWith("/nextjs-compat/render-headers-layout-notfound/")
