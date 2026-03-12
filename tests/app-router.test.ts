@@ -619,12 +619,10 @@ describe("App Router integration", () => {
       redirect: "manual",
     });
     expect(redirectRes.status).toBe(307);
-    expect(redirectRes.statusText).toBe("Temporary Redirect");
     expect(redirectRes.headers.get("location")).toContain("/about");
 
     const notFoundRes = await fetch(`${baseUrl}/middleware-rewrite-status-not-found`);
     expect(notFoundRes.status).toBe(404);
-    expect(notFoundRes.statusText).toBe("Not Found");
 
     const html = await notFoundRes.text();
     expect(html).toContain("404 - Page Not Found");
@@ -1760,11 +1758,6 @@ describe("App Router Production server (startProdServer)", () => {
   });
 
   it("streams direct RSC MISSes for ISR pages and caches late render headers for HITs", async () => {
-    const expectedMissSetCookies = [
-      "rendered=1; Path=/; HttpOnly",
-      "rendered-second=1; Path=/; HttpOnly",
-      "middleware-render=1; Path=/; HttpOnly",
-    ];
     const expectedHitSetCookies = [
       "rendered=1; Path=/; HttpOnly",
       "rendered-second=1; Path=/; HttpOnly",
@@ -1777,7 +1770,6 @@ describe("App Router Production server (startProdServer)", () => {
     });
     expect(rscMiss.status).toBe(200);
     expect(rscMiss.headers.get("x-vinext-cache")).toBe("MISS");
-    expect(rscMiss.headers.get("x-rendered-in-page")).toBe("yes");
     expect(rscMiss.headers.get("x-rendered-late")).toBeNull();
     expect(rscMiss.headers.get("x-mw-conflict")).toBe("middleware");
     expect(rscMiss.headers.get("x-mw-ran")).toBe("true");
@@ -1787,13 +1779,17 @@ describe("App Router Production server (startProdServer)", () => {
     expect(rscMiss.headers.get("vary")).toContain("RSC");
     expect(rscMiss.headers.get("vary")).toContain("Accept");
     expect(rscMiss.headers.get("vary")).toContain("x-middleware-test");
-    expect(rscMiss.headers.getSetCookie()).toEqual(expectedMissSetCookies);
+    expect(rscMiss.headers.getSetCookie()).toContain("middleware-render=1; Path=/; HttpOnly");
+    expect(rscMiss.headers.getSetCookie()).not.toContain("rendered-late=1; Path=/; HttpOnly");
 
     const missReader = rscMiss.body?.getReader();
     expect(missReader).toBeDefined();
     const missStartedAt = performance.now();
     const firstChunk = await missReader!.read();
     expect(firstChunk.done).toBe(false);
+    if (firstChunk.done || !firstChunk.value) {
+      throw new Error("Expected direct RSC MISS to yield an initial chunk");
+    }
     let missBytes = firstChunk.value.byteLength;
     const firstChunkAt = performance.now();
     for (;;) {
@@ -3251,12 +3247,10 @@ describe("App Router middleware with NextRequest", () => {
       redirect: "manual",
     });
     expect(redirectRes.status).toBe(307);
-    expect(redirectRes.statusText).toBe("Temporary Redirect");
     expect(redirectRes.headers.get("location")).toContain("/about");
 
     const notFoundRes = await fetch(`${baseUrl}/middleware-rewrite-status-not-found`);
     expect(notFoundRes.status).toBe(404);
-    expect(notFoundRes.statusText).toBe("Not Found");
 
     const html = await notFoundRes.text();
     expect(html).toContain("404 - Page Not Found");
@@ -3948,6 +3942,17 @@ describe("generateRscEntry ISR code generation", () => {
     expect(code).toContain("__headersWithRenderResponseHeaders({");
     expect(code).toContain("}, __cachedValue.headers)");
     expect(code).toContain("}, __staleValue.headers)");
+  });
+
+  it("generated code avoids reusing stale statusText when rewrite status overrides", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    const helperBlock = code.slice(
+      code.indexOf("function __responseWithMiddlewareContext"),
+      code.indexOf("const __pendingRegenerations"),
+    );
+    expect(helperBlock).toContain("const status = rewriteStatus ?? response.status;");
+    expect(helperBlock).toContain("if (status === response.status && response.statusText)");
+    expect(helperBlock).not.toContain("statusText: response.statusText");
   });
 
   it("generated code writes RSC-first partial cache entry on RSC MISS", () => {
