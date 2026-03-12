@@ -4112,6 +4112,7 @@ describe("generateRscEntry ISR code generation", () => {
     expect(code).toContain("function __mergeResponseHeaders(");
     expect(code).toContain("function __headersWithRenderResponseHeaders(");
     expect(code).toContain("sourceHeaders.getSetCookie()");
+    expect(code).not.toContain("if (__setCookies.length === 0)");
     expect(code).toContain('lowerKey === "vary"');
     expect(code).toContain('lowerKey === "www-authenticate"');
     expect(code).toContain('lowerKey === "proxy-authenticate"');
