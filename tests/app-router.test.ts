@@ -1753,12 +1753,14 @@ describe("App Router Production server (startProdServer)", () => {
       "rendered=1; Path=/; HttpOnly",
       "rendered-second=1; Path=/; HttpOnly",
       "middleware-render=1; Path=/; HttpOnly",
+      "middleware-render-second=1; Path=/; HttpOnly",
     ];
     const expectedCachedSetCookies = [
       "rendered=1; Path=/; HttpOnly",
       "rendered-second=1; Path=/; HttpOnly",
       "rendered-late=1; Path=/; HttpOnly",
       "middleware-render=1; Path=/; HttpOnly",
+      "middleware-render-second=1; Path=/; HttpOnly",
     ];
 
     const res1 = await fetch(`${baseUrl}/nextjs-compat/cached-render-headers`);
@@ -1844,50 +1846,146 @@ describe("App Router Production server (startProdServer)", () => {
     }
   });
 
-  it("preserves final render-time headers on direct RSC MISSes and replays them on HITs", async () => {
+  it("streams direct RSC ISR MISSes without waiting for the full RSC payload", async () => {
+    const expectedMiddlewareSetCookies = [
+      "middleware-render=1; Path=/; HttpOnly",
+      "middleware-render-second=1; Path=/; HttpOnly",
+    ];
+    const { startProdServer } = await import("../packages/vinext/src/server/prod-server.js");
+    const streamServer = await startProdServer({ port: 0, outDir, noCompression: true });
+    try {
+      const addr = streamServer.address();
+      const port = typeof addr === "object" && addr ? addr.port : 4210;
+      const streamBaseUrl = `http://localhost:${port}`;
+
+      const start = performance.now();
+      const res = await fetch(
+        `${streamBaseUrl}/nextjs-compat/cached-render-headers-rsc-first.rsc`,
+        {
+          headers: { Accept: "text/x-component" },
+        },
+      );
+      const fetchResolvedAt = performance.now();
+      const reader = res.body?.getReader();
+      expect(reader).toBeDefined();
+
+      const first = await reader!.read();
+      const firstAt = performance.now();
+      expect(first.done).toBe(false);
+      for (;;) {
+        const chunk = await reader!.read();
+        if (chunk.done) break;
+      }
+      const doneAt = performance.now();
+
+      expect(res.headers.get("x-vinext-cache")).toBe("MISS");
+      expect(res.headers.get("x-rendered-late")).toBeNull();
+      expect(res.headers.getSetCookie()).toEqual(
+        expect.arrayContaining(expectedMiddlewareSetCookies),
+      );
+      expect(res.headers.getSetCookie()).not.toContain("rendered-late=1; Path=/; HttpOnly");
+      expect(fetchResolvedAt - start).toBeLessThan(doneAt - start);
+      expect(doneAt - firstAt).toBeGreaterThan(15);
+    } finally {
+      await new Promise<void>((resolve) => streamServer.close(() => resolve()));
+    }
+  });
+
+  it("returns snapshot render-time headers on direct RSC MISSes and replays final headers on HITs", async () => {
     const expectedVary = "x-render-one, x-render-two, RSC, Accept, x-middleware-test";
     const expectedWwwAuthenticate =
       'Basic realm="render", Bearer realm="render", Digest realm="middleware"';
+    const expectedMiddlewareSetCookies = [
+      "middleware-render=1; Path=/; HttpOnly",
+      "middleware-render-second=1; Path=/; HttpOnly",
+    ];
     const expectedHitSetCookies = [
       "rendered=1; Path=/; HttpOnly",
       "rendered-second=1; Path=/; HttpOnly",
       "rendered-late=1; Path=/; HttpOnly",
       "middleware-render=1; Path=/; HttpOnly",
+      "middleware-render-second=1; Path=/; HttpOnly",
     ];
+    const { startProdServer } = await import("../packages/vinext/src/server/prod-server.js");
+    const rscServer = await startProdServer({ port: 0, outDir, noCompression: true });
 
-    const rscMiss = await fetch(`${baseUrl}/nextjs-compat/cached-render-headers-rsc-first.rsc`, {
-      headers: { Accept: "text/x-component" },
-    });
-    expect(rscMiss.status).toBe(200);
-    expect(rscMiss.headers.get("x-vinext-cache")).toBe("MISS");
-    expect(rscMiss.headers.get("x-rendered-late")).toBe("yes");
-    expect(rscMiss.headers.get("x-mw-conflict")).toBe("middleware");
-    expect(rscMiss.headers.get("x-mw-ran")).toBe("true");
-    expect(rscMiss.headers.get("x-mw-pathname")).toBe(
-      "/nextjs-compat/cached-render-headers-rsc-first",
-    );
-    expect(rscMiss.headers.get("vary")).toBe(expectedVary);
-    expect(rscMiss.headers.get("www-authenticate")).toBe(expectedWwwAuthenticate);
-    expect(rscMiss.headers.getSetCookie()).toEqual(expectedHitSetCookies);
-    expect((await rscMiss.text()).length).toBeGreaterThan(0);
+    const fetchUntilLocalCacheState = async (
+      localBaseUrl: string,
+      pathname: string,
+      expectedState: string,
+      init?: RequestInit,
+      timeoutMs: number = 3000,
+    ): Promise<Response> => {
+      const deadline = Date.now() + timeoutMs;
+      let lastState: string | null = null;
 
-    const rscHit = await fetchUntilCacheState(
-      "/nextjs-compat/cached-render-headers-rsc-first.rsc",
-      "HIT",
-      { headers: { Accept: "text/x-component" } },
-    );
-    expect(rscHit.status).toBe(200);
-    expect(rscHit.headers.get("x-vinext-cache")).toBe("HIT");
-    expect(rscHit.headers.get("x-rendered-in-page")).toBe("yes");
-    expect(rscHit.headers.get("x-rendered-late")).toBe("yes");
-    expect(rscHit.headers.get("x-mw-conflict")).toBe("middleware");
-    expect(rscHit.headers.get("x-mw-ran")).toBe("true");
-    expect(rscHit.headers.get("x-mw-pathname")).toBe(
-      "/nextjs-compat/cached-render-headers-rsc-first",
-    );
-    expect(rscHit.headers.get("vary")).toBe(expectedVary);
-    expect(rscHit.headers.get("www-authenticate")).toBe(expectedWwwAuthenticate);
-    expect(rscHit.headers.getSetCookie()).toEqual(expectedHitSetCookies);
+      while (Date.now() < deadline) {
+        const res = await fetch(`${localBaseUrl}${pathname}`, init);
+        const cacheState = res.headers.get("x-vinext-cache");
+        if (cacheState === expectedState) {
+          return res;
+        }
+
+        lastState = cacheState;
+        await res.arrayBuffer();
+        await sleep(25);
+      }
+
+      throw new Error(
+        `Timed out waiting for ${pathname} to reach cache state ${expectedState}; last state was ${lastState}`,
+      );
+    };
+
+    try {
+      const addr = rscServer.address();
+      const port = typeof addr === "object" && addr ? addr.port : 4210;
+      const rscBaseUrl = `http://localhost:${port}`;
+
+      const rscMiss = await fetch(
+        `${rscBaseUrl}/nextjs-compat/cached-render-headers-rsc-parity.rsc`,
+        {
+          headers: { Accept: "text/x-component" },
+        },
+      );
+      expect(rscMiss.status).toBe(200);
+      expect(rscMiss.headers.get("x-vinext-cache")).toBe("MISS");
+      expect(rscMiss.headers.get("x-rendered-late")).toBeNull();
+      expect(rscMiss.headers.get("x-mw-conflict")).toBe("middleware");
+      expect(rscMiss.headers.get("x-mw-ran")).toBe("true");
+      expect(rscMiss.headers.get("x-mw-pathname")).toBe(
+        "/nextjs-compat/cached-render-headers-rsc-parity",
+      );
+      expect(rscMiss.headers.get("vary")).toContain("RSC");
+      expect(rscMiss.headers.get("vary")).toContain("Accept");
+      expect(rscMiss.headers.get("vary")).toContain("x-middleware-test");
+      expect(rscMiss.headers.get("www-authenticate")).toContain('Digest realm="middleware"');
+      expect(rscMiss.headers.getSetCookie()).toEqual(
+        expect.arrayContaining(expectedMiddlewareSetCookies),
+      );
+      expect(rscMiss.headers.getSetCookie()).not.toContain("rendered-late=1; Path=/; HttpOnly");
+      expect((await rscMiss.text()).length).toBeGreaterThan(0);
+
+      const rscHit = await fetchUntilLocalCacheState(
+        rscBaseUrl,
+        "/nextjs-compat/cached-render-headers-rsc-parity.rsc",
+        "HIT",
+        { headers: { Accept: "text/x-component" } },
+      );
+      expect(rscHit.status).toBe(200);
+      expect(rscHit.headers.get("x-vinext-cache")).toBe("HIT");
+      expect(rscHit.headers.get("x-rendered-in-page")).toBe("yes");
+      expect(rscHit.headers.get("x-rendered-late")).toBe("yes");
+      expect(rscHit.headers.get("x-mw-conflict")).toBe("middleware");
+      expect(rscHit.headers.get("x-mw-ran")).toBe("true");
+      expect(rscHit.headers.get("x-mw-pathname")).toBe(
+        "/nextjs-compat/cached-render-headers-rsc-parity",
+      );
+      expect(rscHit.headers.get("vary")).toBe(expectedVary);
+      expect(rscHit.headers.get("www-authenticate")).toBe(expectedWwwAuthenticate);
+      expect(rscHit.headers.getSetCookie()).toEqual(expectedHitSetCookies);
+    } finally {
+      await new Promise<void>((resolve) => rscServer.close(() => resolve()));
+    }
   });
 
   it("revalidateTag invalidates App Router ISR page entries by fetch tag", async () => {
@@ -3998,8 +4096,13 @@ describe("generateRscEntry ISR code generation", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
     expect(code).toContain("peekRenderResponseHeaders");
     expect(code).toContain("consumeRenderResponseHeaders");
-    expect(code).toContain("const __responseRenderHeaders = consumeRenderResponseHeaders()");
+    expect(code).toContain("const __responseRenderHeaders = peekRenderResponseHeaders()");
+    expect(code).toContain(
+      "const __renderHeadersForCache = consumeRenderResponseHeaders() ?? __responseRenderHeaders;",
+    );
     expect(code).toContain("const renderResponseHeaders = __isrRscDataPromise");
+    expect(code).toContain("? peekRenderResponseHeaders()");
+    expect(code).toContain(": consumeRenderResponseHeaders();");
     expect(code).toContain("headers: __renderHeadersForCache");
     expect(code).toContain("headers: __revalResult.headers");
   });
@@ -4007,8 +4110,8 @@ describe("generateRscEntry ISR code generation", () => {
   it("generated code replays cached render-time response headers on HIT and STALE", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
     expect(code).toContain("function __mergeResponseHeaders(");
-    expect(code).toContain("function __applyRenderResponseHeaders(");
     expect(code).toContain("function __headersWithRenderResponseHeaders(");
+    expect(code).toContain("sourceHeaders.getSetCookie()");
     expect(code).toContain('lowerKey === "vary"');
     expect(code).toContain('lowerKey === "www-authenticate"');
     expect(code).toContain('lowerKey === "proxy-authenticate"');
@@ -4034,11 +4137,12 @@ describe("generateRscEntry ISR code generation", () => {
     // This lets subsequent RSC requests hit cache immediately without waiting
     // for an HTML request to come in and populate a complete entry.
     expect(code).toContain('html: ""');
-    // The RSC MISS path now resolves the captured payload before returning so
-    // final render-time response headers can be applied to the live response.
-    expect(code).toContain("const __rscDataForResponse = await __isrRscDataPromise");
+    // The live RSC MISS response should keep streaming while the cache write
+    // runs in the background and consumes the final render-time headers.
+    expect(code).toContain("const __responseRenderHeaders = peekRenderResponseHeaders()");
+    expect(code).toContain("const __rscWritePromise = (async () => {");
     expect(code).toContain("__isrKeyRsc");
-    expect(code).toContain("new Response(__rscDataForResponse");
+    expect(code).toContain("new Response(__rscForResponse");
   });
 
   it("generated code treats html:'' partial entries as MISS for HTML requests", () => {

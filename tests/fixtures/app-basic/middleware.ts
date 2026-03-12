@@ -47,6 +47,11 @@ export function middleware(request: NextRequest) {
     pathname === "/nextjs-compat/cached-render-headers" ||
     pathname === "/nextjs-compat/cached-render-headers-stream" ||
     pathname === "/nextjs-compat/cached-render-headers-rsc-first" ||
+    pathname === "/nextjs-compat/cached-render-headers-rsc-parity"
+  ) {
+    applyRenderHeaderParityHeaders(response);
+    response.cookies.set("middleware-render-second", "1", { path: "/", httpOnly: true });
+  } else if (
     pathname === "/nextjs-compat/render-headers-metadata-redirect" ||
     pathname.startsWith("/nextjs-compat/render-headers-layout-notfound/")
   ) {
@@ -181,7 +186,13 @@ export function middleware(request: NextRequest) {
   }
   if (
     pathname === "/nextjs-compat/cached-render-headers" ||
+    pathname === "/nextjs-compat/cached-render-headers-stream" ||
     pathname === "/nextjs-compat/cached-render-headers-rsc-first" ||
+    pathname === "/nextjs-compat/cached-render-headers-rsc-parity"
+  ) {
+    applyRenderHeaderParityHeaders(r);
+    r.cookies.set("middleware-render-second", "1", { path: "/", httpOnly: true });
+  } else if (
     pathname === "/nextjs-compat/render-headers-metadata-redirect" ||
     pathname.startsWith("/nextjs-compat/render-headers-layout-notfound/")
   ) {
@@ -194,7 +205,9 @@ export const config = {
   matcher: [
     "/about",
     "/nextjs-compat/cached-render-headers",
+    "/nextjs-compat/cached-render-headers-stream",
     "/nextjs-compat/cached-render-headers-rsc-first",
+    "/nextjs-compat/cached-render-headers-rsc-parity",
     "/nextjs-compat/render-headers-metadata-redirect",
     "/nextjs-compat/render-headers-layout-notfound/:path*",
     "/middleware-redirect",
