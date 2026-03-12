@@ -30,6 +30,7 @@ export function middleware(request: NextRequest) {
   const applyRenderHeaderParityHeaders = (target: NextResponse) => {
     target.headers.set("x-mw-conflict", "middleware");
     target.headers.set("Vary", "x-middleware-test");
+    target.headers.append("WWW-Authenticate", 'Digest realm="middleware"');
     target.cookies.set("middleware-render", "1", { path: "/", httpOnly: true });
     return target;
   };

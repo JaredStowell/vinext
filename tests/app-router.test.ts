@@ -1732,6 +1732,23 @@ describe("App Router Production server (startProdServer)", () => {
   });
 
   it("replays render-time response headers across HTML MISS/HIT/STALE and regeneration", async () => {
+    // Next.js preserves duplicate response headers instead of overwriting them.
+    // Ref: packages/next/src/server/send-response.ts
+    // Ref: test/e2e/app-dir/no-duplicate-headers-middleware/no-duplicate-headers-middleware.test.ts
+    const expectedVaryPrefix = [
+      "x-render-one",
+      "x-render-two",
+      "RSC",
+      "Accept",
+      "x-middleware-test",
+    ];
+    const expectedWwwAuthenticate =
+      'Basic realm="render", Bearer realm="render", Digest realm="middleware"';
+    const expectMergedVary = (value: string | null) => {
+      expect(value).not.toBeNull();
+      const tokens = value!.split(",").map((part) => part.trim());
+      expect(tokens.slice(0, expectedVaryPrefix.length)).toEqual(expectedVaryPrefix);
+    };
     const expectedMissSetCookies = [
       "rendered=1; Path=/; HttpOnly",
       "rendered-second=1; Path=/; HttpOnly",
@@ -1752,9 +1769,8 @@ describe("App Router Production server (startProdServer)", () => {
     expect(res1.headers.get("x-mw-conflict")).toBe("middleware");
     expect(res1.headers.get("x-mw-ran")).toBe("true");
     expect(res1.headers.get("x-mw-pathname")).toBe("/nextjs-compat/cached-render-headers");
-    expect(res1.headers.get("vary")).toContain("RSC");
-    expect(res1.headers.get("vary")).toContain("Accept");
-    expect(res1.headers.get("vary")).toContain("x-middleware-test");
+    expectMergedVary(res1.headers.get("vary"));
+    expect(res1.headers.get("www-authenticate")).toBe(expectedWwwAuthenticate);
     expect(res1.headers.getSetCookie()).toEqual(expectedMissSetCookies);
 
     const res2 = await fetchUntilCacheState("/nextjs-compat/cached-render-headers", "HIT");
@@ -1765,9 +1781,8 @@ describe("App Router Production server (startProdServer)", () => {
     expect(res2.headers.get("x-mw-conflict")).toBe("middleware");
     expect(res2.headers.get("x-mw-ran")).toBe("true");
     expect(res2.headers.get("x-mw-pathname")).toBe("/nextjs-compat/cached-render-headers");
-    expect(res2.headers.get("vary")).toContain("RSC");
-    expect(res2.headers.get("vary")).toContain("Accept");
-    expect(res2.headers.get("vary")).toContain("x-middleware-test");
+    expectMergedVary(res2.headers.get("vary"));
+    expect(res2.headers.get("www-authenticate")).toBe(expectedWwwAuthenticate);
     expect(res2.headers.getSetCookie()).toEqual(expectedCachedSetCookies);
 
     await sleep(1100);
@@ -1780,9 +1795,8 @@ describe("App Router Production server (startProdServer)", () => {
     expect(staleRes.headers.get("x-mw-conflict")).toBe("middleware");
     expect(staleRes.headers.get("x-mw-ran")).toBe("true");
     expect(staleRes.headers.get("x-mw-pathname")).toBe("/nextjs-compat/cached-render-headers");
-    expect(staleRes.headers.get("vary")).toContain("RSC");
-    expect(staleRes.headers.get("vary")).toContain("Accept");
-    expect(staleRes.headers.get("vary")).toContain("x-middleware-test");
+    expectMergedVary(staleRes.headers.get("vary"));
+    expect(staleRes.headers.get("www-authenticate")).toBe(expectedWwwAuthenticate);
     expect(staleRes.headers.getSetCookie()).toEqual(expectedCachedSetCookies);
 
     const regenHitRes = await fetchUntilCacheState("/nextjs-compat/cached-render-headers", "HIT");
@@ -1793,9 +1807,8 @@ describe("App Router Production server (startProdServer)", () => {
     expect(regenHitRes.headers.get("x-mw-conflict")).toBe("middleware");
     expect(regenHitRes.headers.get("x-mw-ran")).toBe("true");
     expect(regenHitRes.headers.get("x-mw-pathname")).toBe("/nextjs-compat/cached-render-headers");
-    expect(regenHitRes.headers.get("vary")).toContain("RSC");
-    expect(regenHitRes.headers.get("vary")).toContain("Accept");
-    expect(regenHitRes.headers.get("vary")).toContain("x-middleware-test");
+    expectMergedVary(regenHitRes.headers.get("vary"));
+    expect(regenHitRes.headers.get("www-authenticate")).toBe(expectedWwwAuthenticate);
     expect(regenHitRes.headers.getSetCookie()).toEqual(expectedCachedSetCookies);
   });
 
@@ -1832,6 +1845,9 @@ describe("App Router Production server (startProdServer)", () => {
   });
 
   it("preserves final render-time headers on direct RSC MISSes and replays them on HITs", async () => {
+    const expectedVary = "x-render-one, x-render-two, RSC, Accept, x-middleware-test";
+    const expectedWwwAuthenticate =
+      'Basic realm="render", Bearer realm="render", Digest realm="middleware"';
     const expectedHitSetCookies = [
       "rendered=1; Path=/; HttpOnly",
       "rendered-second=1; Path=/; HttpOnly",
@@ -1850,9 +1866,8 @@ describe("App Router Production server (startProdServer)", () => {
     expect(rscMiss.headers.get("x-mw-pathname")).toBe(
       "/nextjs-compat/cached-render-headers-rsc-first",
     );
-    expect(rscMiss.headers.get("vary")).toContain("RSC");
-    expect(rscMiss.headers.get("vary")).toContain("Accept");
-    expect(rscMiss.headers.get("vary")).toContain("x-middleware-test");
+    expect(rscMiss.headers.get("vary")).toBe(expectedVary);
+    expect(rscMiss.headers.get("www-authenticate")).toBe(expectedWwwAuthenticate);
     expect(rscMiss.headers.getSetCookie()).toEqual(expectedHitSetCookies);
     expect((await rscMiss.text()).length).toBeGreaterThan(0);
 
@@ -1870,9 +1885,8 @@ describe("App Router Production server (startProdServer)", () => {
     expect(rscHit.headers.get("x-mw-pathname")).toBe(
       "/nextjs-compat/cached-render-headers-rsc-first",
     );
-    expect(rscHit.headers.get("vary")).toContain("RSC");
-    expect(rscHit.headers.get("vary")).toContain("Accept");
-    expect(rscHit.headers.get("vary")).toContain("x-middleware-test");
+    expect(rscHit.headers.get("vary")).toBe(expectedVary);
+    expect(rscHit.headers.get("www-authenticate")).toBe(expectedWwwAuthenticate);
     expect(rscHit.headers.getSetCookie()).toEqual(expectedHitSetCookies);
   });
 
@@ -3992,8 +4006,12 @@ describe("generateRscEntry ISR code generation", () => {
 
   it("generated code replays cached render-time response headers on HIT and STALE", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    expect(code).toContain("function __mergeResponseHeaders(");
     expect(code).toContain("function __applyRenderResponseHeaders(");
     expect(code).toContain("function __headersWithRenderResponseHeaders(");
+    expect(code).toContain('lowerKey === "vary"');
+    expect(code).toContain('lowerKey === "www-authenticate"');
+    expect(code).toContain('lowerKey === "proxy-authenticate"');
     expect(code).toContain("__headersWithRenderResponseHeaders({");
     expect(code).toContain("}, __cachedValue.headers)");
     expect(code).toContain("}, __staleValue.headers)");

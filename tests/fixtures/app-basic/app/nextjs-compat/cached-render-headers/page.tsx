@@ -13,6 +13,10 @@ async function LateRenderHeaders() {
 export default function CachedRenderHeadersPage() {
   appendRenderResponseHeader("x-rendered-in-page", "yes");
   appendRenderResponseHeader("x-mw-conflict", "page");
+  appendRenderResponseHeader("Vary", "x-render-one");
+  appendRenderResponseHeader("Vary", "x-render-two");
+  appendRenderResponseHeader("WWW-Authenticate", 'Basic realm="render"');
+  appendRenderResponseHeader("WWW-Authenticate", 'Bearer realm="render"');
   appendRenderResponseHeader("Set-Cookie", "rendered=1; Path=/; HttpOnly");
   appendRenderResponseHeader("Set-Cookie", "rendered-second=1; Path=/; HttpOnly");
 

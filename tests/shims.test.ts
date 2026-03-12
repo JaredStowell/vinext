@@ -1082,7 +1082,7 @@ describe("next/headers phase-aware cookies", () => {
 });
 
 describe("next/headers render response headers", () => {
-  it("serializes append, set, delete, and multi-value Set-Cookie deterministically", async () => {
+  it("preserves repeated non-cookie headers and multi-value Set-Cookie deterministically", async () => {
     const {
       setHeadersContext,
       appendRenderResponseHeader,
@@ -1106,6 +1106,8 @@ describe("next/headers render response headers", () => {
       appendRenderResponseHeader("x-test", "one");
       appendRenderResponseHeader("x-test", "two");
       setRenderResponseHeader("x-test", "final");
+      appendRenderResponseHeader("Vary", "x-render-one");
+      appendRenderResponseHeader("Vary", "x-render-two");
       appendRenderResponseHeader("Set-Cookie", "a=1; Path=/");
       appendRenderResponseHeader("Set-Cookie", "b=2; Path=/");
       deleteRenderResponseHeader("x-missing");
@@ -1114,24 +1116,29 @@ describe("next/headers render response headers", () => {
 
       expect(peekRenderResponseHeaders()).toEqual({
         "set-cookie": ["a=1; Path=/", "b=2; Path=/"],
+        Vary: ["x-render-one", "x-render-two"],
         "x-test": "final",
       });
       expect(peekRenderResponseHeaders()).toEqual({
         "set-cookie": ["a=1; Path=/", "b=2; Path=/"],
+        Vary: ["x-render-one", "x-render-two"],
         "x-test": "final",
       });
       expect(consumeRenderResponseHeaders()).toEqual({
         "set-cookie": ["a=1; Path=/", "b=2; Path=/"],
+        Vary: ["x-render-one", "x-render-two"],
         "x-test": "final",
       });
       expect(consumeRenderResponseHeaders()).toBeUndefined();
 
       restoreRenderResponseHeaders({
         "set-cookie": ["restored=1; Path=/"],
+        vary: ["x-restored-one", "x-restored-two"],
         "x-restored": "yes",
       });
       expect(peekRenderResponseHeaders()).toEqual({
         "set-cookie": ["restored=1; Path=/"],
+        vary: ["x-restored-one", "x-restored-two"],
         "x-restored": "yes",
       });
 
