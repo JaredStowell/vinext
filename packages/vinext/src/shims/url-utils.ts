@@ -4,7 +4,7 @@
  * Used by link.tsx, navigation.ts, and router.ts to normalize
  * same-origin absolute URLs to local paths for client-side navigation.
  */
-import { stripBasePath } from "../utils/base-path.js";
+import { hasBasePath, stripBasePath } from "../utils/base-path.js";
 
 /**
  * If `url` is an absolute same-origin URL, return the local path
@@ -35,6 +35,9 @@ export function toSameOriginAppPath(url: string, basePath: string): string | nul
 
   try {
     const parsed = new URL(localPath, "http://vinext.local");
+    if (!hasBasePath(parsed.pathname, basePath)) {
+      return null;
+    }
     const pathname = stripBasePath(parsed.pathname, basePath);
     return pathname + parsed.search + parsed.hash;
   } catch {
@@ -79,7 +82,12 @@ export function resolveRelativeHref(href: string, currentUrl?: string, basePath 
 
   try {
     const resolved = new URL(href, base);
-    const pathname = basePath ? stripBasePath(resolved.pathname, basePath) : resolved.pathname;
+    const pathname =
+      basePath && resolved.pathname === basePath
+        ? ""
+        : basePath
+          ? stripBasePath(resolved.pathname, basePath)
+          : resolved.pathname;
     return pathname + resolved.search + resolved.hash;
   } catch {
     return href;
@@ -91,5 +99,19 @@ export function resolveRelativeHref(href: string, currentUrl?: string, basePath 
  * for history entries, fetches, and onNavigate callbacks.
  */
 export function toBrowserNavigationHref(href: string, currentUrl?: string, basePath = ""): string {
-  return withBasePath(resolveRelativeHref(href, currentUrl, basePath), basePath);
+  const resolved = resolveRelativeHref(href, currentUrl, basePath);
+
+  if (!basePath) {
+    return withBasePath(resolved, basePath);
+  }
+
+  if (resolved === "") {
+    return basePath;
+  }
+
+  if (resolved.startsWith("?") || resolved.startsWith("#")) {
+    return basePath + resolved;
+  }
+
+  return withBasePath(resolved, basePath);
 }

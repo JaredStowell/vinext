@@ -412,6 +412,15 @@ describe("toBrowserNavigationHref", () => {
     ).toBe("/base/fr/posts/1?page=2");
   });
 
+  it("does not add a trailing slash for query/hash-only navigations from the bare basePath root", () => {
+    expect(toBrowserNavigationHref("?page=2", "http://localhost:3000/base", "/base")).toBe(
+      "/base?page=2",
+    );
+    expect(toBrowserNavigationHref("#comments", "http://localhost:3000/base", "/base")).toBe(
+      "/base#comments",
+    );
+  });
+
   it("does not double-prefix same-origin absolute URLs that already include the basePath", () => {
     const originalWindow = globalThis.window;
     (globalThis as any).window = {
@@ -508,6 +517,26 @@ describe("toSameOriginAppPath", () => {
 
     try {
       expect(toSameOriginAppPath("http://localhost:3000/base/about", "/base")).toBe("/about");
+    } finally {
+      if (originalWindow === undefined) {
+        delete (globalThis as any).window;
+      } else {
+        (globalThis as any).window = originalWindow;
+      }
+    }
+  });
+
+  it("treats same-origin URLs outside the configured basePath as external", () => {
+    const originalWindow = globalThis.window;
+    (globalThis as any).window = {
+      location: {
+        origin: "http://localhost:3000",
+        href: "http://localhost:3000/base/posts/1",
+      },
+    };
+
+    try {
+      expect(toSameOriginAppPath("http://localhost:3000/other", "/base")).toBeNull();
     } finally {
       if (originalWindow === undefined) {
         delete (globalThis as any).window;
