@@ -49,6 +49,10 @@ export function middleware(request: NextRequest) {
     return NextResponse.rewrite(new URL("/", request.url));
   }
 
+  if (pathname === "/nextjs-compat/hooks-middleware-rewrite") {
+    return NextResponse.rewrite(new URL("/nextjs-compat/hooks-search", request.url));
+  }
+
   // Rewrite with custom status code
   // Ref: opennextjs-cloudflare middleware.ts — NextResponse.rewrite with status
   if (pathname === "/middleware-rewrite-status") {
@@ -149,6 +153,7 @@ export const config = {
     "/about",
     "/middleware-redirect",
     "/middleware-rewrite",
+    "/nextjs-compat/hooks-middleware-rewrite",
     "/middleware-rewrite-status",
     "/middleware-blocked",
     "/middleware-throw",
