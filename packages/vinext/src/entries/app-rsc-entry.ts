@@ -1523,6 +1523,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
   let cleanPathname = pathname.replace(/\\.rsc$/, "");
   const navigationPathname = cleanPathname;
   const __cachePathname = navigationPathname;
+  let pageSearchParams = url.searchParams;
 
   // Middleware response headers and custom rewrite status are stored in
   // _mwCtx (per-request container) so handler() can merge them into
@@ -1580,6 +1581,9 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
           if (rewriteUrl) {
             const rewriteParsed = new URL(rewriteUrl, request.url);
             cleanPathname = rewriteParsed.pathname;
+            if (rewriteParsed.search) {
+              pageSearchParams = rewriteParsed.searchParams;
+            }
             // Capture custom status code from rewrite (e.g. NextResponse.rewrite(url, { status: 403 }))
             if (mwResponse.status !== 200) {
               _mwCtx.status = mwResponse.status;
@@ -1835,7 +1839,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
           searchParams: url.searchParams,
           params: actionParams,
         });
-        element = buildPageElement(actionRoute, actionParams, undefined, url.searchParams);
+        element = buildPageElement(actionRoute, actionParams, undefined, pageSearchParams);
       } else {
         element = createElement("div", null, "Page not found");
       }
@@ -2216,7 +2220,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
                 _runWithPrivateCache(() =>
                   runWithFetchCache(async () => {
                     setNavigationContext({ pathname: navigationPathname, searchParams: url.searchParams, params });
-                    const __revalElement = await buildPageElement(route, params, undefined, url.searchParams);
+                    const __revalElement = await buildPageElement(route, params, undefined, pageSearchParams);
                     const __revalOnError = createRscOnErrorHandler(request, cleanPathname, route.pattern);
                     const __revalRscStream = renderToReadableStream(__revalElement, { onError: __revalOnError });
                     // Tee RSC stream: one for SSR, one to capture rscData
@@ -2360,7 +2364,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
           interceptSlot: intercept.slotName,
           interceptPage: intercept.page,
           interceptParams: intercept.matchedParams,
-        }, url.searchParams);
+        }, pageSearchParams);
         const interceptOnError = createRscOnErrorHandler(
           request,
           cleanPathname,
@@ -2386,7 +2390,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
 
   let element;
   try {
-    element = await buildPageElement(route, params, interceptOpts, url.searchParams);
+    element = await buildPageElement(route, params, interceptOpts, pageSearchParams);
   } catch (buildErr) {
     // Check for redirect/notFound/forbidden/unauthorized thrown during metadata resolution or async components
     if (buildErr && typeof buildErr === "object" && "digest" in buildErr) {

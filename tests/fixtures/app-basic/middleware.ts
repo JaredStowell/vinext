@@ -49,6 +49,14 @@ export function middleware(request: NextRequest) {
     return NextResponse.rewrite(new URL("/", request.url));
   }
 
+  // Rewrite with query params — the rewrite URL's query string should be
+  // visible to the target page via searchParams props.
+  if (pathname === "/middleware-rewrite-query") {
+    return NextResponse.rewrite(
+      new URL("/search-query?searchParams=from-rewrite&extra=injected", request.url),
+    );
+  }
+
   if (pathname === "/nextjs-compat/hooks-middleware-rewrite") {
     return NextResponse.rewrite(new URL("/nextjs-compat/hooks-search", request.url));
   }
@@ -153,6 +161,7 @@ export const config = {
     "/about",
     "/middleware-redirect",
     "/middleware-rewrite",
+    "/middleware-rewrite-query",
     "/nextjs-compat/hooks-middleware-rewrite",
     "/middleware-rewrite-status",
     "/middleware-blocked",
