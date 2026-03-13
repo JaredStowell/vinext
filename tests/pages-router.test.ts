@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { createServer, build, type ViteDevServer } from "vite";
+import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import path from "node:path";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
@@ -34,6 +35,91 @@ export default function middleware() {
 }
 `,
   );
+}
+
+async function buildPagesFixture(rootDir: string, outDir: string): Promise<void> {
+  await build({
+    root: rootDir,
+    configFile: false,
+    plugins: [vinext()],
+    logLevel: "silent",
+    build: {
+      outDir: path.join(outDir, "server"),
+      ssr: "virtual:vinext-server-entry",
+      rollupOptions: { output: { entryFileNames: "entry.js" } },
+    },
+  });
+
+  await build({
+    root: rootDir,
+    configFile: false,
+    plugins: [vinext()],
+    logLevel: "silent",
+    build: {
+      outDir: path.join(outDir, "client"),
+      manifest: true,
+      ssrManifest: true,
+      rollupOptions: { input: "virtual:vinext-client-entry" },
+    },
+  });
+}
+
+interface CapturedStreamResponse {
+  body: Buffer;
+  headers: IncomingHttpHeaders;
+  statusCode: number;
+  firstChunkMs: number;
+  endMs: number;
+  snapshot: Buffer;
+}
+
+async function captureStreamedResponse(
+  url: string,
+  options: { headers?: Record<string, string>; snapshotDelayMs?: number } = {},
+): Promise<CapturedStreamResponse> {
+  const { headers = {}, snapshotDelayMs = 120 } = options;
+
+  return await new Promise<CapturedStreamResponse>((resolve, reject) => {
+    const startedAt = Date.now();
+    const req = httpRequest(url, { headers }, (res) => {
+      const chunks: Buffer[] = [];
+      let firstChunkMs = -1;
+      let snapshot = Buffer.alloc(0);
+      let snapshotCaptured = false;
+      let snapshotTimer: ReturnType<typeof setTimeout> | undefined;
+
+      const captureSnapshot = () => {
+        if (snapshotCaptured) return;
+        snapshotCaptured = true;
+        snapshot = Buffer.concat(chunks);
+      };
+
+      res.on("data", (chunk: Buffer) => {
+        chunks.push(chunk);
+        if (firstChunkMs !== -1) return;
+        firstChunkMs = Date.now() - startedAt;
+        snapshotTimer = setTimeout(captureSnapshot, snapshotDelayMs);
+      });
+
+      res.on("end", () => {
+        if (snapshotTimer) clearTimeout(snapshotTimer);
+        captureSnapshot();
+        resolve({
+          body: Buffer.concat(chunks),
+          headers: res.headers,
+          statusCode: res.statusCode ?? 0,
+          firstChunkMs,
+          endMs: Date.now() - startedAt,
+          snapshot,
+        });
+      });
+
+      res.on("error", reject);
+    });
+
+    req.on("error", reject);
+    req.end();
+  });
 }
 
 describe("Pages Router integration", () => {
@@ -2240,6 +2326,80 @@ describe("Production server middleware (Pages Router)", () => {
     // Ensure encoded variants like /%2Evite/ are also blocked
     const res = await fetch(`${prodUrl}/%2Evite/ssr-manifest.json`);
     expect(res.status).toBe(404);
+  });
+});
+
+describe("Production Pages Router SSR streaming", () => {
+  let outDir: string;
+  let prodServer: import("node:http").Server;
+  let prodUrl: string;
+
+  beforeAll(async () => {
+    outDir = await fsp.mkdtemp(path.join(os.tmpdir(), "vinext-pages-streaming-prod-"));
+    await fsp.symlink(
+      path.resolve(import.meta.dirname, "../node_modules"),
+      path.join(outDir, "node_modules"),
+      "junction",
+    );
+    await buildPagesFixture(FIXTURE_DIR, outDir);
+
+    const { startProdServer } = await import("../packages/vinext/src/server/prod-server.js");
+    prodServer = await startProdServer({
+      port: 0,
+      host: "127.0.0.1",
+      outDir,
+      noCompression: true,
+    });
+    const addr = prodServer.address() as { port: number };
+    prodUrl = `http://127.0.0.1:${addr.port}`;
+  }, 60000);
+
+  afterAll(async () => {
+    if (prodServer) {
+      await new Promise<void>((resolve) => prodServer.close(() => resolve()));
+    }
+    if (outDir) {
+      fs.rmSync(outDir, { recursive: true, force: true });
+    }
+  });
+
+  it("streams Pages SSR responses incrementally in production", async () => {
+    // Parity target: Next.js streams Node responses via sendResponse() ->
+    // pipeToNodeResponse() instead of buffering the full HTML first.
+    // https://raw.githubusercontent.com/vercel/next.js/canary/packages/next/src/server/send-response.ts
+    // https://raw.githubusercontent.com/vercel/next.js/canary/packages/next/src/server/pipe-readable.ts
+    const response = await captureStreamedResponse(`${prodUrl}/streaming-ssr`);
+    const partialHtml = response.snapshot.toString("utf8");
+    const finalHtml = response.body.toString("utf8");
+    const contentType = response.headers["content-type"];
+    const middlewareHeader = response.headers["x-custom-middleware"];
+    const transferEncoding = response.headers["transfer-encoding"];
+
+    expect(response.statusCode).toBe(200);
+    expect(String(contentType)).toContain("text/html");
+    expect(String(middlewareHeader)).toBe("active");
+    expect(response.headers["content-length"]).toBeUndefined();
+    expect(String(transferEncoding)).toBe("chunked");
+    expect(response.endMs).toBeGreaterThanOrEqual(400);
+    expect(response.firstChunkMs).toBeGreaterThanOrEqual(0);
+    expect(response.firstChunkMs).toBeLessThan(response.endMs - 250);
+
+    expect(partialHtml).toContain("Streaming SSR Test");
+    expect(partialHtml).toContain("Loading delayed chunk...");
+    expect(partialHtml).not.toContain("Delayed stream content loaded");
+
+    expect(finalHtml).toContain("Streaming SSR Test");
+    expect(finalHtml).toContain("Delayed stream content loaded");
+    expect(finalHtml).toContain("__NEXT_DATA__");
+  });
+
+  it("preserves streamed SSR bodies when middleware rewrites are merged into the response", async () => {
+    const res = await fetch(`${prodUrl}/streaming-ssr`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-custom-middleware")).toBe("active");
+
+    const html = await res.text();
+    expect(html).toContain("Delayed stream content loaded");
   });
 });
 

@@ -3170,6 +3170,31 @@ describe("Set-Cookie header preservation in prod-server", () => {
     expect(merged["x-custom"]).toBe("from-response");
   });
 
+  it("mergeWebResponse preserves the original body stream while applying header overrides", async () => {
+    const { mergeWebResponse } = await import("../packages/vinext/src/server/prod-server.js");
+
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("hello"));
+        controller.close();
+      },
+    });
+    const response = new Response(stream, {
+      status: 200,
+      headers: {
+        "content-type": "text/plain",
+        "x-custom": "from-response",
+      },
+    });
+
+    const merged = mergeWebResponse({ "x-custom": "from-middleware" }, response, 201);
+
+    expect(merged.status).toBe(201);
+    expect(merged.headers.get("x-custom")).toBe("from-response");
+    expect(merged.headers.get("content-type")).toBe("text/plain");
+    expect(await merged.text()).toBe("hello");
+  });
+
   it("sendCompressed passes array-valued Set-Cookie to writeHead", async () => {
     const { sendCompressed } = await import("../packages/vinext/src/server/prod-server.js");
 

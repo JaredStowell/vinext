@@ -156,6 +156,39 @@ function mergeResponseHeaders(
   return merged;
 }
 
+function toWebHeaders(headersRecord: Record<string, string | string[]>): Headers {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(headersRecord)) {
+    if (Array.isArray(value)) {
+      for (const item of value) headers.append(key, item);
+    } else {
+      headers.set(key, value);
+    }
+  }
+  return headers;
+}
+
+/**
+ * Merge middleware/config headers and an optional status override into a new
+ * Web Response while preserving the original body stream.
+ */
+function mergeWebResponse(
+  middlewareHeaders: Record<string, string | string[]>,
+  response: Response,
+  statusOverride?: number,
+): Response {
+  if (!Object.keys(middlewareHeaders).length && statusOverride === undefined) {
+    return response;
+  }
+
+  const status = statusOverride ?? response.status;
+  return new Response(response.body, {
+    status,
+    statusText: status === response.status ? response.statusText : undefined,
+    headers: toWebHeaders(mergeResponseHeaders(middlewareHeaders, response)),
+  });
+}
+
 /**
  * Send a compressed response if the content type is compressible and the
  * client supports compression. Otherwise send uncompressed.
@@ -1140,23 +1173,11 @@ async function startPagesRouterServer(options: PagesRouterServerOptions) {
         return;
       }
 
-      // Merge middleware + config headers into the response
-      const responseBody = Buffer.from(await response.arrayBuffer());
-      const ct = response.headers.get("content-type") ?? "text/html";
-      const responseHeaders = mergeResponseHeaders(middlewareHeaders, response);
-      const finalStatus = middlewareRewriteStatus ?? response.status;
-      const finalStatusText =
-        finalStatus === response.status ? response.statusText || undefined : undefined;
-
-      sendCompressed(
+      await sendWebResponse(
+        mergeWebResponse(middlewareHeaders, response, middlewareRewriteStatus),
         req,
         res,
-        responseBody,
-        ct,
-        finalStatus,
-        responseHeaders,
         compress,
-        finalStatusText,
       );
     } catch (e) {
       console.error("[vinext] Server error:", e);
@@ -1190,4 +1211,5 @@ export {
   trustProxy,
   nodeToWebRequest,
   mergeResponseHeaders,
+  mergeWebResponse,
 };
