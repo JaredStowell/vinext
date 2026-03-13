@@ -242,6 +242,11 @@ export async function handleImageOptimization(
     return new Response(source.body, { status: 200, headers });
   }
 
+  // Preserve a clean copy for fallback before transform handlers can lock or
+  // consume the original stream. Cloudflare Images can fail after touching the
+  // body, and reusing a disturbed stream would otherwise throw.
+  const fallbackSource = handlers.transformImage ? source.clone() : source;
+
   // Transform if handler provided, otherwise serve original
   if (handlers.transformImage) {
     try {
@@ -269,9 +274,9 @@ export async function handleImageOptimization(
   }
 
   // Fallback: serve original image with cache headers
-  const headers = new Headers(source.headers);
+  const headers = new Headers(fallbackSource.headers);
   headers.set("Cache-Control", IMAGE_CACHE_CONTROL);
   headers.set("Vary", "Accept");
   setImageSecurityHeaders(headers, imageConfig);
-  return new Response(source.body, { status: 200, headers });
+  return new Response(fallbackSource.body, { status: 200, headers });
 }

@@ -1985,7 +1985,8 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                   res.end("Only relative URLs allowed");
                   return;
                 }
-                res.writeHead(302, { Location: imgUrl });
+                const encodedLocation = resolvedImg.pathname + resolvedImg.search;
+                res.writeHead(302, { Location: encodedLocation });
                 res.end();
                 return;
               }

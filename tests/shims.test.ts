@@ -8089,6 +8089,52 @@ describe("handleImageOptimization", () => {
     expect(await response.text()).toBe("original");
   });
 
+  it("falls back to original when transform consumes the stream before failing", async () => {
+    const { handleImageOptimization } =
+      await import("../packages/vinext/src/server/image-optimization.js");
+    const request = new Request("http://localhost/_vinext/image?url=%2Fimg.jpg&w=800");
+    const handlers = {
+      fetchAsset: async () =>
+        new Response("original", {
+          status: 200,
+          headers: { "Content-Type": "image/png" },
+        }),
+      transformImage: async (body: ReadableStream) => {
+        await new Response(body).arrayBuffer();
+        throw new Error("transform failed after consuming stream");
+      },
+    };
+    const response = await handleImageOptimization(request, handlers);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("original");
+  });
+
+  it("preserves source headers when consumed transform falls back", async () => {
+    const { handleImageOptimization } =
+      await import("../packages/vinext/src/server/image-optimization.js");
+    const request = new Request("http://localhost/_vinext/image?url=%2Fimg.jpg&w=800");
+    const handlers = {
+      fetchAsset: async () =>
+        new Response("original", {
+          status: 200,
+          headers: {
+            "Content-Type": "image/png",
+            ETag: '"source-etag"',
+          },
+        }),
+      transformImage: async (body: ReadableStream) => {
+        await new Response(body).arrayBuffer();
+        throw new Error("transform failed after consuming stream");
+      },
+    };
+    const response = await handleImageOptimization(request, handlers);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toBe("image/png");
+    expect(response.headers.get("ETag")).toBe('"source-etag"');
+    expect(response.headers.get("Cache-Control")).toBe("public, max-age=31536000, immutable");
+    expect(response.headers.get("Vary")).toBe("Accept");
+  });
+
   it("returns 400 for backslash open redirect (/\\evil.com)", async () => {
     const { handleImageOptimization } =
       await import("../packages/vinext/src/server/image-optimization.js");
