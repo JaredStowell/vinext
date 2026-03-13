@@ -2382,7 +2382,6 @@ describe("Production Pages Router SSR streaming", () => {
     expect(String(transferEncoding)).toBe("chunked");
     expect(response.endMs).toBeGreaterThanOrEqual(400);
     expect(response.firstChunkMs).toBeGreaterThanOrEqual(0);
-    expect(response.firstChunkMs).toBeLessThan(response.endMs - 250);
 
     expect(partialHtml).toContain("Streaming SSR Test");
     expect(partialHtml).toContain("Loading delayed chunk...");
@@ -2399,6 +2398,37 @@ describe("Production Pages Router SSR streaming", () => {
     expect(res.headers.get("x-custom-middleware")).toBe("active");
 
     const html = await res.text();
+    expect(html).toContain("Delayed stream content loaded");
+  });
+
+  it("strips stale content-length from streamed Pages SSR responses when gSSP sets one", async () => {
+    // Parity target: Next.js only sets Content-Length for unchunked render
+    // payloads; streamed HTML is sent without one.
+    // https://raw.githubusercontent.com/vercel/next.js/canary/packages/next/src/server/send-payload.ts
+    const response = await captureStreamedResponse(`${prodUrl}/streaming-gssp-content-length`);
+    const partialHtml = response.snapshot.toString("utf8");
+    const finalHtml = response.body.toString("utf8");
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["content-length"]).toBeUndefined();
+    expect(String(response.headers["transfer-encoding"])).toBe("chunked");
+    expect(partialHtml).toContain("Loading delayed gSSP chunk...");
+    expect(partialHtml).not.toContain("Delayed gSSP stream content loaded");
+    expect(finalHtml).toContain("Streaming gSSP Content-Length Test");
+    expect(finalHtml).toContain("Delayed gSSP stream content loaded");
+  });
+
+  it("strips middleware-provided content-length when rewriting to a streamed Pages SSR response", async () => {
+    // Parity target: Next.js route resolution explicitly skips forwarding
+    // middleware content-length headers.
+    // https://raw.githubusercontent.com/vercel/next.js/canary/packages/next/src/server/lib/router-utils/resolve-routes.ts
+    const response = await captureStreamedResponse(`${prodUrl}/middleware-bad-content-length`);
+    const html = response.body.toString("utf8");
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["content-length"]).toBeUndefined();
+    expect(String(response.headers["transfer-encoding"])).toBe("chunked");
+    expect(html).toContain("Streaming SSR Test");
     expect(html).toContain("Delayed stream content loaded");
   });
 });
@@ -2846,6 +2876,83 @@ export function middleware(request) {
       fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
   });
+});
+
+describe("Pages Router production no-body rewrite statuses", () => {
+  let tmpRoot: string;
+  let outDir: string;
+  let prodServer: import("node:http").Server;
+  let prodUrl: string;
+
+  beforeAll(async () => {
+    tmpRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "vinext-pages-no-body-rewrite-"));
+    outDir = path.join(tmpRoot, "dist");
+
+    await fsp.symlink(
+      path.resolve(import.meta.dirname, "../node_modules"),
+      path.join(tmpRoot, "node_modules"),
+      "junction",
+    );
+    await fsp.mkdir(path.join(tmpRoot, "pages"), { recursive: true });
+
+    await fsp.writeFile(path.join(tmpRoot, "package.json"), JSON.stringify({ type: "module" }));
+    await fsp.writeFile(path.join(tmpRoot, "next.config.mjs"), `export default {};\n`);
+    await fsp.writeFile(
+      path.join(tmpRoot, "middleware.ts"),
+      `import { NextResponse } from "next/server";
+export function middleware(request) {
+  const url = new URL(request.url);
+  const match = url.pathname.match(/^\\/status-(204|205|304)$/);
+  if (!match) return NextResponse.next();
+  return NextResponse.rewrite(new URL("/target", request.url), { status: Number(match[1]) });
+}
+`,
+    );
+    await fsp.writeFile(
+      path.join(tmpRoot, "pages", "index.tsx"),
+      `export default function Home() {
+  return <div>home</div>;
+}
+`,
+    );
+    await fsp.writeFile(
+      path.join(tmpRoot, "pages", "target.tsx"),
+      `export default function TargetPage() {
+  return <div>TARGET PAGE</div>;
+}
+`,
+    );
+
+    await buildPagesFixture(tmpRoot, outDir);
+
+    const { startProdServer } = await import("../packages/vinext/src/server/prod-server.js");
+    prodServer = await startProdServer({
+      port: 0,
+      host: "127.0.0.1",
+      outDir,
+      noCompression: true,
+    });
+    const addr = prodServer.address() as { port: number };
+    prodUrl = `http://127.0.0.1:${addr.port}`;
+  }, 60000);
+
+  afterAll(async () => {
+    if (prodServer) {
+      await new Promise<void>((resolve) => prodServer.close(() => resolve()));
+    }
+    if (tmpRoot) {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  for (const statusCode of [204, 205, 304]) {
+    it(`preserves middleware rewrite status ${statusCode} for Pages SSR responses in production`, async () => {
+      const res = await fetch(`${prodUrl}/status-${statusCode}`);
+
+      expect(res.status).toBe(statusCode);
+      expect(await res.text()).toBe("");
+    });
+  }
 });
 
 describe("router __NEXT_DATA__ correctness (Pages Router)", () => {

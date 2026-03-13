@@ -17850,6 +17850,8 @@ const pageLoaders = {
   "/ssr": () => import("<ROOT>/tests/fixtures/pages-basic/pages/ssr.tsx"),
   "/ssr-headers": () => import("<ROOT>/tests/fixtures/pages-basic/pages/ssr-headers.tsx"),
   "/ssr-res-end": () => import("<ROOT>/tests/fixtures/pages-basic/pages/ssr-res-end.tsx"),
+  "/streaming-gssp-content-length": () => import("<ROOT>/tests/fixtures/pages-basic/pages/streaming-gssp-content-length.tsx"),
+  "/streaming-ssr": () => import("<ROOT>/tests/fixtures/pages-basic/pages/streaming-ssr.tsx"),
   "/suspense-test": () => import("<ROOT>/tests/fixtures/pages-basic/pages/suspense-test.tsx"),
   "/articles/[id]": () => import("<ROOT>/tests/fixtures/pages-basic/pages/articles/[id].tsx"),
   "/blog/[slug]": () => import("<ROOT>/tests/fixtures/pages-basic/pages/blog/[slug].tsx"),
@@ -18055,13 +18057,15 @@ import * as page_21 from "<ROOT>/tests/fixtures/pages-basic/pages/shallow-test.t
 import * as page_22 from "<ROOT>/tests/fixtures/pages-basic/pages/ssr.tsx";
 import * as page_23 from "<ROOT>/tests/fixtures/pages-basic/pages/ssr-headers.tsx";
 import * as page_24 from "<ROOT>/tests/fixtures/pages-basic/pages/ssr-res-end.tsx";
-import * as page_25 from "<ROOT>/tests/fixtures/pages-basic/pages/suspense-test.tsx";
-import * as page_26 from "<ROOT>/tests/fixtures/pages-basic/pages/articles/[id].tsx";
-import * as page_27 from "<ROOT>/tests/fixtures/pages-basic/pages/blog/[slug].tsx";
-import * as page_28 from "<ROOT>/tests/fixtures/pages-basic/pages/posts/[id].tsx";
-import * as page_29 from "<ROOT>/tests/fixtures/pages-basic/pages/products/[pid].tsx";
-import * as page_30 from "<ROOT>/tests/fixtures/pages-basic/pages/docs/[...slug].tsx";
-import * as page_31 from "<ROOT>/tests/fixtures/pages-basic/pages/sign-up/[[...sign-up]]/index.tsx";
+import * as page_25 from "<ROOT>/tests/fixtures/pages-basic/pages/streaming-gssp-content-length.tsx";
+import * as page_26 from "<ROOT>/tests/fixtures/pages-basic/pages/streaming-ssr.tsx";
+import * as page_27 from "<ROOT>/tests/fixtures/pages-basic/pages/suspense-test.tsx";
+import * as page_28 from "<ROOT>/tests/fixtures/pages-basic/pages/articles/[id].tsx";
+import * as page_29 from "<ROOT>/tests/fixtures/pages-basic/pages/blog/[slug].tsx";
+import * as page_30 from "<ROOT>/tests/fixtures/pages-basic/pages/posts/[id].tsx";
+import * as page_31 from "<ROOT>/tests/fixtures/pages-basic/pages/products/[pid].tsx";
+import * as page_32 from "<ROOT>/tests/fixtures/pages-basic/pages/docs/[...slug].tsx";
+import * as page_33 from "<ROOT>/tests/fixtures/pages-basic/pages/sign-up/[[...sign-up]]/index.tsx";
 import * as api_0 from "<ROOT>/tests/fixtures/pages-basic/pages/api/binary.ts";
 import * as api_1 from "<ROOT>/tests/fixtures/pages-basic/pages/api/echo-body.ts";
 import * as api_2 from "<ROOT>/tests/fixtures/pages-basic/pages/api/error-route.ts";
@@ -18102,13 +18106,15 @@ const pageRoutes = [
   { pattern: "/ssr", patternParts: ["ssr"], isDynamic: false, params: [], module: page_22, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/ssr.tsx" },
   { pattern: "/ssr-headers", patternParts: ["ssr-headers"], isDynamic: false, params: [], module: page_23, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/ssr-headers.tsx" },
   { pattern: "/ssr-res-end", patternParts: ["ssr-res-end"], isDynamic: false, params: [], module: page_24, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/ssr-res-end.tsx" },
-  { pattern: "/suspense-test", patternParts: ["suspense-test"], isDynamic: false, params: [], module: page_25, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/suspense-test.tsx" },
-  { pattern: "/articles/:id", patternParts: ["articles",":id"], isDynamic: true, params: ["id"], module: page_26, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/articles/[id].tsx" },
-  { pattern: "/blog/:slug", patternParts: ["blog",":slug"], isDynamic: true, params: ["slug"], module: page_27, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/blog/[slug].tsx" },
-  { pattern: "/posts/:id", patternParts: ["posts",":id"], isDynamic: true, params: ["id"], module: page_28, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/posts/[id].tsx" },
-  { pattern: "/products/:pid", patternParts: ["products",":pid"], isDynamic: true, params: ["pid"], module: page_29, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/products/[pid].tsx" },
-  { pattern: "/docs/:slug+", patternParts: ["docs",":slug+"], isDynamic: true, params: ["slug"], module: page_30, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/docs/[...slug].tsx" },
-  { pattern: "/sign-up/:sign-up*", patternParts: ["sign-up",":sign-up*"], isDynamic: true, params: ["sign-up"], module: page_31, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/sign-up/[[...sign-up]]/index.tsx" }
+  { pattern: "/streaming-gssp-content-length", patternParts: ["streaming-gssp-content-length"], isDynamic: false, params: [], module: page_25, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/streaming-gssp-content-length.tsx" },
+  { pattern: "/streaming-ssr", patternParts: ["streaming-ssr"], isDynamic: false, params: [], module: page_26, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/streaming-ssr.tsx" },
+  { pattern: "/suspense-test", patternParts: ["suspense-test"], isDynamic: false, params: [], module: page_27, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/suspense-test.tsx" },
+  { pattern: "/articles/:id", patternParts: ["articles",":id"], isDynamic: true, params: ["id"], module: page_28, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/articles/[id].tsx" },
+  { pattern: "/blog/:slug", patternParts: ["blog",":slug"], isDynamic: true, params: ["slug"], module: page_29, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/blog/[slug].tsx" },
+  { pattern: "/posts/:id", patternParts: ["posts",":id"], isDynamic: true, params: ["id"], module: page_30, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/posts/[id].tsx" },
+  { pattern: "/products/:pid", patternParts: ["products",":pid"], isDynamic: true, params: ["pid"], module: page_31, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/products/[pid].tsx" },
+  { pattern: "/docs/:slug+", patternParts: ["docs",":slug+"], isDynamic: true, params: ["slug"], module: page_32, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/docs/[...slug].tsx" },
+  { pattern: "/sign-up/:sign-up*", patternParts: ["sign-up",":sign-up*"], isDynamic: true, params: ["sign-up"], module: page_33, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/sign-up/[[...sign-up]]/index.tsx" }
 ];
 const _pageRouteTrie = _buildRouteTrie(pageRoutes);
 

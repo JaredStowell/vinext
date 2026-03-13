@@ -168,24 +168,72 @@ function toWebHeaders(headersRecord: Record<string, string | string[]>): Headers
   return headers;
 }
 
+const NO_BODY_RESPONSE_STATUSES = new Set([204, 205, 304]);
+
+function hasHeader(headersRecord: Record<string, string | string[]>, name: string): boolean {
+  const target = name.toLowerCase();
+  return Object.keys(headersRecord).some((key) => key.toLowerCase() === target);
+}
+
+function stripHeaders(
+  headersRecord: Record<string, string | string[]>,
+  names: readonly string[],
+): void {
+  const targets = new Set(names.map((name) => name.toLowerCase()));
+  for (const key of Object.keys(headersRecord)) {
+    if (targets.has(key.toLowerCase())) delete headersRecord[key];
+  }
+}
+
+function isNoBodyResponseStatus(status: number): boolean {
+  return NO_BODY_RESPONSE_STATUSES.has(status);
+}
+
 /**
  * Merge middleware/config headers and an optional status override into a new
- * Web Response while preserving the original body stream.
+ * Web Response while preserving the original body stream when allowed.
  */
 function mergeWebResponse(
   middlewareHeaders: Record<string, string | string[]>,
   response: Response,
   statusOverride?: number,
 ): Response {
-  if (!Object.keys(middlewareHeaders).length && statusOverride === undefined) {
+  const status = statusOverride ?? response.status;
+  const mergedHeaders = mergeResponseHeaders(middlewareHeaders, response);
+  const shouldDropBody = isNoBodyResponseStatus(status);
+  const shouldStripStreamLength = !!response.body && hasHeader(mergedHeaders, "content-length");
+
+  if (
+    !Object.keys(middlewareHeaders).length &&
+    statusOverride === undefined &&
+    !shouldDropBody &&
+    !shouldStripStreamLength
+  ) {
     return response;
   }
 
-  const status = statusOverride ?? response.status;
+  if (shouldDropBody) {
+    stripHeaders(mergedHeaders, [
+      "content-encoding",
+      "content-length",
+      "content-type",
+      "transfer-encoding",
+    ]);
+    return new Response(null, {
+      status,
+      statusText: status === response.status ? response.statusText : undefined,
+      headers: toWebHeaders(mergedHeaders),
+    });
+  }
+
+  if (shouldStripStreamLength) {
+    stripHeaders(mergedHeaders, ["content-length"]);
+  }
+
   return new Response(response.body, {
     status,
     statusText: status === response.status ? response.statusText : undefined,
-    headers: toWebHeaders(mergeResponseHeaders(middlewareHeaders, response)),
+    headers: toWebHeaders(mergedHeaders),
   });
 }
 
