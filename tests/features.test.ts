@@ -3195,6 +3195,44 @@ describe("Set-Cookie header preservation in prod-server", () => {
     expect(await merged.text()).toBe("hello");
   });
 
+  it("mergeWebResponse cancels discarded body streams for no-body statuses", async () => {
+    const { mergeWebResponse } = await import("../packages/vinext/src/server/prod-server.js");
+
+    let started = false;
+    let canceled = false;
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        async start(controller) {
+          started = true;
+          await new Promise((resolve) => setTimeout(resolve, 25));
+          if (canceled) return;
+          controller.enqueue(new TextEncoder().encode("hello"));
+          controller.close();
+        },
+        cancel() {
+          canceled = true;
+        },
+      }),
+      {
+        headers: {
+          "content-type": "text/plain",
+          "content-length": "5",
+        },
+      },
+    );
+
+    const merged = mergeWebResponse({}, response, 204);
+
+    expect(merged.status).toBe(204);
+    expect(merged.headers.get("content-type")).toBeNull();
+    expect(merged.headers.get("content-length")).toBeNull();
+    expect(await merged.text()).toBe("");
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(started).toBe(true);
+    expect(canceled).toBe(true);
+  });
+
   it("mergeWebResponse strips stale content-length only for tagged streamed Pages HTML", async () => {
     const { mergeWebResponse } = await import("../packages/vinext/src/server/prod-server.js");
 

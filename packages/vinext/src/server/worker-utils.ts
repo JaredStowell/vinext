@@ -26,6 +26,14 @@ function isContentLengthHeader(name: string): boolean {
   return name.toLowerCase() === "content-length";
 }
 
+function cancelResponseBody(response: Response): void {
+  const body = response.body;
+  if (!body || body.locked) return;
+  void body.cancel().catch(() => {
+    /* ignore cancellation failures on discarded bodies */
+  });
+}
+
 export function mergeHeaders(
   response: Response,
   extraHeaders: Record<string, string | string[]>,
@@ -62,6 +70,7 @@ export function mergeHeaders(
   }
 
   if (shouldDropBody) {
+    cancelResponseBody(response);
     merged.delete("content-encoding");
     merged.delete("content-length");
     merged.delete("content-type");

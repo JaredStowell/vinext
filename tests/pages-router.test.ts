@@ -2912,8 +2912,20 @@ describe("Pages Router production no-body rewrite statuses", () => {
 export function middleware(request) {
   const url = new URL(request.url);
   const match = url.pathname.match(/^\\/status-(204|205|304)$/);
-  if (!match) return NextResponse.next();
-  return NextResponse.rewrite(new URL("/target", request.url), { status: Number(match[1]) });
+  if (match) {
+    const response = NextResponse.rewrite(new URL("/target", request.url), {
+      status: Number(match[1]),
+    });
+    response.headers.set("x-custom-middleware", "active");
+    return response;
+  }
+  const apiMatch = url.pathname.match(/^\\/api-status-(204|205|304)$/);
+  if (!apiMatch) return NextResponse.next();
+  const response = NextResponse.rewrite(new URL("/api/target", request.url), {
+    status: Number(apiMatch[1]),
+  });
+  response.headers.set("x-custom-middleware", "active");
+  return response;
 }
 `,
     );
@@ -2928,6 +2940,14 @@ export function middleware(request) {
       path.join(tmpRoot, "pages", "target.tsx"),
       `export default function TargetPage() {
   return <div>TARGET PAGE</div>;
+}
+`,
+    );
+    await fsp.mkdir(path.join(tmpRoot, "pages", "api"), { recursive: true });
+    await fsp.writeFile(
+      path.join(tmpRoot, "pages", "api", "target.ts"),
+      `export default function handler(req, res) {
+  res.status(200).json({ ok: true });
 }
 `,
     );
@@ -2959,6 +2979,24 @@ export function middleware(request) {
       const res = await fetch(`${prodUrl}/status-${statusCode}`);
 
       expect(res.status).toBe(statusCode);
+      expect(res.headers.get("x-custom-middleware")).toBe("active");
+      expect(await res.text()).toBe("");
+    });
+  }
+
+  for (const statusCode of [204, 205, 304]) {
+    it(`drops body headers for middleware rewrite status ${statusCode} on Pages API responses in production`, async () => {
+      // Parity targets:
+      // - Next.js skips forwarding middleware content-length in route resolution.
+      // https://raw.githubusercontent.com/vercel/next.js/canary/packages/next/src/server/lib/router-utils/resolve-routes.ts
+      // - Next.js sends bodyless responses by ending the Node response without piping the body.
+      // https://raw.githubusercontent.com/vercel/next.js/canary/packages/next/src/server/send-response.ts
+      const res = await fetch(`${prodUrl}/api-status-${statusCode}`);
+
+      expect(res.status).toBe(statusCode);
+      expect(res.headers.get("x-custom-middleware")).toBe("active");
+      expect(res.headers.get("content-type")).toBeNull();
+      expect(res.headers.get("content-length")).toBeNull();
       expect(await res.text()).toBe("");
     });
   }

@@ -189,6 +189,14 @@ function isNoBodyResponseStatus(status: number): boolean {
   return NO_BODY_RESPONSE_STATUSES.has(status);
 }
 
+function cancelResponseBody(response: Response): void {
+  const body = response.body;
+  if (!body || body.locked) return;
+  void body.cancel().catch(() => {
+    /* ignore cancellation failures on discarded bodies */
+  });
+}
+
 type ResponseWithVinextStreamingMetadata = Response & {
   __vinextStreamedHtmlResponse?: boolean;
 };
@@ -222,6 +230,7 @@ function mergeWebResponse(
   }
 
   if (shouldDropBody) {
+    cancelResponseBody(response);
     stripHeaders(mergedHeaders, [
       "content-encoding",
       "content-length",
@@ -1167,23 +1176,31 @@ async function startPagesRouterServer(options: PagesRouterServerOptions) {
           response = new Response("404 - API route not found", { status: 404 });
         }
 
-        // Merge middleware + config headers into the response
-        const responseBody = Buffer.from(await response.arrayBuffer());
+        const mergedResponse = mergeWebResponse(
+          middlewareHeaders,
+          response,
+          middlewareRewriteStatus,
+        );
+
+        if (!mergedResponse.body) {
+          await sendWebResponse(mergedResponse, req, res, compress);
+          return;
+        }
+
+        const responseBody = Buffer.from(await mergedResponse.arrayBuffer());
         // API routes may return arbitrary data (JSON, binary, etc.), so
         // default to application/octet-stream rather than text/html when
         // the handler doesn't set an explicit Content-Type.
-        const ct = response.headers.get("content-type") ?? "application/octet-stream";
-        const responseHeaders = mergeResponseHeaders(middlewareHeaders, response);
-        const finalStatus = middlewareRewriteStatus ?? response.status;
-        const finalStatusText =
-          finalStatus === response.status ? response.statusText || undefined : undefined;
+        const ct = mergedResponse.headers.get("content-type") ?? "application/octet-stream";
+        const responseHeaders = mergeResponseHeaders({}, mergedResponse);
+        const finalStatusText = mergedResponse.statusText || undefined;
 
         sendCompressed(
           req,
           res,
           responseBody,
           ct,
-          finalStatus,
+          mergedResponse.status,
           responseHeaders,
           compress,
           finalStatusText,
