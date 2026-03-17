@@ -304,12 +304,42 @@ ${slotEntries.join(",\n")}
 
   return `
 import {
-  renderToReadableStream,
+  renderToReadableStream as _renderToReadableStream,
   decodeReply,
   loadServerAction,
   createTemporaryReferenceSet,
 } from "@vitejs/plugin-rsc/rsc";
 import { AsyncLocalStorage } from "node:async_hooks";
+
+// React Flight emits HL hints with "stylesheet" for CSS, but the HTML spec
+// requires "style" for <link rel="preload">. Fix at the source so every
+// consumer (SSR embed, client-side navigation, server actions) gets clean data.
+//
+// Flight lines are newline-delimited, so we buffer partial lines across chunks
+// to guarantee the regex never sees a split hint.
+function renderToReadableStream(model, options) {
+  const _hlFixRe = /(\\d+:HL\\[.*?),"stylesheet"(\\]|,)/g;
+  const stream = _renderToReadableStream(model, options);
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let carry = "";
+  return stream.pipeThrough(new TransformStream({
+    transform(chunk, controller) {
+      const text = carry + decoder.decode(chunk, { stream: true });
+      const lastNl = text.lastIndexOf("\\n");
+      if (lastNl === -1) {
+        carry = text;
+        return;
+      }
+      carry = text.slice(lastNl + 1);
+      controller.enqueue(encoder.encode(text.slice(0, lastNl + 1).replace(_hlFixRe, '$1,"style"$2')));
+    },
+    flush(controller) {
+      const text = carry + decoder.decode();
+      if (text) controller.enqueue(encoder.encode(text.replace(_hlFixRe, '$1,"style"$2')));
+    }
+  }));
+}
 import { createElement, Suspense, Fragment } from "react";
 import { setNavigationContext as _setNavigationContextOrig, getNavigationContext as _getNavigationContext } from "next/navigation";
 import { setHeadersContext, headersContextFromRequest, getDraftModeCookieHeader, getAndClearPendingCookies, consumeDynamicUsage, markDynamicUsage, applyMiddlewareRequestHeaders, getHeadersContext, setHeadersAccessPhase } from "next/headers";
@@ -381,6 +411,18 @@ async function __isrSet(key, data, revalidateSeconds, tags) {
 }
 function __pageCacheTags(pathname, extraTags) {
   const tags = [pathname, "_N_T_" + pathname];
+  // Layout hierarchy tags — matches Next.js getDerivedTags.
+  tags.push("_N_T_/layout");
+  const segments = pathname.split("/");
+  let built = "";
+  for (let i = 1; i < segments.length; i++) {
+    if (segments[i]) {
+      built += "/" + segments[i];
+      tags.push("_N_T_" + built + "/layout");
+    }
+  }
+  // Leaf page tag — revalidatePath(path, "page") targets this.
+  tags.push("_N_T_" + built + "/page");
   if (Array.isArray(extraTags)) {
     for (const tag of extraTags) {
       if (!tags.includes(tag)) tags.push(tag);

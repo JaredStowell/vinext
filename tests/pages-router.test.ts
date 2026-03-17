@@ -2069,7 +2069,7 @@ export default function CounterPage() {
 
 describe("Production server middleware (Pages Router)", () => {
   const outDir = path.resolve(FIXTURE_DIR, "dist");
-  let prodServer: import("node:http").Server;
+  let prodServer: import("node:http").Server | undefined;
   let prodUrl: string;
 
   beforeAll(async () => {
@@ -2117,7 +2117,7 @@ describe("Production server middleware (Pages Router)", () => {
 
   afterAll(async () => {
     if (prodServer) {
-      await new Promise<void>((resolve) => prodServer.close(() => resolve()));
+      await new Promise<void>((resolve) => prodServer!.close(() => resolve()));
     }
   });
 
@@ -2580,7 +2580,7 @@ describe("Production Pages Router SSR streaming", () => {
 
 describe("Production server next.config.js features (Pages Router)", () => {
   const outDir = path.resolve(FIXTURE_DIR, "dist");
-  let prodServer: import("node:http").Server;
+  let prodServer: import("node:http").Server | undefined;
   let prodUrl: string;
 
   beforeAll(async () => {
@@ -2628,7 +2628,7 @@ describe("Production server next.config.js features (Pages Router)", () => {
 
   afterAll(async () => {
     if (prodServer) {
-      await new Promise<void>((resolve) => prodServer.close(() => resolve()));
+      await new Promise<void>((resolve) => prodServer!.close(() => resolve()));
     }
   });
 
@@ -3258,53 +3258,55 @@ describe("Pages Router dev ISR regeneration", () => {
       };
 
       const routeFile = path.join(FIXTURE_DIR, "pages", "isr-test.tsx");
+      const loadModule = async (id: string) => {
+        // ALS registration side-effects loaded at createSSRHandler startup
+        if (id === "vinext/head-state" || id === "vinext/router-state") {
+          return {};
+        }
+
+        if (id === "next/router") {
+          return {
+            setSSRContext() {
+              getRequestContext().currentRequestTags.push("outer-tag");
+              parentRequestTags = [...getRequestContext().currentRequestTags];
+            },
+            wrapWithRouterContext(element: unknown) {
+              return element;
+            },
+          };
+        }
+
+        if (id === routeFile) {
+          return {
+            default() {
+              return null;
+            },
+            async getStaticProps() {
+              regenSawUnifiedScope = isInsideUnifiedScope();
+              regenTags = [...getRequestContext().currentRequestTags];
+              regenExecutionContext = getRequestExecutionContext();
+              regenUnifiedExecutionContext = getRequestContext().executionContext;
+              return {
+                props: {
+                  timestamp: Date.now(),
+                  message: "fresh",
+                },
+                revalidate: 1,
+              };
+            },
+          };
+        }
+
+        throw new Error(`Unexpected module load: ${id}`);
+      };
       const server = {
         transformIndexHtml: vi.fn(async (_url: string, html: string) => html),
-        ssrLoadModule: vi.fn(async (id: string) => {
-          // ALS registration side-effects loaded at createSSRHandler startup
-          if (id === "vinext/head-state" || id === "vinext/router-state") {
-            return {};
-          }
-
-          if (id === "next/router") {
-            return {
-              setSSRContext() {
-                getRequestContext().currentRequestTags.push("outer-tag");
-                parentRequestTags = [...getRequestContext().currentRequestTags];
-              },
-              wrapWithRouterContext(element: unknown) {
-                return element;
-              },
-            };
-          }
-
-          if (id === routeFile) {
-            return {
-              default() {
-                return null;
-              },
-              async getStaticProps() {
-                regenSawUnifiedScope = isInsideUnifiedScope();
-                regenTags = [...getRequestContext().currentRequestTags];
-                regenExecutionContext = getRequestExecutionContext();
-                regenUnifiedExecutionContext = getRequestContext().executionContext;
-                return {
-                  props: {
-                    timestamp: Date.now(),
-                    message: "fresh",
-                  },
-                  revalidate: 1,
-                };
-              },
-            };
-          }
-
-          throw new Error(`Unexpected module load: ${id}`);
-        }),
       } as unknown as ViteDevServer;
+      const runner = { import: loadModule };
 
       const handler = createSSRHandler(
         server,
+        runner,
         [
           {
             pattern: "/isr-test",
