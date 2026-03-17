@@ -1669,6 +1669,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
           "vinext/i18n-context": path.join(shimsDir, "i18n-context"),
           "vinext/instrumentation": path.resolve(__dirname, "server", "instrumentation"),
           "vinext/html": path.resolve(__dirname, "server", "html"),
+          "vinext/server/app-router-entry": path.resolve(__dirname, "server", "app-router-entry"),
         };
 
         // Detect if Cloudflare's vite plugin is present — if so, skip
@@ -2215,6 +2216,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
               allowedDevOrigins: nextConfig?.allowedDevOrigins,
               bodySizeLimit: nextConfig?.serverActionsBodySizeLimit,
               i18n: nextConfig?.i18n,
+              hasPagesDir,
             },
             instrumentationPath,
           );
@@ -2922,12 +2924,17 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                 if (hasAppDir) {
                   const mwCtxEntries: [string, string][] = [];
                   if (result.responseHeaders) {
+                    const setCookies = result.responseHeaders.getSetCookie();
                     for (const [key, value] of result.responseHeaders) {
                       // Exclude control headers that runMiddleware already
                       // consumed — matches the RSC entry's inline filtering.
+                      if (key === "set-cookie") continue;
                       if (key !== "x-middleware-next" && key !== "x-middleware-rewrite") {
                         mwCtxEntries.push([key, value]);
                       }
+                    }
+                    for (const cookie of setCookies) {
+                      mwCtxEntries.push(["set-cookie", cookie]);
                     }
                   }
                   req.headers["x-vinext-mw-ctx"] = JSON.stringify({
