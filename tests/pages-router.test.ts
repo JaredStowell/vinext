@@ -193,6 +193,7 @@ describe("Pages Router integration", () => {
     // gSSP calls res.end() with a JSON body and status 202
     expect(res.status).toBe(202);
     expect(res.headers.get("content-type")).toBe("application/json");
+    expect(res.headers.get("content-length")).toBe("35");
     const body = await res.json();
     expect(body).toEqual({ ok: true, source: "gssp-res-end" });
   });
@@ -2299,6 +2300,14 @@ describe("Production server middleware (Pages Router)", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("Hello, vinext!");
+  });
+
+  it("preserves content-length for getServerSideProps res.end() short-circuit responses in production", async () => {
+    const res = await fetch(`${prodUrl}/ssr-res-end`);
+    expect(res.status).toBe(202);
+    expect(res.headers.get("content-type")).toBe("application/json");
+    expect(res.headers.get("content-length")).toBe("35");
+    expect(await res.json()).toEqual({ ok: true, source: "gssp-res-end" });
   });
 
   it("returns 400 for malformed percent-encoded path (not crash)", async () => {

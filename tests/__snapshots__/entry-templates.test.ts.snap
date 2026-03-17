@@ -18817,7 +18817,14 @@ async function _renderPage(request, url, manifest) {
     if (_fontLinkHeader) {
       responseHeaders.set("Link", _fontLinkHeader);
     }
-    return new Response(compositeStream, { status: finalStatus, headers: responseHeaders });
+    const streamedPageResponse = new Response(compositeStream, {
+      status: finalStatus,
+      headers: responseHeaders,
+    });
+    // Mark the normal streamed HTML render so the Node prod server can strip
+    // stale Content-Length only for this path, not for custom gSSP responses.
+    streamedPageResponse.__vinextStreamedHtmlResponse = true;
+    return streamedPageResponse;
   } catch (e) {
     console.error("[vinext] SSR error:", e);
     _reportRequestError(

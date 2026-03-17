@@ -806,7 +806,12 @@ function mergeHeaders(
   extraHeaders: Record<string, string | string[]>,
   statusOverride?: number,
 ): Response {
-  if (!Object.keys(extraHeaders).length && !statusOverride) return response;
+  const NO_BODY_RESPONSE_STATUSES = new Set([204, 205, 304]);
+  function isVinextStreamedHtmlResponse(response: Response): boolean {
+    return response.__vinextStreamedHtmlResponse === true;
+  }
+
+  const status = statusOverride ?? response.status;
   const merged = new Headers();
   // Middleware/config headers go in first (lower precedence)
   for (const [k, v] of Object.entries(extraHeaders)) {
@@ -824,9 +829,39 @@ function mergeHeaders(
   });
   const responseCookies = response.headers.getSetCookie?.() ?? [];
   for (const cookie of responseCookies) merged.append("set-cookie", cookie);
+
+  const shouldDropBody = NO_BODY_RESPONSE_STATUSES.has(status);
+  const shouldStripStreamLength =
+    isVinextStreamedHtmlResponse(response) && merged.has("content-length");
+
+  if (
+    !Object.keys(extraHeaders).length &&
+    statusOverride === undefined &&
+    !shouldDropBody &&
+    !shouldStripStreamLength
+  ) {
+    return response;
+  }
+
+  if (shouldDropBody) {
+    merged.delete("content-encoding");
+    merged.delete("content-length");
+    merged.delete("content-type");
+    merged.delete("transfer-encoding");
+    return new Response(null, {
+      status,
+      statusText: status === response.status ? response.statusText : undefined,
+      headers: merged,
+    });
+  }
+
+  if (shouldStripStreamLength) {
+    merged.delete("content-length");
+  }
+
   return new Response(response.body, {
-    status: statusOverride ?? response.status,
-    statusText: response.statusText,
+    status,
+    statusText: status === response.status ? response.statusText : undefined,
     headers: merged,
   });
 }

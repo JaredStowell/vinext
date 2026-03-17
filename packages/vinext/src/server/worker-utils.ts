@@ -12,12 +12,22 @@
  * except Set-Cookie, which is additive (both middleware and response cookies
  * are preserved). Uses getSetCookie() to preserve multiple Set-Cookie values.
  */
+const NO_BODY_RESPONSE_STATUSES = new Set([204, 205, 304]);
+
+type ResponseWithVinextStreamingMetadata = Response & {
+  __vinextStreamedHtmlResponse?: boolean;
+};
+
+function isVinextStreamedHtmlResponse(response: Response): boolean {
+  return (response as ResponseWithVinextStreamingMetadata).__vinextStreamedHtmlResponse === true;
+}
+
 export function mergeHeaders(
   response: Response,
   extraHeaders: Record<string, string | string[]>,
   statusOverride?: number,
 ): Response {
-  if (!Object.keys(extraHeaders).length && !statusOverride) return response;
+  const status = statusOverride ?? response.status;
   const merged = new Headers();
   for (const [k, v] of Object.entries(extraHeaders)) {
     if (Array.isArray(v)) {
@@ -32,9 +42,39 @@ export function mergeHeaders(
   });
   const responseCookies = response.headers.getSetCookie?.() ?? [];
   for (const cookie of responseCookies) merged.append("set-cookie", cookie);
+
+  const shouldDropBody = NO_BODY_RESPONSE_STATUSES.has(status);
+  const shouldStripStreamLength =
+    isVinextStreamedHtmlResponse(response) && merged.has("content-length");
+
+  if (
+    !Object.keys(extraHeaders).length &&
+    statusOverride === undefined &&
+    !shouldDropBody &&
+    !shouldStripStreamLength
+  ) {
+    return response;
+  }
+
+  if (shouldDropBody) {
+    merged.delete("content-encoding");
+    merged.delete("content-length");
+    merged.delete("content-type");
+    merged.delete("transfer-encoding");
+    return new Response(null, {
+      status,
+      statusText: status === response.status ? response.statusText : undefined,
+      headers: merged,
+    });
+  }
+
+  if (shouldStripStreamLength) {
+    merged.delete("content-length");
+  }
+
   return new Response(response.body, {
-    status: statusOverride ?? response.status,
-    statusText: response.statusText,
+    status,
+    statusText: status === response.status ? response.statusText : undefined,
     headers: merged,
   });
 }

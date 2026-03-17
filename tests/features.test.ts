@@ -3195,6 +3195,54 @@ describe("Set-Cookie header preservation in prod-server", () => {
     expect(await merged.text()).toBe("hello");
   });
 
+  it("mergeWebResponse strips stale content-length only for tagged streamed Pages HTML", async () => {
+    const { mergeWebResponse } = await import("../packages/vinext/src/server/prod-server.js");
+
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("hello"));
+          controller.close();
+        },
+      }),
+      {
+        status: 200,
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "content-length": "1",
+        },
+      },
+    ) as Response & { __vinextStreamedHtmlResponse?: boolean };
+    response.__vinextStreamedHtmlResponse = true;
+
+    const merged = mergeWebResponse({}, response);
+
+    expect(merged.headers.get("content-length")).toBeNull();
+    expect(merged.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(await merged.text()).toBe("hello");
+  });
+
+  it("mergeWebResponse preserves content-length for untagged custom responses", async () => {
+    const { mergeWebResponse } = await import("../packages/vinext/src/server/prod-server.js");
+
+    const response = new Response(Buffer.from([1, 2, 3]), {
+      status: 200,
+      headers: {
+        "content-type": "application/octet-stream",
+        "content-length": "3",
+      },
+    });
+
+    const merged = mergeWebResponse({ "x-custom-middleware": "active" }, response);
+
+    expect(merged.headers.get("content-length")).toBe("3");
+    expect(merged.headers.get("content-type")).toBe("application/octet-stream");
+    expect(merged.headers.get("x-custom-middleware")).toBe("active");
+
+    const body = Buffer.from(await merged.arrayBuffer());
+    expect(body.equals(Buffer.from([1, 2, 3]))).toBe(true);
+  });
+
   it("sendCompressed passes array-valued Set-Cookie to writeHead", async () => {
     const { sendCompressed } = await import("../packages/vinext/src/server/prod-server.js");
 
@@ -3213,6 +3261,39 @@ describe("Set-Cookie header preservation in prod-server", () => {
 
     sendCompressed(req as any, res as any, "small body", "text/html", 200, extraHeaders, false);
     expect(writtenHeaders["set-cookie"]).toEqual(["a=1; Path=/", "b=2; Path=/"]);
+  });
+
+  it("sendCompressed replaces any existing content-type and content-length headers", async () => {
+    const { sendCompressed } = await import("../packages/vinext/src/server/prod-server.js");
+
+    let writtenHeaders: Record<string, string | string[]> = {};
+    const req = { headers: {} };
+    const res = {
+      writeHead: (_status: number, headers: Record<string, string | string[]>) => {
+        writtenHeaders = headers;
+      },
+      end: () => {},
+    };
+
+    sendCompressed(
+      req as any,
+      res as any,
+      "hello",
+      "application/json",
+      200,
+      {
+        "content-type": "text/plain",
+        "content-length": "999",
+        "x-custom": "active",
+      },
+      false,
+    );
+
+    expect(writtenHeaders["Content-Type"]).toBe("application/json");
+    expect(writtenHeaders["Content-Length"]).toBe("5");
+    expect(writtenHeaders["content-type"]).toBeUndefined();
+    expect(writtenHeaders["content-length"]).toBeUndefined();
+    expect(writtenHeaders["x-custom"]).toBe("active");
   });
 });
 

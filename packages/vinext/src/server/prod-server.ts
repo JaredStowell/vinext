@@ -189,6 +189,14 @@ function isNoBodyResponseStatus(status: number): boolean {
   return NO_BODY_RESPONSE_STATUSES.has(status);
 }
 
+type ResponseWithVinextStreamingMetadata = Response & {
+  __vinextStreamedHtmlResponse?: boolean;
+};
+
+function isVinextStreamedHtmlResponse(response: Response): boolean {
+  return (response as ResponseWithVinextStreamingMetadata).__vinextStreamedHtmlResponse === true;
+}
+
 /**
  * Merge middleware/config headers and an optional status override into a new
  * Web Response while preserving the original body stream when allowed.
@@ -201,7 +209,8 @@ function mergeWebResponse(
   const status = statusOverride ?? response.status;
   const mergedHeaders = mergeResponseHeaders(middlewareHeaders, response);
   const shouldDropBody = isNoBodyResponseStatus(status);
-  const shouldStripStreamLength = !!response.body && hasHeader(mergedHeaders, "content-length");
+  const shouldStripStreamLength =
+    isVinextStreamedHtmlResponse(response) && hasHeader(mergedHeaders, "content-length");
 
   if (
     !Object.keys(middlewareHeaders).length &&
@@ -254,6 +263,13 @@ function sendCompressed(
   const buf = typeof body === "string" ? Buffer.from(body) : body;
   const baseType = contentType.split(";")[0].trim();
   const encoding = compress ? negotiateEncoding(req) : null;
+  const {
+    "content-length": _cl,
+    "Content-Length": _CL,
+    "content-type": _ct,
+    "Content-Type": _CT,
+    ...headersWithoutBodyHeaders
+  } = extraHeaders;
 
   const writeHead = (headers: Record<string, string | string[]>) => {
     if (statusText) {
@@ -280,7 +296,7 @@ function sendCompressed(
       varyValue = "Accept-Encoding";
     }
     writeHead({
-      ...extraHeaders,
+      ...headersWithoutBodyHeaders,
       "Content-Type": contentType,
       "Content-Encoding": encoding,
       Vary: varyValue,
@@ -290,11 +306,8 @@ function sendCompressed(
       /* ignore pipeline errors on closed connections */
     });
   } else {
-    // Strip any pre-existing content-length (from the Web Response constructor)
-    // before setting our own — avoids duplicate Content-Length headers.
-    const { "content-length": _cl, "Content-Length": _CL, ...headersWithoutLength } = extraHeaders;
     writeHead({
-      ...headersWithoutLength,
+      ...headersWithoutBodyHeaders,
       "Content-Type": contentType,
       "Content-Length": String(buf.length),
     });
@@ -1221,11 +1234,28 @@ async function startPagesRouterServer(options: PagesRouterServerOptions) {
         return;
       }
 
-      await sendWebResponse(
-        mergeWebResponse(middlewareHeaders, response, middlewareRewriteStatus),
+      const shouldStreamPagesResponse = isVinextStreamedHtmlResponse(response);
+      const mergedResponse = mergeWebResponse(middlewareHeaders, response, middlewareRewriteStatus);
+
+      if (shouldStreamPagesResponse || !mergedResponse.body) {
+        await sendWebResponse(mergedResponse, req, res, compress);
+        return;
+      }
+
+      const responseBody = Buffer.from(await mergedResponse.arrayBuffer());
+      const ct = mergedResponse.headers.get("content-type") ?? "text/html";
+      const responseHeaders = mergeResponseHeaders({}, mergedResponse);
+      const finalStatusText = mergedResponse.statusText || undefined;
+
+      sendCompressed(
         req,
         res,
+        responseBody,
+        ct,
+        mergedResponse.status,
+        responseHeaders,
         compress,
+        finalStatusText,
       );
     } catch (e) {
       console.error("[vinext] Server error:", e);
