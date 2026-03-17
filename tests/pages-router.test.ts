@@ -2519,6 +2519,17 @@ describe("Production Pages Router SSR streaming", () => {
     expect(html).toContain("Delayed stream content loaded");
   });
 
+  it("serves streamed Pages SSR HEAD requests as headers-only responses in production", async () => {
+    const res = await fetch(`${prodUrl}/streaming-ssr`, {
+      method: "HEAD",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-custom-middleware")).toBe("active");
+    expect(res.headers.get("content-length")).toBeNull();
+    expect(await res.text()).toBe("");
+  });
+
   it("strips stale content-length from streamed Pages SSR responses when gSSP sets one", async () => {
     // Parity target: Next.js only sets Content-Length for unchunked render
     // payloads; streamed HTML is sent without one.

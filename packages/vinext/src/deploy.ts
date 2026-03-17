@@ -813,7 +813,8 @@ export default {
  * Response headers take precedence over middleware headers for all headers
  * except Set-Cookie, which is additive (both middleware and response cookies
  * are preserved). Matches the behavior in prod-server.ts. Uses getSetCookie()
- * to preserve multiple Set-Cookie values.
+ * to preserve multiple Set-Cookie values. Keep this in sync with
+ * prod-server.ts and server/worker-utils.ts.
  */
 function mergeHeaders(
   response: Response,

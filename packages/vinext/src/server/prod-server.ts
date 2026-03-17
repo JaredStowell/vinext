@@ -208,6 +208,8 @@ function isVinextStreamedHtmlResponse(response: Response): boolean {
 /**
  * Merge middleware/config headers and an optional status override into a new
  * Web Response while preserving the original body stream when allowed.
+ * Keep this in sync with server/worker-utils.ts and the generated copy in
+ * deploy.ts.
  */
 function mergeWebResponse(
   middlewareHeaders: Record<string, string | string[]>,
@@ -596,6 +598,7 @@ async function sendWebResponse(
 
   // HEAD requests: send headers only, skip the body
   if (req.method === "HEAD") {
+    cancelResponseBody(webResponse);
     res.end();
     return;
   }
@@ -1329,6 +1332,7 @@ async function startPagesRouterServer(options: PagesRouterServerOptions) {
 // Export helpers for testing
 export {
   sendCompressed,
+  sendWebResponse,
   negotiateEncoding,
   COMPRESSIBLE_TYPES,
   COMPRESS_THRESHOLD,

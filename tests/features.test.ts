@@ -3290,6 +3290,58 @@ describe("Set-Cookie header preservation in prod-server", () => {
     expect(body.equals(Buffer.from([1, 2, 3]))).toBe(true);
   });
 
+  it("sendWebResponse cancels streamed bodies for HEAD requests", async () => {
+    const { sendWebResponse } = await import("../packages/vinext/src/server/prod-server.js");
+
+    let canceled = false;
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("hello"));
+        },
+        cancel() {
+          canceled = true;
+        },
+      }),
+      {
+        status: 200,
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+        },
+      },
+    );
+
+    let status = 0;
+    let writtenHeaders: Record<string, string | string[]> = {};
+    let ended = false;
+    const req = {
+      method: "HEAD",
+      headers: {},
+    };
+    const res = {
+      writeHead: (
+        writtenStatus: number,
+        headersOrStatusText: string | Record<string, string | string[]>,
+        maybeHeaders?: Record<string, string | string[]>,
+      ) => {
+        status = writtenStatus;
+        writtenHeaders =
+          typeof headersOrStatusText === "string" ? (maybeHeaders ?? {}) : headersOrStatusText;
+      },
+      end: () => {
+        ended = true;
+      },
+    };
+
+    await sendWebResponse(response, req as any, res as any, false);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(status).toBe(200);
+    expect(writtenHeaders["content-type"]).toBe("text/html; charset=utf-8");
+    expect(ended).toBe(true);
+    expect(canceled).toBe(true);
+  });
+
   it("sendCompressed passes array-valued Set-Cookie to writeHead", async () => {
     const { sendCompressed } = await import("../packages/vinext/src/server/prod-server.js");
 
