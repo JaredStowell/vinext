@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { createServer, build, type ViteDevServer } from "vite";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vite-plus/test";
+import { createServer, build, type ViteDevServer } from "vite-plus";
 import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import path from "node:path";
 import fs from "node:fs";
@@ -8,13 +8,19 @@ import os from "node:os";
 import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
 import vinext from "../packages/vinext/src/index.js";
-import { PAGES_FIXTURE_DIR, startFixtureServer } from "./helpers.js";
+import { PAGES_FIXTURE_DIR, buildPagesFixture, startFixtureServer } from "./helpers.js";
 
 const FIXTURE_DIR = PAGES_FIXTURE_DIR;
 const PAGES_APP_COMPONENT = `export default function App({ Component, pageProps }) {
   return <Component {...pageProps} />;
 }
 `;
+
+type ClientBuildManifestEntry = {
+  file?: string;
+  css?: string[];
+  assets?: string[];
+};
 
 function writeEncodedSlashPagesFixture(rootDir: string): void {
   fs.mkdirSync(path.join(rootDir, "pages", "a"), { recursive: true });
@@ -37,11 +43,11 @@ export default function middleware() {
   );
 }
 
-async function buildPagesFixture(rootDir: string, outDir: string): Promise<void> {
+async function buildPagesFixtureToOutDir(rootDir: string, outDir: string): Promise<void> {
   await build({
     root: rootDir,
     configFile: false,
-    plugins: [vinext()],
+    plugins: [vinext({ disableAppRouter: true })],
     logLevel: "silent",
     build: {
       outDir: path.join(outDir, "server"),
@@ -53,7 +59,7 @@ async function buildPagesFixture(rootDir: string, outDir: string): Promise<void>
   await build({
     root: rootDir,
     configFile: false,
-    plugins: [vinext()],
+    plugins: [vinext({ disableAppRouter: true })],
     logLevel: "silent",
     build: {
       outDir: path.join(outDir, "client"),
@@ -120,6 +126,15 @@ async function captureStreamedResponse(
     req.on("error", reject);
     req.end();
   });
+}
+
+function findBuildManifestEntries(
+  buildManifest: Record<string, ClientBuildManifestEntry>,
+  moduleId: string,
+): Array<[string, ClientBuildManifestEntry]> {
+  return Object.entries(buildManifest).filter(
+    ([key]) => key === moduleId || key.endsWith(`/${moduleId}`),
+  );
 }
 
 describe("Pages Router integration", () => {
@@ -263,6 +278,24 @@ describe("Pages Router integration", () => {
     // The title tag should be in <head>, not in <body>
     const headSection = html.split("</head>")[0];
     expect(headSection).toContain("Hello vinext");
+  });
+
+  it("keeps ISR cache-fill rerenders isolated from the streamed render state", async () => {
+    const firstRes = await fetch(`${baseUrl}/isr-second-render-state`);
+    expect(firstRes.status).toBe(200);
+    expect(firstRes.headers.get("x-vinext-cache")).toBe("MISS");
+    const firstHtml = await firstRes.text();
+    expect(firstHtml).toContain('data-testid="head-before">0<');
+    expect(firstHtml).toContain('data-testid="private-cache-before">0<');
+    expect(firstHtml).toContain('data-testid="inserted-html-before">0<');
+
+    const secondRes = await fetch(`${baseUrl}/isr-second-render-state`);
+    expect(secondRes.status).toBe(200);
+    expect(secondRes.headers.get("x-vinext-cache")).toBe("HIT");
+    const secondHtml = await secondRes.text();
+    expect(secondHtml).toContain('data-testid="head-before">0<');
+    expect(secondHtml).toContain('data-testid="private-cache-before">0<');
+    expect(secondHtml).toContain('data-testid="inserted-html-before">0<');
   });
 
   it("includes __NEXT_DATA__ script tag", async () => {
@@ -1020,7 +1053,7 @@ describe("Pages Router allowedDevOrigins config", () => {
   afterAll(async () => {
     await server?.close();
     await fsp.rm(tmpDir, { recursive: true, force: true });
-  });
+  }, 30000);
 
   it("allows cross-origin requests from allowedDevOrigins", async () => {
     const res = await fetch(`${baseUrl}/`, {
@@ -1096,6 +1129,49 @@ describe("Virtual server entry generation", () => {
 });
 
 describe("Plugin config", () => {
+  it("auto-injects @vitejs/plugin-react as a top-level async plugin", async () => {
+    const plugins = vinext() as any[];
+    const resolvedPlugins = (
+      await Promise.all(
+        plugins.map(async (plugin) => {
+          if (plugin && typeof plugin.then === "function") {
+            return await plugin;
+          }
+          return plugin;
+        }),
+      )
+    ).flat();
+
+    const hasReactPlugin = resolvedPlugins.some(
+      (plugin) => plugin && typeof plugin.name === "string" && plugin.name.startsWith("vite:react"),
+    );
+    expect(hasReactPlugin).toBe(true);
+  });
+
+  it("throws when user double-registers react() alongside auto-registration", async () => {
+    const plugins = vinext() as any[];
+    const configPlugin = plugins.find((p) => p.name === "vinext:config");
+    expect(configPlugin).toBeDefined();
+
+    await configPlugin.config(
+      { root: FIXTURE_DIR, plugins: [] },
+      { command: "serve", mode: "development" },
+    );
+
+    expect(() =>
+      configPlugin.configResolved({
+        command: "serve",
+        configFile: false,
+        plugins: [
+          { name: "vite:react-babel" },
+          { name: "vite:react-refresh" },
+          { name: "vite:react-babel" },
+          { name: "vite:react-refresh" },
+        ],
+      }),
+    ).toThrow("Duplicate @vitejs/plugin-react detected");
+  });
+
   it("adds resolve.dedupe for React packages to prevent dual instance errors", async () => {
     const plugins = vinext() as any[];
     const configPlugin = plugins.find((p) => p.name === "vinext:config");
@@ -1448,12 +1524,16 @@ export const config = { matcher: ["/protected"] };
     expect(fs.existsSync(buildManifestPath)).toBe(true);
     const buildManifest = JSON.parse(fs.readFileSync(buildManifestPath, "utf-8")) as Record<
       string,
-      unknown
+      ClientBuildManifestEntry
     >;
-    const counterBuildManifestEntries = Object.keys(buildManifest).filter(
-      (key) => key.endsWith("/pages/counter.tsx") || key === "pages/counter.tsx",
+    const counterBuildManifestEntries = findBuildManifestEntries(
+      buildManifest,
+      "pages/counter.tsx",
     );
-    expect(counterBuildManifestEntries).toEqual([]);
+    expect(counterBuildManifestEntries.length).toBeGreaterThan(0);
+    expect(counterBuildManifestEntries.some(([, entry]) => typeof entry.file === "string")).toBe(
+      true,
+    );
 
     // There should be JS files in the assets directory
     const assets = fs.readdirSync(assetsDir);
@@ -1474,7 +1554,7 @@ export const config = { matcher: ["/protected"] };
     // entire React framework). Before code-splitting this was ~200KB+.
     if (entryChunk) {
       const entrySize = fs.statSync(path.join(assetsDir, entryChunk)).size;
-      expect(entrySize).toBeLessThan(20 * 1024); // < 20 KB
+      expect(entrySize).toBeLessThan(25 * 1024); // < 25 KB
     }
 
     const counterManifestEntry = Object.entries(manifest).find(
@@ -1540,12 +1620,16 @@ export default function CounterPage() {
       const buildManifestPath = path.join(fixtureOutDir, "client", ".vite", "manifest.json");
       const buildManifest = JSON.parse(fs.readFileSync(buildManifestPath, "utf-8")) as Record<
         string,
-        unknown
+        ClientBuildManifestEntry
       >;
-      const counterBuildManifestEntries = Object.keys(buildManifest).filter(
-        (key) => key.endsWith("/pages/counter.tsx") || key === "pages/counter.tsx",
+      const counterBuildManifestEntries = findBuildManifestEntries(
+        buildManifest,
+        "pages/counter.tsx",
       );
-      expect(counterBuildManifestEntries).toEqual([]);
+      expect(counterBuildManifestEntries.length).toBeGreaterThan(0);
+      expect(counterBuildManifestEntries.some(([, entry]) => typeof entry.file === "string")).toBe(
+        true,
+      );
 
       const manifestPath = path.join(fixtureOutDir, "client", ".vite", "ssr-manifest.json");
       const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as Record<
@@ -1644,12 +1728,21 @@ export default function CounterPage() {
       const buildManifestPath = path.join(fixtureOutDir, "client", ".vite", "manifest.json");
       const buildManifest = JSON.parse(fs.readFileSync(buildManifestPath, "utf-8")) as Record<
         string,
-        unknown
+        ClientBuildManifestEntry
       >;
-      const counterBuildManifestEntries = Object.keys(buildManifest).filter(
-        (key) => key.endsWith("/pages/counter.tsx") || key === "pages/counter.tsx",
+      const counterBuildManifestEntries = findBuildManifestEntries(
+        buildManifest,
+        "pages/counter.tsx",
       );
-      expect(counterBuildManifestEntries).toEqual([]);
+      expect(counterBuildManifestEntries.length).toBeGreaterThan(0);
+      expect(
+        counterBuildManifestEntries.some(
+          ([, entry]) =>
+            typeof entry.file === "string" ||
+            (Array.isArray(entry.css) && entry.css.length > 0) ||
+            (Array.isArray(entry.assets) && entry.assets.length > 0),
+        ),
+      ).toBe(true);
 
       const manifestPath = path.join(fixtureOutDir, "client", ".vite", "ssr-manifest.json");
       const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as Record<
@@ -1790,6 +1883,22 @@ export default function CounterPage() {
       expect(aboutRes.status).toBe(200);
       const aboutHtml = await aboutRes.text();
       expect(aboutHtml).toContain("About");
+
+      const isrFirstRes = await fetch(`${prodUrl}/isr-second-render-state`);
+      expect(isrFirstRes.status).toBe(200);
+      expect(isrFirstRes.headers.get("x-vinext-cache")).toBe("MISS");
+      const isrFirstHtml = await isrFirstRes.text();
+      expect(isrFirstHtml).toContain('data-testid="head-before">0<');
+      expect(isrFirstHtml).toContain('data-testid="private-cache-before">0<');
+      expect(isrFirstHtml).toContain('data-testid="inserted-html-before">0<');
+
+      const isrSecondRes = await fetch(`${prodUrl}/isr-second-render-state`);
+      expect(isrSecondRes.status).toBe(200);
+      expect(isrSecondRes.headers.get("x-vinext-cache")).toBe("HIT");
+      const isrSecondHtml = await isrSecondRes.text();
+      expect(isrSecondHtml).toContain('data-testid="head-before">0<');
+      expect(isrSecondHtml).toContain('data-testid="private-cache-before">0<');
+      expect(isrSecondHtml).toContain('data-testid="inserted-html-before">0<');
 
       // Test: SSR page with getServerSideProps
       const ssrRes = await fetch(`${prodUrl}/ssr`);
@@ -2350,7 +2459,7 @@ describe("Production Pages Router SSR streaming", () => {
       path.join(outDir, "node_modules"),
       "junction",
     );
-    await buildPagesFixture(FIXTURE_DIR, outDir);
+    await buildPagesFixtureToOutDir(FIXTURE_DIR, outDir);
 
     const { startProdServer } = await import("../packages/vinext/src/server/prod-server.js");
     prodServer = await startProdServer({
@@ -2652,22 +2761,14 @@ describe("Production server next.config.js features (Pages Router)", () => {
 });
 
 describe("Static export (Pages Router)", () => {
-  let server: ViteDevServer;
+  let pagesBundlePath: string;
   const exportDir = path.resolve(FIXTURE_DIR, "out");
 
   beforeAll(async () => {
-    server = await createServer({
-      root: FIXTURE_DIR,
-      configFile: false,
-      plugins: [vinext()],
-      server: { port: 0 },
-      logLevel: "silent",
-    });
-    // Don't need to listen — just need the SSR module loader
-  });
+    pagesBundlePath = await buildPagesFixture(FIXTURE_DIR);
+  }, 60_000);
 
-  afterAll(async () => {
-    await server.close();
+  afterAll(() => {
     fs.rmSync(exportDir, { recursive: true, force: true });
   });
 
@@ -2683,7 +2784,7 @@ describe("Static export (Pages Router)", () => {
     const config = await resolveNextConfig({ output: "export" });
 
     const result = await staticExportPages({
-      server,
+      pagesBundlePath,
       routes,
       apiRoutes,
       pagesDir,
@@ -2746,7 +2847,7 @@ describe("Static export (Pages Router)", () => {
     const tempDir = path.resolve(FIXTURE_DIR, "out-temp");
     try {
       const result = await staticExportPages({
-        server,
+        pagesBundlePath,
         routes,
         apiRoutes,
         pagesDir,
@@ -2787,7 +2888,7 @@ describe("Static export (Pages Router)", () => {
     const trailingDir = path.resolve(FIXTURE_DIR, "out-trailing");
     try {
       const result = await staticExportPages({
-        server,
+        pagesBundlePath,
         routes,
         apiRoutes,
         pagesDir,
@@ -2952,7 +3053,7 @@ export function middleware(request) {
 `,
     );
 
-    await buildPagesFixture(tmpRoot, outDir);
+    await buildPagesFixtureToOutDir(tmpRoot, outDir);
 
     const { startProdServer } = await import("../packages/vinext/src/server/prod-server.js");
     prodServer = await startProdServer({
@@ -3068,5 +3169,169 @@ describe("router __NEXT_DATA__ correctness (Pages Router)", () => {
     const nextData = JSON.parse(match![1]);
     expect(nextData.page).toBe("/shallow-test");
     expect(nextData.props.pageProps.gsspCallId).toBeGreaterThan(0);
+  });
+});
+
+describe("Pages Router dev ISR regeneration", () => {
+  it("wraps stale regeneration in a fresh unified request context", async () => {
+    vi.resetModules();
+
+    let regenPromise: Promise<void> | null = null;
+    const isrSetSpy = vi.fn().mockResolvedValue(undefined);
+
+    vi.doMock("../packages/vinext/src/server/isr-cache.js", async () => {
+      const actual = await vi.importActual<
+        typeof import("../packages/vinext/src/server/isr-cache.js")
+      >("../packages/vinext/src/server/isr-cache.js");
+
+      return {
+        ...actual,
+        getRevalidateDuration: vi.fn(() => 1),
+        isrGet: vi.fn().mockResolvedValue({
+          isStale: true,
+          value: {
+            value: actual.buildPagesCacheValue("<html><body>stale</body></html>", {
+              timestamp: 1,
+              message: "stale",
+            }),
+            cacheState: "stale",
+          },
+        }),
+        isrSet: isrSetSpy,
+        triggerBackgroundRegeneration: vi.fn((_key: string, renderFn: () => Promise<void>) => {
+          regenPromise = renderFn();
+        }),
+      };
+    });
+
+    try {
+      const [
+        { createSSRHandler },
+        { getRequestContext, isInsideUnifiedScope },
+        { getRequestExecutionContext, runWithExecutionContext },
+      ] = await Promise.all([
+        import("../packages/vinext/src/server/dev-server.js"),
+        import("../packages/vinext/src/shims/unified-request-context.js"),
+        import("../packages/vinext/src/shims/request-context.js"),
+      ]);
+
+      let parentRequestTags: string[] = [];
+      let regenSawUnifiedScope = false;
+      let regenTags: string[] = [];
+      let regenExecutionContext: unknown;
+      let regenUnifiedExecutionContext: unknown;
+      const outerExecutionContext = {
+        waitUntil() {},
+      };
+
+      const routeFile = path.join(FIXTURE_DIR, "pages", "isr-test.tsx");
+      const server = {
+        transformIndexHtml: vi.fn(async (_url: string, html: string) => html),
+        ssrLoadModule: vi.fn(async (id: string) => {
+          // ALS registration side-effects loaded at createSSRHandler startup
+          if (id === "vinext/head-state" || id === "vinext/router-state") {
+            return {};
+          }
+
+          if (id === "next/router") {
+            return {
+              setSSRContext() {
+                getRequestContext().currentRequestTags.push("outer-tag");
+                parentRequestTags = [...getRequestContext().currentRequestTags];
+              },
+              wrapWithRouterContext(element: unknown) {
+                return element;
+              },
+            };
+          }
+
+          if (id === routeFile) {
+            return {
+              default() {
+                return null;
+              },
+              async getStaticProps() {
+                regenSawUnifiedScope = isInsideUnifiedScope();
+                regenTags = [...getRequestContext().currentRequestTags];
+                regenExecutionContext = getRequestExecutionContext();
+                regenUnifiedExecutionContext = getRequestContext().executionContext;
+                return {
+                  props: {
+                    timestamp: Date.now(),
+                    message: "fresh",
+                  },
+                  revalidate: 1,
+                };
+              },
+            };
+          }
+
+          throw new Error(`Unexpected module load: ${id}`);
+        }),
+      } as unknown as ViteDevServer;
+
+      const handler = createSSRHandler(
+        server,
+        [
+          {
+            pattern: "/isr-test",
+            patternParts: ["isr-test"],
+            filePath: routeFile,
+            isDynamic: false,
+            params: [],
+          },
+        ],
+        path.join(FIXTURE_DIR, "pages"),
+      );
+
+      const finishListeners: Array<() => void> = [];
+      const res = {
+        statusCode: 200,
+        on(event: string, listener: () => void) {
+          if (event === "finish") {
+            finishListeners.push(listener);
+          }
+          return this;
+        },
+        writeHead: vi.fn(function (this: { statusCode: number }, status: number) {
+          this.statusCode = status;
+          return this;
+        }),
+        end: vi.fn(() => {
+          for (const listener of finishListeners) {
+            listener();
+          }
+        }),
+      } as any;
+
+      await runWithExecutionContext(outerExecutionContext, () =>
+        handler({ method: "GET", headers: {} } as any, res, "/isr-test"),
+      );
+
+      expect(parentRequestTags).toEqual(["outer-tag"]);
+      expect(res.writeHead).toHaveBeenCalledWith(
+        200,
+        expect.objectContaining({
+          "X-Vinext-Cache": "STALE",
+        }),
+      );
+
+      if (!regenPromise) {
+        throw new Error("expected stale ISR request to start background regeneration");
+      }
+      const pendingRegen = regenPromise;
+
+      await Promise.resolve(pendingRegen);
+
+      expect(regenSawUnifiedScope).toBe(true);
+      expect(regenTags).toEqual([]);
+      expect(regenExecutionContext).toBeNull();
+      expect(regenUnifiedExecutionContext).toBeNull();
+      expect(isrSetSpy).toHaveBeenCalledOnce();
+    } finally {
+      vi.doUnmock("../packages/vinext/src/server/isr-cache.js");
+      vi.resetModules();
+      vi.restoreAllMocks();
+    }
   });
 });

@@ -8,7 +8,7 @@
  * These complement the integration-level ISR tests in features.test.ts
  * by testing the ISR cache layer in isolation.
  */
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi } from "vite-plus/test";
 import {
   isrCacheKey,
   buildPagesCacheValue,
@@ -18,6 +18,12 @@ import {
   triggerBackgroundRegeneration,
 } from "../packages/vinext/src/server/isr-cache.js";
 import { runWithExecutionContext } from "../packages/vinext/src/shims/request-context.js";
+import {
+  createRequestContext,
+  getRequestContext,
+  isInsideUnifiedScope,
+  runWithRequestContext,
+} from "../packages/vinext/src/shims/unified-request-context.js";
 
 // ─── isrCacheKey ────────────────────────────────────────────────────────
 
@@ -257,6 +263,48 @@ describe("triggerBackgroundRegeneration", () => {
 
     resolveRender!();
     await renderPromise;
+  });
+
+  it("preserves unified request context for async work started by regeneration", async () => {
+    let releaseRender!: () => void;
+    const resumeRender = new Promise<void>((resolve) => {
+      releaseRender = resolve;
+    });
+
+    let regenPromise: Promise<unknown> | null = null;
+    const executionContext = {
+      waitUntil(promise: Promise<unknown>) {
+        regenPromise = promise;
+      },
+    };
+
+    let sawUnifiedScope = false;
+    let collectedTags: string[] = [];
+
+    await runWithExecutionContext(executionContext, async () => {
+      await runWithRequestContext(
+        createRequestContext({ currentRequestTags: ["outer-tag"] }),
+        async () => {
+          triggerBackgroundRegeneration("regen-unified-scope", async () => {
+            await resumeRender;
+            sawUnifiedScope = isInsideUnifiedScope();
+            collectedTags = [...getRequestContext().currentRequestTags];
+          });
+        },
+      );
+    });
+
+    expect(isInsideUnifiedScope()).toBe(false);
+    if (!regenPromise) {
+      throw new Error("expected triggerBackgroundRegeneration to register waitUntil");
+    }
+    const pendingRegen = regenPromise;
+
+    releaseRender();
+    await Promise.resolve(pendingRegen);
+
+    expect(sawUnifiedScope).toBe(true);
+    expect(collectedTags).toEqual(["outer-tag"]);
   });
 
   it("does not require ctx — works without it", async () => {

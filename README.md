@@ -25,7 +25,13 @@ The skill handles compatibility checking, dependency installation, config genera
 ### Or do it manually
 
 ```bash
-npm install vinext
+npm install -D vinext vite @vitejs/plugin-react
+```
+
+If you're using the App Router, also install:
+
+```bash
+npm install -D @vitejs/plugin-rsc react-server-dom-webpack
 ```
 
 Replace `next` with `vinext` in your scripts:
@@ -85,7 +91,7 @@ npx vinext init
 This will:
 
 1. Run `vinext check` to scan for compatibility issues
-2. Install `vite` (and `@vitejs/plugin-rsc` for App Router projects) as devDependencies
+2. Install `vite`, `@vitejs/plugin-react`, and App Router-only deps (`@vitejs/plugin-rsc`, `react-server-dom-webpack`) as devDependencies
 3. Rename CJS config files (e.g. `postcss.config.js` -> `.cjs`) to avoid ESM conflicts
 4. Add `"type": "module"` to `package.json`
 5. Add `dev:vinext` and `build:vinext` scripts to `package.json`
@@ -650,8 +656,8 @@ examples/                 # Deployed demo apps (see Live Examples above)
 ```bash
 pnpm test             # Vitest unit + integration tests
 pnpm run test:e2e     # Playwright E2E tests (5 projects)
-pnpm run typecheck    # TypeScript checking (tsgo)
-pnpm run lint         # Linting (oxlint)
+pnpm run check        # Format, lint, and type checks
+pnpm run lint         # Lint only (type-aware oxlint)
 pnpm run fmt          # Formatting (oxfmt)
 pnpm run fmt:check    # Check formatting without writing
 ```
@@ -671,7 +677,7 @@ pnpm install
 pnpm run build
 ```
 
-This compiles the vinext package to `packages/vinext/dist/`. For active development, use `pnpm --filter vinext run dev` to run `tsc --watch`.
+This builds the vinext package to `packages/vinext/dist/` via `vp pack`. For active development, use `pnpm --filter vinext run dev` to run `vp pack --watch`.
 
 To use it against an external Next.js app, link the built package:
 
@@ -698,7 +704,7 @@ This project is experimental and under active development. Issues and PRs are we
 
 ### CI
 
-When you open a PR, CI (lint, typecheck, Vitest, Playwright E2E) runs automatically. First-time contributors need one manual approval from a maintainer, then subsequent PRs run without intervention.
+When you open a PR, CI (check, Vitest, Playwright E2E) runs automatically. First-time contributors need one manual approval from a maintainer, then subsequent PRs run without intervention.
 
 Deploy previews (building and deploying examples to Cloudflare Workers) only run for branches pushed to the main repo. If you're a Cloudflare employee, push your branch to the main repo instead of forking, and previews deploy automatically. For fork PRs, a maintainer can comment `/deploy-preview` to trigger the deploy and post preview URLs.
 

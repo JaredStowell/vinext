@@ -43,7 +43,6 @@ import {
   type RequestContext,
 } from "./config/config-matchers.js";
 import { scanMetadataFiles } from "./server/metadata-routes.js";
-import { staticExportPages } from "./build/static-export.js";
 import { buildRequestHeadersFromMiddlewareResponse } from "./server/middleware-request-headers.js";
 import { detectPackageManager } from "./utils/project.js";
 import {
@@ -56,7 +55,7 @@ import { asyncHooksStubPlugin } from "./plugins/async-hooks-stub.js";
 import { clientReferenceDedupPlugin } from "./plugins/client-reference-dedup.js";
 import { hasWranglerConfig, formatMissingCloudflarePluginError } from "./deploy.js";
 import tsconfigPaths from "vite-tsconfig-paths";
-import react, { Options as VitePluginReactOptions } from "@vitejs/plugin-react";
+import type { Options as VitePluginReactOptions } from "@vitejs/plugin-react";
 import MagicString from "magic-string";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -65,6 +64,34 @@ import fs from "node:fs";
 import commonjs from "vite-plugin-commonjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+type VitePluginReactModule = typeof import("@vitejs/plugin-react");
+
+function resolveOptionalDependency(projectRoot: string, specifier: string): string | null {
+  try {
+    const projectRequire = createRequire(path.join(projectRoot, "package.json"));
+    return projectRequire.resolve(specifier);
+  } catch {}
+
+  try {
+    const selfRequire = createRequire(import.meta.url);
+    return selfRequire.resolve(specifier);
+  } catch {}
+
+  return null;
+}
+
+function resolveShimModulePath(shimsDir: string, moduleName: string): string {
+  // Source checkouts only ship TypeScript shims, while built packages only ship
+  // JavaScript. Check .ts first to avoid an extra stat in development.
+  const candidates = [".ts", ".js"];
+  for (const ext of candidates) {
+    const candidate = path.join(shimsDir, `${moduleName}${ext}`);
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return path.join(shimsDir, `${moduleName}.js`);
+}
 
 /**
  * Fetch Google Fonts CSS, download .woff2 files, cache locally, and return
@@ -620,20 +647,71 @@ type BundleBackfillChunk = {
   };
 };
 
+function tryRealpathSync(candidate: string): string | null {
+  try {
+    return fs.realpathSync.native(candidate);
+  } catch {
+    return null;
+  }
+}
+
+function isWindowsAbsolutePath(candidate: string): boolean {
+  return /^[a-zA-Z]:[\\/]/.test(candidate) || candidate.startsWith("\\\\");
+}
+
+function relativeWithinRoot(root: string, moduleId: string): string | null {
+  const useWindowsPath = isWindowsAbsolutePath(root) || isWindowsAbsolutePath(moduleId);
+  const relativeId = (
+    useWindowsPath ? path.win32.relative(root, moduleId) : path.relative(root, moduleId)
+  ).replace(/\\/g, "/");
+  // path.relative(root, root) returns "", which is not a usable manifest key and should be
+  // treated the same as "outside root" for this helper.
+  if (!relativeId || relativeId === ".." || relativeId.startsWith("../")) return null;
+  return relativeId;
+}
+
 function normalizeManifestModuleId(moduleId: string, root: string): string {
   const normalizedId = moduleId.replace(/\\/g, "/");
-  const isWindowsAbsolute = /^[a-zA-Z]:[\\/]/.test(moduleId) || moduleId.startsWith("\\\\");
-  if (isWindowsAbsolute) {
-    const relativeId = path.win32.relative(root, moduleId).replace(/\\/g, "/");
-    if (!relativeId || relativeId.startsWith("../")) return normalizedId;
-    return relativeId;
+  if (normalizedId.startsWith("\0")) return normalizedId;
+  if (normalizedId.startsWith("node_modules/") || normalizedId.includes("/node_modules/")) {
+    return normalizedId;
   }
 
-  if (!path.isAbsolute(moduleId)) return normalizedId;
+  if (!isWindowsAbsolutePath(moduleId) && !path.isAbsolute(moduleId)) {
+    if (!normalizedId.startsWith(".") && !normalizedId.includes("../")) {
+      // Preserve bare specifiers like "pages/counter.tsx". These are already
+      // stable manifest keys and resolving them against root would rewrite them
+      // into filesystem paths that no longer match the bundle/module graph.
+      return normalizedId;
+    }
+  }
 
-  const relativeId = path.relative(root, moduleId).replace(/\\/g, "/");
-  if (!relativeId || relativeId.startsWith("../")) return normalizedId;
-  return relativeId;
+  const rootCandidates = new Set<string>([root]);
+  const realRoot = tryRealpathSync(root);
+  if (realRoot) rootCandidates.add(realRoot);
+
+  const moduleCandidates = new Set<string>();
+  if (isWindowsAbsolutePath(moduleId) || path.isAbsolute(moduleId)) {
+    moduleCandidates.add(moduleId);
+  } else {
+    moduleCandidates.add(path.resolve(root, moduleId));
+  }
+
+  for (const candidate of moduleCandidates) {
+    const realCandidate = tryRealpathSync(candidate);
+    // Set iteration stays live as entries are appended, so this also checks the
+    // realpath variant without needing a second pass or an intermediate array.
+    if (realCandidate) moduleCandidates.add(realCandidate);
+  }
+
+  for (const rootCandidate of rootCandidates) {
+    for (const moduleCandidate of moduleCandidates) {
+      const relativeId = relativeWithinRoot(rootCandidate, moduleCandidate);
+      if (relativeId) return relativeId;
+    }
+  }
+
+  return normalizedId;
 }
 
 function augmentSsrManifestFromBundle(
@@ -642,12 +720,15 @@ function augmentSsrManifestFromBundle(
   root: string,
   base = "/",
 ): Record<string, string[]> {
-  const nextManifest = Object.fromEntries(
-    Object.entries(ssrManifest).map(([key, files]) => [
-      key,
-      new Set(files.map((file) => normalizeManifestFile(file))),
-    ]),
-  ) as Record<string, Set<string>>;
+  const nextManifest = {} as Record<string, Set<string>>;
+
+  for (const [key, files] of Object.entries(ssrManifest)) {
+    const normalizedKey = normalizeManifestModuleId(key, root);
+    if (!nextManifest[normalizedKey]) nextManifest[normalizedKey] = new Set<string>();
+    for (const file of files) {
+      nextManifest[normalizedKey].add(normalizeManifestFile(file));
+    }
+  }
 
   for (const item of Object.values(bundle)) {
     if (item.type !== "chunk") continue;
@@ -691,6 +772,32 @@ export interface VinextOptions {
    */
   appDir?: string;
   /**
+   * Force-disable App Router detection even when an app/ directory exists.
+   * Only the Pages Router pipeline will be active.
+   * Intended for testing and tools that need to build only the Pages Router
+   * bundle from a hybrid (app + pages) project.
+   * @default false
+   */
+  disableAppRouter?: boolean;
+  /**
+   * Override the output directory for the RSC server bundle.
+   * Absolute paths are used as-is; relative paths are resolved from the
+   * Vite root. Defaults to "dist/server".
+   * Intended for tests that need to build multiple fixtures in parallel
+   * without clobbering each other's output.
+   */
+  rscOutDir?: string;
+  /**
+   * Override the output directory for the SSR bundle.
+   * Defaults to "dist/server/ssr".
+   */
+  ssrOutDir?: string;
+  /**
+   * Override the output directory for the client bundle.
+   * Defaults to Vite's default (dist/client or dist).
+   */
+  clientOutDir?: string;
+  /**
    * Auto-register @vitejs/plugin-rsc when an app/ directory is detected.
    * Set to `false` to disable auto-registration (e.g. if you configure
    * @vitejs/plugin-rsc manually with custom options).
@@ -699,9 +806,9 @@ export interface VinextOptions {
   rsc?: boolean;
   /**
    * Options passed to @vitejs/plugin-react (React Fast Refresh + JSX transform).
-   * Enabled by default. Set to `false` to disable (e.g. if you already have
-   * @vitejs/plugin-react in your vite.config.ts), or pass an options object
-   * to customize the Babel transform.
+   * Enabled by default. Set to `false` to disable (e.g. if you configure
+   * @vitejs/plugin-react manually in your vite.config.ts), or pass an options
+   * object to customize the Babel transform.
    * @default true
    */
   react?: VitePluginReactOptions | boolean;
@@ -765,8 +872,9 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
   const autoRsc = options.rsc !== false;
   const earlyBaseDir = options.appDir ?? process.cwd();
   const earlyAppDirExists =
-    fs.existsSync(path.join(earlyBaseDir, "app")) ||
-    fs.existsSync(path.join(earlyBaseDir, "src", "app"));
+    !options.disableAppRouter &&
+    (fs.existsSync(path.join(earlyBaseDir, "app")) ||
+      fs.existsSync(path.join(earlyBaseDir, "src", "app")));
 
   // IMPORTANT: Resolve @vitejs/plugin-rsc subpath imports from the user's
   // project root, not from vinext's own package location. When vinext is
@@ -780,16 +888,18 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
   //
   // Pre-resolve both the main plugin and the /transforms subpath eagerly
   // so all import() calls in this module use consistent resolution.
-  const earlyRequire = createRequire(path.join(earlyBaseDir, "package.json"));
+  let resolvedReactPath: string | null = null;
   let resolvedRscPath: string | null = null;
   let resolvedRscTransformsPath: string | null = null;
-  try {
-    resolvedRscPath = earlyRequire.resolve("@vitejs/plugin-rsc");
-    resolvedRscTransformsPath = earlyRequire.resolve("@vitejs/plugin-rsc/transforms");
-  } catch {
-    // @vitejs/plugin-rsc not installed — that's fine for Pages Router
-    // projects. If App Router is detected, the error is thrown below.
-  }
+  // Prefer the user's project graph so vinext shares the app's Vite/plugin
+  // instances. In source/workspace development, test fixtures may not declare
+  // peer deps explicitly, so fall back to vinext's own install location.
+  resolvedReactPath = resolveOptionalDependency(earlyBaseDir, "@vitejs/plugin-react");
+  resolvedRscPath = resolveOptionalDependency(earlyBaseDir, "@vitejs/plugin-rsc");
+  resolvedRscTransformsPath = resolveOptionalDependency(
+    earlyBaseDir,
+    "@vitejs/plugin-rsc/transforms",
+  );
 
   // If app/ exists and auto-RSC is enabled, create a lazy Promise that
   // resolves to the configured RSC plugin array. Vite's asyncFlatten
@@ -805,16 +915,40 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
       );
     }
     const rscImport = import(pathToFileURL(resolvedRscPath).href);
-    rscPluginPromise = rscImport.then((mod) => {
-      const rsc = mod.default;
-      return rsc({
-        entries: {
-          rsc: VIRTUAL_RSC_ENTRY,
-          ssr: VIRTUAL_APP_SSR_ENTRY,
-          client: VIRTUAL_APP_BROWSER_ENTRY,
-        },
+    rscPluginPromise = rscImport
+      .then((mod) => {
+        const rsc = mod.default;
+        return rsc({
+          entries: {
+            rsc: VIRTUAL_RSC_ENTRY,
+            ssr: VIRTUAL_APP_SSR_ENTRY,
+            client: VIRTUAL_APP_BROWSER_ENTRY,
+          },
+        });
+      })
+      .catch((cause) => {
+        throw new Error("vinext: Failed to load @vitejs/plugin-rsc.", { cause });
       });
-    });
+  }
+
+  const reactOptions = options.react && options.react !== true ? options.react : undefined;
+
+  let reactPluginPromise: Promise<PluginOption[]> | null = null;
+  if (options.react !== false) {
+    if (!resolvedReactPath) {
+      throw new Error(
+        "vinext: @vitejs/plugin-react is not installed.\n" +
+          "Run: " +
+          detectPackageManager(process.cwd()) +
+          " @vitejs/plugin-react",
+      );
+    }
+    const reactImport = import(pathToFileURL(resolvedReactPath).href);
+    reactPluginPromise = reactImport
+      .then((mod) => (mod as VitePluginReactModule).default(reactOptions))
+      .catch((cause) => {
+        throw new Error("vinext: Failed to load @vitejs/plugin-react.", { cause });
+      });
   }
 
   const imageImportDimCache = new Map<string, { width: number; height: number }>();
@@ -823,19 +957,460 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
   // files are detected and @mdx-js/rollup is installed.
   let mdxDelegate: Plugin | null = null;
 
-  const reactPlugin =
-    options.react === false ? false : react(options.react === true ? undefined : options.react);
-
   const plugins: PluginOption[] = [
     // Resolve tsconfig paths/baseUrl aliases so real-world Next.js repos
     // that use @/*, #/*, or baseUrl imports work out of the box.
     // Vite 8+ supports this natively via resolve.tsconfigPaths.
     ...(viteMajorVersion >= 8 ? [] : [tsconfigPaths()]),
     // React Fast Refresh + JSX transform for client components.
-    reactPlugin,
+    reactPluginPromise,
     // Transform CJS require()/module.exports to ESM before other plugins
     // analyze imports (RSC directive scanning, shim resolution, etc.)
     commonjs(),
+    // Fix 'use server' closure variable collision with local declarations.
+    //
+    // @vitejs/plugin-rsc uses `periscopic` to find closure variables for
+    // 'use server' inline functions. Due to how periscopic handles block scopes,
+    // `const X = ...` declared inside a 'use server' function body is tracked in
+    // the BlockStatement scope (not the FunctionDeclaration scope). When periscopic
+    // searches for the owner of a reference `X`, it finds the block scope — which
+    // is neither the function scope nor the module scope — so it incorrectly
+    // classifies `X` as a closure variable from the outer scope.
+    //
+    // The result: plugin-rsc injects `const [X] = await decryptActionBoundArgs(...)`
+    // at the top of the hoisted function, colliding with the existing `const X = ...`
+    // declaration in the body. This causes a SyntaxError.
+    //
+    // Fix: before plugin-rsc sees the file, detect any 'use server' function whose
+    // local `const/let/var` declarations shadow an outer-scope variable, and rename
+    // the inner declarations (+ usages within that function) to `__local_X`. This
+    // eliminates the collision without changing semantics.
+    //
+    // This is a general fix that works for any library — not just @payloadcms/next.
+    {
+      name: "vinext:fix-use-server-closure-collision",
+      enforce: "pre" as const,
+      transform(code: string, id: string) {
+        // Quick bail-out: only files that contain 'use server' inline
+        if (!code.includes("use server")) return null;
+        // Only JS/TS files
+        if (!/\.(js|jsx|ts|tsx|mjs|cjs)$/.test(id.split("?")[0])) return null;
+
+        let ast: any;
+        try {
+          ast = parseAst(code);
+        } catch {
+          return null;
+        }
+
+        function collectPatternNames(pattern: any, names: Set<string>) {
+          if (!pattern) return;
+          if (pattern.type === "Identifier") {
+            names.add(pattern.name);
+          } else if (pattern.type === "ObjectPattern") {
+            for (const prop of pattern.properties) {
+              collectPatternNames(prop.value ?? prop.argument, names);
+            }
+          } else if (pattern.type === "ArrayPattern") {
+            for (const elem of pattern.elements) {
+              collectPatternNames(elem, names);
+            }
+          } else if (pattern.type === "RestElement" || pattern.type === "AssignmentPattern") {
+            collectPatternNames(pattern.left ?? pattern.argument, names);
+          }
+        }
+
+        // Check if a block body has 'use server' as its leading directive prologue.
+        // Only the first contiguous run of string-literal expression statements
+        // counts — a "use server" string mid-function is not a directive.
+        function hasUseServerDirective(body: any[]): boolean {
+          for (const stmt of body) {
+            if (
+              stmt.type === "ExpressionStatement" &&
+              stmt.expression?.type === "Literal" &&
+              typeof stmt.expression.value === "string"
+            ) {
+              if (stmt.expression.value === "use server") return true;
+              // Any other string literal in the prologue — keep scanning
+              continue;
+            }
+            // First non-string-literal statement ends the prologue
+            break;
+          }
+          return false;
+        }
+
+        // Find all 'use server' inline functions and check for collisions.
+        //
+        // `ancestorNames` accumulates the names that are in scope in all ancestor
+        // function/program bodies as we descend — this is the correct set to
+        // compare against, not a whole-AST walk (which would pick up siblings).
+        const s = new MagicString(code);
+        // Track source ranges already rewritten so renamingWalk never calls
+        // s.update() twice on the same span (MagicString throws if it does).
+        const renamedRanges = new Set<string>();
+        let changed = false;
+
+        function visitNode(node: any, ancestorNames: Set<string>) {
+          if (!node || typeof node !== "object") return;
+
+          const isFn =
+            node.type === "FunctionDeclaration" ||
+            node.type === "FunctionExpression" ||
+            node.type === "ArrowFunctionExpression";
+
+          if (!isFn) {
+            // Non-function nodes (Program, BlockStatement, IfStatement, CatchClause,
+            // etc.) don't introduce a new function scope, but they may contain
+            // variable declarations and catch bindings that are visible to nested
+            // functions as ancestor names.  Accumulate those into a new set before
+            // recursing so we don't mutate the caller's set.
+            const namesForChildren = new Set(ancestorNames);
+
+            // CatchClause: `catch (e)` — `e` is in scope for the catch body
+            if (node.type === "CatchClause" && node.param) {
+              collectPatternNames(node.param, namesForChildren);
+            }
+
+            // Collect names visible at function scope from this node:
+            //   - FunctionDeclaration names (hoisted to enclosing scope)
+            //   - ClassDeclaration names (block-scoped like let, but treated as
+            //     function-scoped for our purposes since periscopic sees them)
+            //   - var declarations (hoisted to function scope, found anywhere)
+            // We do NOT collect let/const from nested blocks here — those are
+            // block-scoped and not visible to sibling/outer function declarations.
+            collectFunctionScopedNames(node, namesForChildren);
+            // Also collect let/const/var/class/import declared as immediate children
+            // of this node (e.g. top-level Program statements, or the direct body of
+            // a BlockStatement) — those ARE in scope for everything in the same block.
+            const immediateStmts: any[] =
+              node.type === "Program" ? node.body : node.type === "BlockStatement" ? node.body : [];
+            for (const stmt of immediateStmts) {
+              if (stmt?.type === "VariableDeclaration") {
+                for (const decl of stmt.declarations)
+                  collectPatternNames(decl.id, namesForChildren);
+              } else if (stmt?.type === "ClassDeclaration" && stmt.id?.name) {
+                namesForChildren.add(stmt.id.name);
+              } else if (stmt?.type === "ImportDeclaration") {
+                for (const spec of stmt.specifiers ?? []) {
+                  // ImportDefaultSpecifier, ImportNamespaceSpecifier, ImportSpecifier
+                  // all have `local.name` as the binding name in this module.
+                  if (spec.local?.name) namesForChildren.add(spec.local.name);
+                }
+              }
+            }
+
+            for (const key of Object.keys(node)) {
+              if (key === "type") continue;
+              const child = node[key];
+              if (Array.isArray(child)) {
+                for (const c of child) visitNode(c, namesForChildren);
+              } else if (child && typeof child === "object" && child.type) {
+                visitNode(child, namesForChildren);
+              }
+            }
+            return;
+          }
+
+          // Build the ancestor name set visible inside this function:
+          // everything the parent saw, plus this function's own params.
+          const namesForBody = new Set(ancestorNames);
+          for (const p of node.params ?? []) collectPatternNames(p, namesForBody);
+
+          // Check whether the body has the 'use server' directive.
+          const bodyStmts: any[] = node.body?.type === "BlockStatement" ? node.body.body : [];
+          const isServerFn = hasUseServerDirective(bodyStmts);
+
+          if (isServerFn) {
+            // Collect ALL variables declared anywhere in this function body.
+            // This includes direct bodyStmts, but also for...of/for...in loop
+            // variables, declarations inside if/try/while blocks, etc.
+            // periscopic puts these in the BlockStatement scope (not the function
+            // scope), so they get mis-classified as closure vars from the outer scope.
+            // We use collectAllDeclaredNames (recursive, crosses blocks, stops at
+            // nested function bodies) to catch every possible declaration site.
+            const localDecls = new Set<string>();
+            collectAllDeclaredNames(node.body, localDecls);
+
+            // Find collisions: local decls that shadow a name from ancestor scopes.
+            // collisionRenames maps original name → chosen rename target, taking
+            // into account that `__local_${name}` may itself already be declared
+            // (e.g. the user wrote `const __local_cookies = ...`).  In that case
+            // we try `__local_0_${name}`, `__local_1_${name}`, … until we find a
+            // free name.  This prevents a secondary collision.
+            const collisionRenames = new Map<string, string>();
+            for (const name of localDecls) {
+              if (namesForBody.has(name)) {
+                let to = `__local_${name}`;
+                let suffix = 0;
+                while (localDecls.has(to) || namesForBody.has(to)) {
+                  to = `__local_${suffix}_${name}`;
+                  suffix++;
+                }
+                collisionRenames.set(name, to);
+              }
+            }
+
+            if (collisionRenames.size > 0) {
+              for (const [name, to] of collisionRenames) {
+                renamingWalk(node.body, name, to);
+              }
+              changed = true;
+            }
+
+            // Build the ancestor set for children of this server function.
+            // Colliding names have been renamed in this body, e.g. `cookies` →
+            // `__local_cookies`.  The original name no longer exists as a binding
+            // in this scope, so we must remove it from the set and add the renamed
+            // version instead.  Leaving the original name in would cause nested
+            // server functions to see it as an ancestor binding and spuriously flag
+            // their own independent `const cookies` as a collision.
+            const namesForChildren = new Set(namesForBody);
+            for (const name of localDecls) {
+              if (collisionRenames.has(name)) {
+                namesForChildren.delete(name);
+                namesForChildren.add(collisionRenames.get(name)!);
+              } else {
+                namesForChildren.add(name);
+              }
+            }
+
+            // Recurse into children — nested 'use server' functions must be visited.
+            // Skip node.body itself (already handled by renamingWalk above for
+            // collisions); we recurse into each statement individually so that
+            // nested functions inside the body get their own visitNode pass with
+            // the correct ancestorNames.
+            for (const stmt of bodyStmts) {
+              visitNode(stmt, namesForChildren);
+            }
+            // Also visit params (they can contain default expressions with closures)
+            for (const p of node.params ?? []) visitNode(p, ancestorNames);
+            return;
+          }
+
+          // Not a server function — build the ancestor set for nested functions:
+          //   - var declarations anywhere in this function body (function-scoped)
+          //   - FunctionDeclaration names anywhere in this function body
+          //   - let/const only from the top-level statements of this function body
+          //     (block-scoped — not visible to nested fns in sibling blocks)
+          const namesForChildren = new Set(namesForBody);
+          collectFunctionScopedNames(node.body, namesForChildren);
+          for (const stmt of bodyStmts) {
+            if (stmt?.type === "VariableDeclaration" && stmt.kind !== "var") {
+              for (const decl of stmt.declarations) collectPatternNames(decl.id, namesForChildren);
+            }
+          }
+
+          for (const key of Object.keys(node)) {
+            if (key === "type") continue;
+            const child = node[key];
+            if (Array.isArray(child)) {
+              for (const c of child) visitNode(c, namesForChildren);
+            } else if (child && typeof child === "object" && child.type) {
+              visitNode(child, namesForChildren);
+            }
+          }
+        }
+
+        // Walk an AST subtree renaming all variable-reference Identifier nodes
+        // matching `from` to `to`.
+        //
+        // Correctness rules:
+        //   - Non-computed MemberExpression.property is NOT a variable reference
+        //   - Non-computed Property.key is NOT a variable reference
+        //   - Shorthand Property { x } must be expanded to { x: __local_x }
+        //   - A nested function that re-declares `from` in its params OR anywhere
+        //     in its body via var/const/let (including inside control flow) is a
+        //     new binding — stop descending into it
+        //   - Never call s.update() on the same source range twice
+        //
+        // `parent` is the direct parent AST node, used to detect property contexts.
+        function renamingWalk(node: any, from: string, to: string, parent?: any) {
+          if (!node || typeof node !== "object") return;
+
+          if (node.type === "Identifier" && node.name === from) {
+            // Non-computed member expression property: obj.cookies — not a ref
+            if (
+              parent?.type === "MemberExpression" &&
+              parent.property === node &&
+              !parent.computed
+            ) {
+              return;
+            }
+
+            // Non-computed property key in an object literal
+            if (parent?.type === "Property" && parent.key === node && !parent.computed) {
+              if (parent.shorthand) {
+                // { cookies } — key and value are the same AST node.
+                // Expand to { cookies: __local_cookies } by rewriting at the key
+                // visit; skip the value visit via the guard below.
+                const rangeKey = `${node.start}:${node.end}`;
+                if (!renamedRanges.has(rangeKey)) {
+                  renamedRanges.add(rangeKey);
+                  s.update(node.start, node.end, `${from}: ${to}`);
+                }
+              }
+              // Either way, key is not a variable reference — do not rename it.
+              return;
+            }
+
+            // Value side of a shorthand property — same node as key, already handled
+            if (parent?.type === "Property" && parent.shorthand && parent.value === node) {
+              return;
+            }
+
+            // LabeledStatement label: `cookies: for (...)` — not a variable reference
+            if (parent?.type === "LabeledStatement" && parent.label === node) {
+              return;
+            }
+
+            // break/continue label: `break cookies` / `continue cookies` — not a variable reference
+            if (
+              (parent?.type === "BreakStatement" || parent?.type === "ContinueStatement") &&
+              parent.label === node
+            ) {
+              return;
+            }
+
+            const rangeKey = `${node.start}:${node.end}`;
+            if (!renamedRanges.has(rangeKey)) {
+              renamedRanges.add(rangeKey);
+              s.update(node.start, node.end, to);
+            }
+            return;
+          }
+
+          // For nested function nodes, check whether they re-declare `from`.
+          // If they do, stop — the name in that nested scope is a different binding.
+          // We must check ALL var declarations anywhere in the body (var hoists),
+          // not just top-level statements.
+          if (
+            node.type === "FunctionDeclaration" ||
+            node.type === "FunctionExpression" ||
+            node.type === "ArrowFunctionExpression"
+          ) {
+            const nestedDecls = new Set<string>();
+            // Params
+            for (const p of node.params ?? []) collectPatternNames(p, nestedDecls);
+            // Recursively find all var/const/let declarations in the body,
+            // including those nested inside if/for/while/etc.
+            collectAllDeclaredNames(node.body, nestedDecls);
+            if (nestedDecls.has(from)) return;
+
+            // Also stop at nested 'use server' functions — visitNode will handle them
+            // independently with the correct collision set, preventing double-rewrites.
+            if (node.body?.type === "BlockStatement" && hasUseServerDirective(node.body.body)) {
+              return;
+            }
+          }
+
+          for (const key of Object.keys(node)) {
+            if (key === "type" || key === "start" || key === "end") continue;
+            const child = node[key];
+            if (Array.isArray(child)) {
+              for (const c of child) renamingWalk(c, from, to, node);
+            } else if (child && typeof child === "object" && child.type) {
+              renamingWalk(child, from, to, node);
+            }
+          }
+        }
+
+        // Collect names that are visible at function scope from a given subtree.
+        //
+        // Two separate helpers with different traversal rules:
+        //
+        //   collectFunctionScopedNames(node, names)
+        //     Collects `var` declarations and `FunctionDeclaration` names anywhere
+        //     in the subtree, crossing block boundaries (if/for/while/try/catch)
+        //     but NOT crossing nested function bodies.  `let`/`const` in nested
+        //     blocks are intentionally skipped — they are block-scoped and not
+        //     visible outside that block.
+        //     Use this when building ancestorNames for nested functions.
+        //
+        //   collectAllDeclaredNames(node, names)
+        //     Collects ALL var/let/const declarations anywhere in the subtree,
+        //     crossing block boundaries but not nested function bodies.
+        //     Used only by renamingWalk's re-declaration check, where we want to
+        //     know if ANY declaration of `from` exists in a nested function's scope
+        //     (params already handled separately).
+
+        function collectFunctionScopedNames(node: any, names: Set<string>) {
+          if (!node || typeof node !== "object") return;
+          // FunctionDeclaration: its name is a binding in the enclosing scope.
+          // Record it, then stop — don't recurse into the body (different scope).
+          if (node.type === "FunctionDeclaration") {
+            if (node.id?.name) names.add(node.id.name);
+            return;
+          }
+          // ClassDeclaration: like FunctionDeclaration, its name is a binding in
+          // the enclosing scope.  Don't recurse into the body.
+          if (node.type === "ClassDeclaration") {
+            if (node.id?.name) names.add(node.id.name);
+            return;
+          }
+          // FunctionExpression / ArrowFunctionExpression names are only in scope
+          // inside their own body, not the enclosing scope — skip entirely.
+          if (node.type === "FunctionExpression" || node.type === "ArrowFunctionExpression") {
+            return;
+          }
+          // var declarations are function-scoped — collect them wherever they appear.
+          // let/const at a nested block level are block-scoped and NOT visible to
+          // sibling or outer function declarations, so skip them here.
+          if (node.type === "VariableDeclaration" && node.kind === "var") {
+            for (const decl of node.declarations) collectPatternNames(decl.id, names);
+          }
+          for (const key of Object.keys(node)) {
+            if (key === "type") continue;
+            const child = node[key];
+            if (Array.isArray(child)) {
+              for (const c of child) collectFunctionScopedNames(c, names);
+            } else if (child && typeof child === "object" && child.type) {
+              collectFunctionScopedNames(child, names);
+            }
+          }
+        }
+
+        // Collect ALL declared names (var/let/const/class/function) in a subtree,
+        // crossing blocks but not nested function bodies or class bodies.
+        // Used by renamingWalk's re-declaration check where any shadowing
+        // declaration — regardless of kind — must stop the rename from descending
+        // further, and by the server-function local-decl scan to detect all
+        // possible collision sites (including class declarations in the body).
+        function collectAllDeclaredNames(node: any, names: Set<string>) {
+          if (!node || typeof node !== "object") return;
+          if (node.type === "VariableDeclaration") {
+            for (const decl of node.declarations) collectPatternNames(decl.id, names);
+          }
+          // FunctionDeclaration name is a binding in the enclosing scope — record it.
+          if (node.type === "FunctionDeclaration") {
+            if (node.id?.name) names.add(node.id.name);
+            return; // don't recurse into its body
+          }
+          // ClassDeclaration name is a binding in the enclosing scope — record it.
+          if (node.type === "ClassDeclaration") {
+            if (node.id?.name) names.add(node.id.name);
+            return; // don't recurse into the class body (separate scope)
+          }
+          if (node.type === "FunctionExpression" || node.type === "ArrowFunctionExpression") {
+            return; // different scope — stop
+          }
+          for (const key of Object.keys(node)) {
+            if (key === "type") continue;
+            const child = node[key];
+            if (Array.isArray(child)) {
+              for (const c of child) collectAllDeclaredNames(c, names);
+            } else if (child && typeof child === "object" && child.type) {
+              collectAllDeclaredNames(child, names);
+            }
+          }
+        }
+
+        visitNode(ast, new Set());
+
+        if (!changed) return null;
+        return { code: s.toString(), map: s.generateMap({ hires: "boundary" }) };
+      },
+    },
     {
       name: "vinext:config",
       enforce: "pre",
@@ -900,7 +1475,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
         pagesDir = path.join(baseDir, "pages");
         appDir = path.join(baseDir, "app");
         hasPagesDir = fs.existsSync(pagesDir);
-        hasAppDir = fs.existsSync(appDir);
+        hasAppDir = !options.disableAppRouter && fs.existsSync(appDir);
         middlewarePath = findMiddlewareFile(root);
         instrumentationPath = findInstrumentationFile(root);
 
@@ -988,6 +1563,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
           "next/document": path.join(shimsDir, "document"),
           "next/document.js": path.join(shimsDir, "document"),
           "next/config": path.join(shimsDir, "config"),
+          "next/config.js": path.join(shimsDir, "config"),
           "next/script": path.join(shimsDir, "script"),
           "next/script.js": path.join(shimsDir, "script"),
           "next/server": path.join(shimsDir, "server"),
@@ -997,7 +1573,9 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
           "next/headers": path.join(shimsDir, "headers"),
           "next/headers.js": path.join(shimsDir, "headers"),
           "next/font/google": path.join(shimsDir, "font-google"),
+          "next/font/google.js": path.join(shimsDir, "font-google"),
           "next/font/local": path.join(shimsDir, "font-local"),
+          "next/font/local.js": path.join(shimsDir, "font-local"),
           "next/cache": path.join(shimsDir, "cache"),
           "next/cache.js": path.join(shimsDir, "cache"),
           "next/form": path.join(shimsDir, "form"),
@@ -1007,6 +1585,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
           "next/web-vitals": path.join(shimsDir, "web-vitals"),
           "next/web-vitals.js": path.join(shimsDir, "web-vitals"),
           "next/amp": path.join(shimsDir, "amp"),
+          "next/amp.js": path.join(shimsDir, "amp"),
           "next/error": path.join(shimsDir, "error"),
           "next/error.js": path.join(shimsDir, "error"),
           "next/constants": path.join(shimsDir, "constants"),
@@ -1064,6 +1643,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
           "vinext/fetch-cache": path.join(shimsDir, "fetch-cache"),
           "vinext/cache-runtime": path.join(shimsDir, "cache-runtime"),
           "vinext/navigation-state": path.join(shimsDir, "navigation-state"),
+          "vinext/unified-request-context": path.join(shimsDir, "unified-request-context"),
           "vinext/router-state": path.join(shimsDir, "router-state"),
           "vinext/head-state": path.join(shimsDir, "head-state"),
           "vinext/i18n-state": path.join(shimsDir, "i18n-state"),
@@ -1183,6 +1763,17 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                   ) {
                     return;
                   }
+                  // Dynamic route pages that don't export generateStaticParams
+                  // produce IMPORT_IS_UNDEFINED warnings because the virtual RSC
+                  // entry unconditionally references mod?.generateStaticParams for
+                  // every dynamic route. The ?. guards the access safely at runtime;
+                  // suppress the build-time noise.
+                  if (
+                    warning.code === "IMPORT_IS_UNDEFINED" &&
+                    warning.message?.includes("generateStaticParams")
+                  ) {
+                    return;
+                  }
                   if (userOnwarn) {
                     userOnwarn(warning, defaultHandler);
                   } else {
@@ -1251,15 +1842,9 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
             dedupe: ["react", "react-dom", "react/jsx-runtime", "react/jsx-dev-runtime"],
             ...(shouldEnableNativeTsconfigPaths ? { tsconfigPaths: true } : {}),
           },
-          // Exclude vinext from dependency optimization so esbuild doesn't
-          // scan dist files containing virtual module imports (virtual:vinext-*)
-          // that only resolve at Vite plugin time, not during pre-bundling.
-          // Exclude @vercel/og so Vite's esbuild pre-bundler doesn't cache it
-          // before our vinext:og-font-patch transform can inline the font and
-          // patch the yoga WASM instantiation for workerd compatibility.
-          optimizeDeps: {
-            exclude: ["vinext", "@vercel/og"],
-          },
+          // NOTE: top-level optimizeDeps is now set below (after capturing
+          // incoming values from earlier plugins) so both Pages Router and
+          // App Router builds merge correctly.
           // Enable JSX in .tsx/.jsx files
           // Vite 7 uses `esbuild` for transforms, Vite 8+ uses `oxc`
           ...(viteMajorVersion >= 8
@@ -1279,11 +1864,38 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
         // like `rsc`. Native addon packages (e.g. better-sqlite3) listed
         // in ssr.external must be externalized from ALL server environments.
         // Vite's SSROptions.external is `string[] | true`; handle both forms.
+        //
+        // Also merge in `serverExternalPackages` from next.config (and the
+        // legacy `experimental.serverComponentsExternalPackages` alias). These
+        // are packages that Next.js intentionally skips bundling and loads
+        // natively — e.g. packages that import Node-specific entry points via
+        // conditional exports (like `file-type` which exports `fileTypeFromFile`
+        // only from its `node` condition, not from the universal `default` one).
+        // Without externalizing them, Vite's optimizer picks the wrong export
+        // condition and the build fails with MISSING_EXPORT errors.
+        const nextServerExternal: string[] = nextConfig?.serverExternalPackages ?? [];
         const userSsrExternal: string[] | true = Array.isArray(config.ssr?.external)
-          ? config.ssr.external
+          ? [...config.ssr.external, ...nextServerExternal]
           : config.ssr?.external === true
             ? true
-            : [];
+            : nextServerExternal;
+
+        // Capture top-level optimizeDeps populated by earlier plugins
+        // (e.g. @lingui/vite-plugin) so we merge rather than overwrite.
+        // Moved above the hasAppDir branch so both Pages Router and App
+        // Router code paths can use these values.
+        const incomingExclude: string[] =
+          (config.optimizeDeps?.exclude as string[] | undefined) ?? [];
+        const incomingInclude: string[] =
+          (config.optimizeDeps?.include as string[] | undefined) ?? [];
+
+        // Merge incoming excludes into the top-level optimizeDeps so
+        // Pages Router builds (which don't set per-environment configs)
+        // also preserve entries from earlier plugins.
+        viteConfig.optimizeDeps = {
+          exclude: [...new Set([...incomingExclude, "vinext", "@vercel/og"])],
+          ...(incomingInclude.length > 0 ? { include: incomingInclude } : {}),
+        };
 
         // If app/ directory exists, configure RSC environments
         if (hasAppDir) {
@@ -1322,11 +1934,11 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                     },
                   }),
               optimizeDeps: {
-                exclude: ["vinext", "@vercel/og"],
+                exclude: [...new Set([...incomingExclude, "vinext", "@vercel/og"])],
                 entries: appEntries,
               },
               build: {
-                outDir: "dist/server",
+                outDir: options.rscOutDir ?? "dist/server",
                 rollupOptions: {
                   input: { index: VIRTUAL_RSC_ENTRY },
                 },
@@ -1347,11 +1959,11 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                     },
                   }),
               optimizeDeps: {
-                exclude: ["vinext", "@vercel/og"],
+                exclude: [...new Set([...incomingExclude, "vinext", "@vercel/og"])],
                 entries: appEntries,
               },
               build: {
-                outDir: "dist/server/ssr",
+                outDir: options.ssrOutDir ?? "dist/server/ssr",
                 rollupOptions: {
                   input: { index: VIRTUAL_APP_SSR_ENTRY },
                 },
@@ -1366,7 +1978,17 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
               // imports to leak to Node's native ESM loader (ERR_UNSUPPORTED_ESM_URL_SCHEME).
               consumer: "client",
               optimizeDeps: {
-                exclude: ["vinext"],
+                // Exclude server-external packages from the client dep optimizer.
+                // These packages are server-only by design (listed in next.config's
+                // `serverExternalPackages`). If the client optimizer crawls into
+                // them through app/ entries, it will use browser export conditions
+                // and pick the wrong conditional export (e.g. `file-type` exports
+                // `fileTypeFromFile` only from its `node` condition via `index.js`,
+                // but the browser optimizer resolves to `core.js` which lacks it,
+                // causing MISSING_EXPORT build failures).
+                exclude: [
+                  ...new Set([...incomingExclude, "vinext", "@vercel/og", ...nextServerExternal]),
+                ],
                 // Crawl app/ source files up front so client-only deps imported
                 // by user components are discovered during startup instead of
                 // triggering a late re-optimisation + full page reload.
@@ -1374,11 +1996,14 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                 // React packages aren't crawled from app/ source files,
                 // so must be pre-included to avoid late discovery (#25).
                 include: [
-                  "react",
-                  "react-dom",
-                  "react-dom/client",
-                  "react/jsx-runtime",
-                  "react/jsx-dev-runtime",
+                  ...new Set([
+                    ...incomingInclude,
+                    "react",
+                    "react-dom",
+                    "react-dom/client",
+                    "react/jsx-runtime",
+                    "react/jsx-dev-runtime",
+                  ]),
                 ],
               },
               build: {
@@ -1423,6 +2048,31 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
       },
 
       configResolved(config) {
+        // Detect double React plugin registration. When vinext auto-injects
+        // @vitejs/plugin-react AND the user also registers it manually, the
+        // React transform / refresh pipeline runs twice.
+        if (reactPluginPromise) {
+          // Assumes @vitejs/plugin-react top-level plugin names continue to use
+          // the vite:react* prefix across supported versions.
+          const reactRootPlugins = config.plugins.filter(
+            (p: any) => p && typeof p.name === "string" && p.name.startsWith("vite:react"),
+          );
+          const counts = new Map<string, number>();
+          for (const plugin of reactRootPlugins) {
+            counts.set(plugin.name, (counts.get(plugin.name) ?? 0) + 1);
+          }
+          const hasDuplicateReactPlugin = [...counts.values()].some((count) => count > 1);
+          if (hasDuplicateReactPlugin) {
+            throw new Error(
+              "[vinext] Duplicate @vitejs/plugin-react detected.\n" +
+                "         vinext auto-registers @vitejs/plugin-react by default.\n" +
+                "         Your config also registers it manually, which duplicates React transforms.\n\n" +
+                "         Fix: remove the explicit react() call from your plugins array.\n" +
+                "         Or: pass react: false to vinext() if you want to configure react() yourself.",
+            );
+          }
+        }
+
         // Detect double RSC plugin registration. When vinext auto-injects
         // @vitejs/plugin-rsc AND the user also registers it manually, the
         // RSC transform pipeline runs twice — doubling build time.
@@ -1450,7 +2100,8 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
           config.command === "build" &&
           !hasCloudflarePlugin &&
           !hasNitroPlugin &&
-          hasWranglerConfig(root)
+          hasWranglerConfig(root) &&
+          !options.disableAppRouter
         ) {
           throw new Error(
             formatMissingCloudflarePluginError({
@@ -1545,12 +2196,13 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
               allowedDevOrigins: nextConfig?.allowedDevOrigins,
               bodySizeLimit: nextConfig?.serverActionsBodySizeLimit,
               i18n: nextConfig?.i18n,
+              hasPagesDir,
             },
             instrumentationPath,
           );
         }
         if (id === RESOLVED_APP_SSR_ENTRY && hasAppDir) {
-          return generateSsrEntry();
+          return generateSsrEntry(hasPagesDir);
         }
         if (id === RESOLVED_APP_BROWSER_ENTRY && hasAppDir) {
           return generateBrowserEntry();
@@ -1985,7 +2637,8 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                   res.end("Only relative URLs allowed");
                   return;
                 }
-                res.writeHead(302, { Location: imgUrl });
+                const encodedLocation = resolvedImg.pathname + resolvedImg.search;
+                res.writeHead(302, { Location: encodedLocation });
                 res.end();
                 return;
               }
@@ -2120,6 +2773,15 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
               };
 
               let middlewareRequestHeaders: Headers | null = null;
+              let deferredMwResponseHeaders: [string, string][] | null = null;
+
+              const applyDeferredMwHeaders = () => {
+                if (deferredMwResponseHeaders) {
+                  for (const [key, value] of deferredMwResponseHeaders) {
+                    res.appendHeader(key, value);
+                  }
+                }
+              };
 
               // Run middleware.ts if present
               if (middlewarePath) {
@@ -2200,9 +2862,21 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                     applyRequestHeadersToNodeRequest(middlewareRequestHeaders);
                   }
 
-                  for (const [key, value] of result.responseHeaders) {
-                    if (!key.startsWith("x-middleware-")) {
-                      res.appendHeader(key, value);
+                  if (hasAppDir) {
+                    // Hybrid app+pages: defer response headers. They'll be
+                    // applied to res for Pages routes or forwarded to the RSC
+                    // entry (via x-vinext-mw-ctx) for App Router routes.
+                    deferredMwResponseHeaders = [];
+                    for (const [key, value] of result.responseHeaders) {
+                      if (!key.startsWith("x-middleware-")) {
+                        deferredMwResponseHeaders.push([key, value]);
+                      }
+                    }
+                  } else {
+                    for (const [key, value] of result.responseHeaders) {
+                      if (!key.startsWith("x-middleware-")) {
+                        res.appendHeader(key, value);
+                      }
                     }
                   }
                 }
@@ -2222,6 +2896,27 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                 }
                 if (result.rewriteStatus) {
                   req.__vinextRewriteStatus = result.rewriteStatus;
+                }
+
+                // Forward middleware context to the RSC entry so it can
+                // populate _mwCtx without re-running the middleware function.
+                // This prevents double execution in hybrid app+pages dev mode.
+                if (hasAppDir) {
+                  const mwCtxEntries: [string, string][] = [];
+                  if (result.responseHeaders) {
+                    for (const [key, value] of result.responseHeaders) {
+                      // Exclude control headers that runMiddleware already
+                      // consumed — matches the RSC entry's inline filtering.
+                      if (key !== "x-middleware-next" && key !== "x-middleware-rewrite") {
+                        mwCtxEntries.push([key, value]);
+                      }
+                    }
+                  }
+                  req.headers["x-vinext-mw-ctx"] = JSON.stringify({
+                    h: mwCtxEntries,
+                    s: result.rewriteStatus ?? null,
+                    r: result.rewriteUrl ?? null,
+                  });
                 }
               }
 
@@ -2252,6 +2947,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
 
               // External rewrite from beforeFiles — proxy to external URL
               if (isExternalUrl(resolvedUrl)) {
+                applyDeferredMwHeaders();
                 await proxyExternalRewriteNode(req, res, resolvedUrl);
                 return;
               }
@@ -2265,8 +2961,11 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                   fileMatcher,
                 );
                 const apiMatch = matchRoute(resolvedUrl, apiRoutes);
-                if (apiMatch && middlewareRequestHeaders) {
-                  applyRequestHeadersToNodeRequest(middlewareRequestHeaders);
+                if (apiMatch) {
+                  applyDeferredMwHeaders();
+                  if (middlewareRequestHeaders) {
+                    applyRequestHeadersToNodeRequest(middlewareRequestHeaders);
+                  }
                 }
                 const handled = await handleApiRoute(server, req, res, resolvedUrl, apiRoutes);
                 if (handled) return;
@@ -2297,6 +2996,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
 
               // External rewrite from afterFiles — proxy to external URL
               if (isExternalUrl(resolvedUrl)) {
+                applyDeferredMwHeaders();
                 await proxyExternalRewriteNode(req, res, resolvedUrl);
                 return;
               }
@@ -2315,6 +3015,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
               // Try rendering the resolved URL
               const match = matchRoute(resolvedUrl.split("?")[0], routes);
               if (match) {
+                applyDeferredMwHeaders();
                 if (middlewareRequestHeaders) {
                   applyRequestHeadersToNodeRequest(middlewareRequestHeaders);
                 }
@@ -2332,6 +3033,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                 if (fallbackRewrite) {
                   // External fallback rewrite — proxy to external URL
                   if (isExternalUrl(fallbackRewrite)) {
+                    applyDeferredMwHeaders();
                     await proxyExternalRewriteNode(req, res, fallbackRewrite);
                     return;
                   }
@@ -2339,6 +3041,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                   if (!fallbackMatch && hasAppDir) {
                     return next();
                   }
+                  applyDeferredMwHeaders();
                   if (middlewareRequestHeaders) {
                     applyRequestHeadersToNodeRequest(middlewareRequestHeaders);
                   }
@@ -2746,6 +3449,76 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
           if (!id.match(/\.(tsx?|jsx?|mjs)$/)) return null;
           if (!code.includes("use cache")) return null;
 
+          // Parse the AST first to check for actual "use cache" directives before
+          // throwing the missing-RSC error. The fast-path string check above can
+          // fire on files that contain "use cache" only in comments or string
+          // literals (e.g., in error messages), not as real directives.
+          const ast = parseAst(code);
+
+          // Check for file-level "use cache" directive
+          const cacheDirective = (ast.body as any[]).find(
+            (node: any) =>
+              node.type === "ExpressionStatement" &&
+              node.expression?.type === "Literal" &&
+              typeof node.expression.value === "string" &&
+              node.expression.value.startsWith("use cache"),
+          );
+
+          // Check for function-level "use cache" directives by walking function bodies.
+          // Accepts any function-like node: FunctionDeclaration/Expression, ArrowFunctionExpression,
+          // or MethodDefinition. MethodDefinition stores its FunctionExpression in `.value`, not
+          // `.body`, so we unwrap it here rather than at each call site to keep the callee safe.
+          function nodeHasInlineCacheDirective(node: any): boolean {
+            if (!node || typeof node !== "object") return false;
+            // MethodDefinition wraps its FunctionExpression in .value; unwrap to reach .body.
+            const fn = node.type === "MethodDefinition" ? node.value : node;
+            // fn.body is a BlockStatement node ({type:"BlockStatement", body:Statement[]}), not
+            // a raw array. Unwrap it. Arrow functions with expression bodies have a non-array
+            // .body — the BlockStatement check handles that case (body.body would be undefined).
+            const stmts = fn?.body?.type === "BlockStatement" ? fn.body.body : null;
+            if (Array.isArray(stmts)) {
+              for (const stmt of stmts) {
+                if (
+                  stmt?.type === "ExpressionStatement" &&
+                  stmt.expression?.type === "Literal" &&
+                  typeof stmt.expression?.value === "string" &&
+                  /^use cache(:\s*\w+)?$/.test(stmt.expression.value)
+                ) {
+                  return true;
+                }
+              }
+            }
+            return false;
+          }
+          function astHasInlineCache(nodes: any[]): boolean {
+            for (const node of nodes) {
+              if (!node || typeof node !== "object") continue;
+              if (
+                (node.type === "FunctionDeclaration" ||
+                  node.type === "FunctionExpression" ||
+                  node.type === "ArrowFunctionExpression" ||
+                  node.type === "MethodDefinition") &&
+                nodeHasInlineCacheDirective(node)
+              ) {
+                return true;
+              }
+              // Walk into variable declarations, export declarations, etc.
+              for (const key of Object.keys(node)) {
+                if (key === "type" || key === "start" || key === "end" || key === "loc") continue;
+                const child = node[key];
+                if (Array.isArray(child) && child.some((c) => c && typeof c === "object")) {
+                  if (astHasInlineCache(child)) return true;
+                } else if (child && typeof child === "object" && child.type) {
+                  if (astHasInlineCache([child])) return true;
+                }
+              }
+            }
+            return false;
+          }
+          const hasInlineCache = !cacheDirective && astHasInlineCache(ast.body as any[]);
+
+          if (!cacheDirective && !hasInlineCache) return null;
+
           if (!resolvedRscTransformsPath) {
             throw new Error(
               "vinext: 'use cache' requires @vitejs/plugin-rsc to be installed.\n" +
@@ -2756,16 +3529,6 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
           }
           const { transformWrapExport, transformHoistInlineDirective } = await import(
             pathToFileURL(resolvedRscTransformsPath).href
-          );
-          const ast = parseAst(code);
-
-          // Check for file-level "use cache" directive
-          const cacheDirective = (ast.body as any[]).find(
-            (node: any) =>
-              node.type === "ExpressionStatement" &&
-              node.expression?.type === "Literal" &&
-              typeof node.expression.value === "string" &&
-              node.expression.value.startsWith("use cache"),
           );
 
           if (cacheDirective) {
@@ -2786,7 +3549,9 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
             // leaf components with no {children} prop and can be cached directly.
             const isLayoutOrTemplate = /\/(layout|template)\.(tsx?|jsx?|mjs)$/.test(id);
 
-            const runtimeModuleUrl = pathToFileURL(path.join(shimsDir, "cache-runtime.js")).href;
+            const runtimeModuleUrl = pathToFileURL(
+              resolveShimModulePath(shimsDir, "cache-runtime"),
+            ).href;
             const result = transformWrapExport(code, ast as any, {
               runtime: (value: any, name: any) =>
                 `(await import(${JSON.stringify(runtimeModuleUrl)})).registerCachedFunction(${value}, ${JSON.stringify(id + ":" + name)}, ${JSON.stringify(variant)})`,
@@ -2833,9 +3598,10 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
 
           // Check for function-level "use cache" directives
           // (e.g., async function getData() { "use cache"; ... })
-          const hasInlineCache = code.includes("use cache") && !cacheDirective;
           if (hasInlineCache) {
-            const runtimeModuleUrl2 = pathToFileURL(path.join(shimsDir, "cache-runtime.js")).href;
+            const runtimeModuleUrl2 = pathToFileURL(
+              resolveShimModulePath(shimsDir, "cache-runtime"),
+            ).href;
 
             try {
               const result = transformHoistInlineDirective(code, ast as any, {

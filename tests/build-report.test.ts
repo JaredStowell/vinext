@@ -5,7 +5,7 @@
  * logic for both Pages Router and App Router routes, using real fixture files
  * where integration testing is needed.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "vite-plus/test";
 import path from "node:path";
 import {
   hasNamedExport,
@@ -384,11 +384,10 @@ describe("formatBuildReport", () => {
     expect(tableLines[2]).toContain("└");
   });
 
-  it("uses ┌ for a single-route table (not └)", () => {
+  it("uses - for a single-route table (not └)", () => {
     const rows = [{ pattern: "/", type: "static" as const }];
     const out = formatBuildReport(rows);
-    expect(out).toContain("┌ ○ /");
-    expect(out).not.toContain("└ ○ /");
+    expect(out).toContain("─ ○ /");
   });
 
   it("prints a legend line with only the types that appear", () => {
