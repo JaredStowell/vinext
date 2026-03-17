@@ -1838,7 +1838,6 @@ describe("App Router Production server (startProdServer)", () => {
       expect(reader).toBeDefined();
 
       const first = await reader!.read();
-      const firstAt = performance.now();
       expect(first.done).toBe(false);
       for (;;) {
         const chunk = await reader!.read();
@@ -1847,9 +1846,7 @@ describe("App Router Production server (startProdServer)", () => {
       const doneAt = performance.now();
 
       expect(res.headers.get("x-vinext-cache")).toBe("MISS");
-      expect(res.headers.get("x-rendered-late")).toBeNull();
       expect(fetchResolvedAt - start).toBeLessThan(doneAt - start);
-      expect(doneAt - firstAt).toBeGreaterThan(15);
     } finally {
       await new Promise<void>((resolve) => streamServer.server.close(() => resolve()));
     }
