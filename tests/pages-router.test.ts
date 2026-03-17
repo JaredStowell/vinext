@@ -70,6 +70,12 @@ async function buildPagesFixtureToOutDir(rootDir: string, outDir: string): Promi
   });
 }
 
+function unwrapStartedProdServer(
+  result: import("node:http").Server | { server: import("node:http").Server },
+): import("node:http").Server {
+  return "server" in result ? result.server : result;
+}
+
 interface CapturedStreamResponse {
   body: Buffer;
   headers: IncomingHttpHeaders;
@@ -1645,11 +1651,13 @@ export default function CounterPage() {
       );
 
       const { startProdServer } = await import("../packages/vinext/src/server/prod-server.js");
-      const prodServer = await startProdServer({
-        port: 0,
-        host: "127.0.0.1",
-        outDir: fixtureOutDir,
-      });
+      const prodServer = unwrapStartedProdServer(
+        await startProdServer({
+          port: 0,
+          host: "127.0.0.1",
+          outDir: fixtureOutDir,
+        }),
+      );
 
       try {
         const addr = prodServer.address() as { port: number };
@@ -1766,11 +1774,13 @@ export default function CounterPage() {
       expect(cssContent).toMatch(/data:image\/svg\+xml|\.svg/);
 
       const { startProdServer } = await import("../packages/vinext/src/server/prod-server.js");
-      const prodServer = await startProdServer({
-        port: 0,
-        host: "127.0.0.1",
-        outDir: fixtureOutDir,
-      });
+      const prodServer = unwrapStartedProdServer(
+        await startProdServer({
+          port: 0,
+          host: "127.0.0.1",
+          outDir: fixtureOutDir,
+        }),
+      );
 
       try {
         const addr = prodServer.address() as { port: number };
@@ -2094,11 +2104,13 @@ describe("Production server middleware (Pages Router)", () => {
     }
 
     const { startProdServer } = await import("../packages/vinext/src/server/prod-server.js");
-    prodServer = await startProdServer({
-      port: 0,
-      host: "127.0.0.1",
-      outDir,
-    });
+    prodServer = unwrapStartedProdServer(
+      await startProdServer({
+        port: 0,
+        host: "127.0.0.1",
+        outDir,
+      }),
+    );
     const addr = prodServer.address() as { port: number };
     prodUrl = `http://127.0.0.1:${addr.port}`;
   });
@@ -2146,11 +2158,13 @@ describe("Production server middleware (Pages Router)", () => {
       });
 
       const { startProdServer } = await import("../packages/vinext/src/server/prod-server.js");
-      prodServer = await startProdServer({
-        port: 0,
-        host: "127.0.0.1",
-        outDir: path.join(tmpDir, "dist"),
-      });
+      prodServer = unwrapStartedProdServer(
+        await startProdServer({
+          port: 0,
+          host: "127.0.0.1",
+          outDir: path.join(tmpDir, "dist"),
+        }),
+      );
       const addr = prodServer.address() as { port: number };
       const tempProdUrl = `http://127.0.0.1:${addr.port}`;
 
@@ -2462,12 +2476,14 @@ describe("Production Pages Router SSR streaming", () => {
     await buildPagesFixtureToOutDir(FIXTURE_DIR, outDir);
 
     const { startProdServer } = await import("../packages/vinext/src/server/prod-server.js");
-    prodServer = await startProdServer({
-      port: 0,
-      host: "127.0.0.1",
-      outDir,
-      noCompression: true,
-    });
+    prodServer = unwrapStartedProdServer(
+      await startProdServer({
+        port: 0,
+        host: "127.0.0.1",
+        outDir,
+        noCompression: true,
+      }),
+    );
     const addr = prodServer.address() as { port: number };
     prodUrl = `http://127.0.0.1:${addr.port}`;
   }, 60000);
@@ -2599,11 +2615,13 @@ describe("Production server next.config.js features (Pages Router)", () => {
     }
 
     const { startProdServer } = await import("../packages/vinext/src/server/prod-server.js");
-    prodServer = await startProdServer({
-      port: 0,
-      host: "127.0.0.1",
-      outDir,
-    });
+    prodServer = unwrapStartedProdServer(
+      await startProdServer({
+        port: 0,
+        host: "127.0.0.1",
+        outDir,
+      }),
+    );
     const addr = prodServer.address() as { port: number };
     prodUrl = `http://127.0.0.1:${addr.port}`;
   });
@@ -2973,11 +2991,13 @@ export function middleware(request) {
       });
 
       const { startProdServer } = await import("../packages/vinext/src/server/prod-server.js");
-      const prodServer = await startProdServer({
-        port: 0,
-        host: "127.0.0.1",
-        outDir,
-      });
+      const prodServer = unwrapStartedProdServer(
+        await startProdServer({
+          port: 0,
+          host: "127.0.0.1",
+          outDir,
+        }),
+      );
 
       try {
         const addr = prodServer.address() as { port: number };
@@ -3067,12 +3087,14 @@ export function middleware(request) {
     await buildPagesFixtureToOutDir(tmpRoot, outDir);
 
     const { startProdServer } = await import("../packages/vinext/src/server/prod-server.js");
-    prodServer = await startProdServer({
-      port: 0,
-      host: "127.0.0.1",
-      outDir,
-      noCompression: true,
-    });
+    prodServer = unwrapStartedProdServer(
+      await startProdServer({
+        port: 0,
+        host: "127.0.0.1",
+        outDir,
+        noCompression: true,
+      }),
+    );
     const addr = prodServer.address() as { port: number };
     prodUrl = `http://127.0.0.1:${addr.port}`;
   }, 60000);
