@@ -810,11 +810,15 @@ function mergeHeaders(
   function isVinextStreamedHtmlResponse(response: Response): boolean {
     return response.__vinextStreamedHtmlResponse === true;
   }
+  function isContentLengthHeader(name: string): boolean {
+    return name.toLowerCase() === "content-length";
+  }
 
   const status = statusOverride ?? response.status;
   const merged = new Headers();
   // Middleware/config headers go in first (lower precedence)
   for (const [k, v] of Object.entries(extraHeaders)) {
+    if (isContentLengthHeader(k)) continue;
     if (Array.isArray(v)) {
       for (const item of v) merged.append(k, item);
     } else {
@@ -835,7 +839,7 @@ function mergeHeaders(
     isVinextStreamedHtmlResponse(response) && merged.has("content-length");
 
   if (
-    !Object.keys(extraHeaders).length &&
+    !Object.keys(extraHeaders).some((key) => !isContentLengthHeader(key)) &&
     statusOverride === undefined &&
     !shouldDropBody &&
     !shouldStripStreamLength

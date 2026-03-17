@@ -22,6 +22,10 @@ function isVinextStreamedHtmlResponse(response: Response): boolean {
   return (response as ResponseWithVinextStreamingMetadata).__vinextStreamedHtmlResponse === true;
 }
 
+function isContentLengthHeader(name: string): boolean {
+  return name.toLowerCase() === "content-length";
+}
+
 export function mergeHeaders(
   response: Response,
   extraHeaders: Record<string, string | string[]>,
@@ -30,6 +34,7 @@ export function mergeHeaders(
   const status = statusOverride ?? response.status;
   const merged = new Headers();
   for (const [k, v] of Object.entries(extraHeaders)) {
+    if (isContentLengthHeader(k)) continue;
     if (Array.isArray(v)) {
       for (const item of v) merged.append(k, item);
     } else {
@@ -48,7 +53,7 @@ export function mergeHeaders(
     isVinextStreamedHtmlResponse(response) && merged.has("content-length");
 
   if (
-    !Object.keys(extraHeaders).length &&
+    !Object.keys(extraHeaders).some((key) => !isContentLengthHeader(key)) &&
     statusOverride === undefined &&
     !shouldDropBody &&
     !shouldStripStreamLength
