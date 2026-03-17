@@ -1215,7 +1215,7 @@ describe("next/headers render response headers", () => {
       expect(consumeRenderResponseHeaders()).toEqual({
         "set-cookie": [
           "session=abc; Path=/; HttpOnly",
-          "session=; Path=/; Max-Age=0",
+          expect.stringContaining("session=; Path=/; Expires="),
           expect.stringContaining("__prerender_bypass="),
           expect.stringContaining("__prerender_bypass=; Path=/; HttpOnly; SameSite=Lax"),
         ],

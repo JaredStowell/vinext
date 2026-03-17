@@ -481,13 +481,10 @@ function __mergeResponseHeaderValues(targetHeaders, key, value, mode) {
 function __mergeResponseHeaders(targetHeaders, sourceHeaders, mode) {
   if (!sourceHeaders) return;
   if (sourceHeaders instanceof Headers) {
-    const __setCookies = typeof sourceHeaders.getSetCookie === "function"
-      ? sourceHeaders.getSetCookie()
-      : [];
+    const __setCookies = sourceHeaders.getSetCookie();
     for (const [key, value] of sourceHeaders) {
       if (key.toLowerCase() === "set-cookie") {
         // entries() flattens Set-Cookie into a single comma-joined value.
-        // If getSetCookie() is unavailable, drop cookies rather than corrupt them.
         continue;
       }
       __mergeResponseHeaderValues(targetHeaders, key, value, mode);
@@ -1508,7 +1505,16 @@ function __validateDevRequestOrigin(request) {
   }
 
   const origin = request.headers.get("origin");
-  if (!origin || origin === "null") return null;
+  if (!origin) return null;
+
+  // Origin "null" is sent by opaque/sandboxed contexts. Block unless explicitly allowed.
+  if (origin === "null") {
+    if (!__allowedDevOrigins.includes("null")) {
+      console.warn("[vinext] Blocked request with Origin: null. Add \\"null\\" to allowedDevOrigins to allow sandboxed contexts.");
+      return new Response("Forbidden", { status: 403, headers: { "Content-Type": "text/plain" } });
+    }
+    return null;
+  }
 
   let originHostname;
   try {
@@ -2491,6 +2497,8 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
                     const __revalSsrEntry = await import.meta.viteRsc.loadModule("ssr", "index");
                     const __revalHtmlStream = await __revalSsrEntry.handleSsr(__revalRscForSsr, _getNavigationContext(), __revalFontData);
                     const __freshRscData = await __rscDataPromise;
+                    // RSC data must be fully consumed before headers are finalized,
+                    // since async server components may append headers while streaming.
                     const __renderHeaders = consumeRenderResponseHeaders();
                     setHeadersContext(null);
                     setNavigationContext(null);
@@ -2886,13 +2894,13 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
       const compileMs = __compileEnd !== undefined ? Math.round(__compileEnd - __reqStart) : -1;
       responseHeaders["x-vinext-timing"] = handlerStart + "," + compileMs + ",-1";
     }
+    const __responseRenderHeaders = peekRenderResponseHeaders();
     // For ISR-eligible RSC requests in production: write rscData to its own key.
     // HTML is stored under a separate key (written by the HTML path below) so
     // these writes never race or clobber each other.
     if (process.env.NODE_ENV === "production" && __isrRscDataPromise) {
       const __isrKeyRsc = __isrRscKey(cleanPathname);
       const __revalSecsRsc = revalidateSeconds;
-      const __responseRenderHeaders = peekRenderResponseHeaders();
       if (peekDynamicUsage()) {
         responseHeaders["Cache-Control"] = "no-store, must-revalidate";
       } else {
@@ -2927,7 +2935,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     }
     return __responseWithMiddlewareContext(new Response(__rscForResponse, {
       status: 200,
-      headers: responseHeaders,
+      headers: __headersWithRenderResponseHeaders(responseHeaders, __responseRenderHeaders),
     }), _mwCtx);
   }
 
@@ -3342,13 +3350,10 @@ function __mergeResponseHeaderValues(targetHeaders, key, value, mode) {
 function __mergeResponseHeaders(targetHeaders, sourceHeaders, mode) {
   if (!sourceHeaders) return;
   if (sourceHeaders instanceof Headers) {
-    const __setCookies = typeof sourceHeaders.getSetCookie === "function"
-      ? sourceHeaders.getSetCookie()
-      : [];
+    const __setCookies = sourceHeaders.getSetCookie();
     for (const [key, value] of sourceHeaders) {
       if (key.toLowerCase() === "set-cookie") {
         // entries() flattens Set-Cookie into a single comma-joined value.
-        // If getSetCookie() is unavailable, drop cookies rather than corrupt them.
         continue;
       }
       __mergeResponseHeaderValues(targetHeaders, key, value, mode);
@@ -4369,7 +4374,16 @@ function __validateDevRequestOrigin(request) {
   }
 
   const origin = request.headers.get("origin");
-  if (!origin || origin === "null") return null;
+  if (!origin) return null;
+
+  // Origin "null" is sent by opaque/sandboxed contexts. Block unless explicitly allowed.
+  if (origin === "null") {
+    if (!__allowedDevOrigins.includes("null")) {
+      console.warn("[vinext] Blocked request with Origin: null. Add \\"null\\" to allowedDevOrigins to allow sandboxed contexts.");
+      return new Response("Forbidden", { status: 403, headers: { "Content-Type": "text/plain" } });
+    }
+    return null;
+  }
 
   let originHostname;
   try {
@@ -5355,6 +5369,8 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
                     const __revalSsrEntry = await import.meta.viteRsc.loadModule("ssr", "index");
                     const __revalHtmlStream = await __revalSsrEntry.handleSsr(__revalRscForSsr, _getNavigationContext(), __revalFontData);
                     const __freshRscData = await __rscDataPromise;
+                    // RSC data must be fully consumed before headers are finalized,
+                    // since async server components may append headers while streaming.
                     const __renderHeaders = consumeRenderResponseHeaders();
                     setHeadersContext(null);
                     setNavigationContext(null);
@@ -5750,13 +5766,13 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
       const compileMs = __compileEnd !== undefined ? Math.round(__compileEnd - __reqStart) : -1;
       responseHeaders["x-vinext-timing"] = handlerStart + "," + compileMs + ",-1";
     }
+    const __responseRenderHeaders = peekRenderResponseHeaders();
     // For ISR-eligible RSC requests in production: write rscData to its own key.
     // HTML is stored under a separate key (written by the HTML path below) so
     // these writes never race or clobber each other.
     if (process.env.NODE_ENV === "production" && __isrRscDataPromise) {
       const __isrKeyRsc = __isrRscKey(cleanPathname);
       const __revalSecsRsc = revalidateSeconds;
-      const __responseRenderHeaders = peekRenderResponseHeaders();
       if (peekDynamicUsage()) {
         responseHeaders["Cache-Control"] = "no-store, must-revalidate";
       } else {
@@ -5791,7 +5807,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     }
     return __responseWithMiddlewareContext(new Response(__rscForResponse, {
       status: 200,
-      headers: responseHeaders,
+      headers: __headersWithRenderResponseHeaders(responseHeaders, __responseRenderHeaders),
     }), _mwCtx);
   }
 
@@ -6206,13 +6222,10 @@ function __mergeResponseHeaderValues(targetHeaders, key, value, mode) {
 function __mergeResponseHeaders(targetHeaders, sourceHeaders, mode) {
   if (!sourceHeaders) return;
   if (sourceHeaders instanceof Headers) {
-    const __setCookies = typeof sourceHeaders.getSetCookie === "function"
-      ? sourceHeaders.getSetCookie()
-      : [];
+    const __setCookies = sourceHeaders.getSetCookie();
     for (const [key, value] of sourceHeaders) {
       if (key.toLowerCase() === "set-cookie") {
         // entries() flattens Set-Cookie into a single comma-joined value.
-        // If getSetCookie() is unavailable, drop cookies rather than corrupt them.
         continue;
       }
       __mergeResponseHeaderValues(targetHeaders, key, value, mode);
@@ -7263,7 +7276,16 @@ function __validateDevRequestOrigin(request) {
   }
 
   const origin = request.headers.get("origin");
-  if (!origin || origin === "null") return null;
+  if (!origin) return null;
+
+  // Origin "null" is sent by opaque/sandboxed contexts. Block unless explicitly allowed.
+  if (origin === "null") {
+    if (!__allowedDevOrigins.includes("null")) {
+      console.warn("[vinext] Blocked request with Origin: null. Add \\"null\\" to allowedDevOrigins to allow sandboxed contexts.");
+      return new Response("Forbidden", { status: 403, headers: { "Content-Type": "text/plain" } });
+    }
+    return null;
+  }
 
   let originHostname;
   try {
@@ -8246,6 +8268,8 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
                     const __revalSsrEntry = await import.meta.viteRsc.loadModule("ssr", "index");
                     const __revalHtmlStream = await __revalSsrEntry.handleSsr(__revalRscForSsr, _getNavigationContext(), __revalFontData);
                     const __freshRscData = await __rscDataPromise;
+                    // RSC data must be fully consumed before headers are finalized,
+                    // since async server components may append headers while streaming.
                     const __renderHeaders = consumeRenderResponseHeaders();
                     setHeadersContext(null);
                     setNavigationContext(null);
@@ -8641,13 +8665,13 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
       const compileMs = __compileEnd !== undefined ? Math.round(__compileEnd - __reqStart) : -1;
       responseHeaders["x-vinext-timing"] = handlerStart + "," + compileMs + ",-1";
     }
+    const __responseRenderHeaders = peekRenderResponseHeaders();
     // For ISR-eligible RSC requests in production: write rscData to its own key.
     // HTML is stored under a separate key (written by the HTML path below) so
     // these writes never race or clobber each other.
     if (process.env.NODE_ENV === "production" && __isrRscDataPromise) {
       const __isrKeyRsc = __isrRscKey(cleanPathname);
       const __revalSecsRsc = revalidateSeconds;
-      const __responseRenderHeaders = peekRenderResponseHeaders();
       if (peekDynamicUsage()) {
         responseHeaders["Cache-Control"] = "no-store, must-revalidate";
       } else {
@@ -8682,7 +8706,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     }
     return __responseWithMiddlewareContext(new Response(__rscForResponse, {
       status: 200,
-      headers: responseHeaders,
+      headers: __headersWithRenderResponseHeaders(responseHeaders, __responseRenderHeaders),
     }), _mwCtx);
   }
 
@@ -9112,13 +9136,10 @@ function __mergeResponseHeaderValues(targetHeaders, key, value, mode) {
 function __mergeResponseHeaders(targetHeaders, sourceHeaders, mode) {
   if (!sourceHeaders) return;
   if (sourceHeaders instanceof Headers) {
-    const __setCookies = typeof sourceHeaders.getSetCookie === "function"
-      ? sourceHeaders.getSetCookie()
-      : [];
+    const __setCookies = sourceHeaders.getSetCookie();
     for (const [key, value] of sourceHeaders) {
       if (key.toLowerCase() === "set-cookie") {
         // entries() flattens Set-Cookie into a single comma-joined value.
-        // If getSetCookie() is unavailable, drop cookies rather than corrupt them.
         continue;
       }
       __mergeResponseHeaderValues(targetHeaders, key, value, mode);
@@ -10168,7 +10189,16 @@ function __validateDevRequestOrigin(request) {
   }
 
   const origin = request.headers.get("origin");
-  if (!origin || origin === "null") return null;
+  if (!origin) return null;
+
+  // Origin "null" is sent by opaque/sandboxed contexts. Block unless explicitly allowed.
+  if (origin === "null") {
+    if (!__allowedDevOrigins.includes("null")) {
+      console.warn("[vinext] Blocked request with Origin: null. Add \\"null\\" to allowedDevOrigins to allow sandboxed contexts.");
+      return new Response("Forbidden", { status: 403, headers: { "Content-Type": "text/plain" } });
+    }
+    return null;
+  }
 
   let originHostname;
   try {
@@ -11154,6 +11184,8 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
                     const __revalSsrEntry = await import.meta.viteRsc.loadModule("ssr", "index");
                     const __revalHtmlStream = await __revalSsrEntry.handleSsr(__revalRscForSsr, _getNavigationContext(), __revalFontData);
                     const __freshRscData = await __rscDataPromise;
+                    // RSC data must be fully consumed before headers are finalized,
+                    // since async server components may append headers while streaming.
                     const __renderHeaders = consumeRenderResponseHeaders();
                     setHeadersContext(null);
                     setNavigationContext(null);
@@ -11549,13 +11581,13 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
       const compileMs = __compileEnd !== undefined ? Math.round(__compileEnd - __reqStart) : -1;
       responseHeaders["x-vinext-timing"] = handlerStart + "," + compileMs + ",-1";
     }
+    const __responseRenderHeaders = peekRenderResponseHeaders();
     // For ISR-eligible RSC requests in production: write rscData to its own key.
     // HTML is stored under a separate key (written by the HTML path below) so
     // these writes never race or clobber each other.
     if (process.env.NODE_ENV === "production" && __isrRscDataPromise) {
       const __isrKeyRsc = __isrRscKey(cleanPathname);
       const __revalSecsRsc = revalidateSeconds;
-      const __responseRenderHeaders = peekRenderResponseHeaders();
       if (peekDynamicUsage()) {
         responseHeaders["Cache-Control"] = "no-store, must-revalidate";
       } else {
@@ -11590,7 +11622,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     }
     return __responseWithMiddlewareContext(new Response(__rscForResponse, {
       status: 200,
-      headers: responseHeaders,
+      headers: __headersWithRenderResponseHeaders(responseHeaders, __responseRenderHeaders),
     }), _mwCtx);
   }
 
@@ -12005,13 +12037,10 @@ function __mergeResponseHeaderValues(targetHeaders, key, value, mode) {
 function __mergeResponseHeaders(targetHeaders, sourceHeaders, mode) {
   if (!sourceHeaders) return;
   if (sourceHeaders instanceof Headers) {
-    const __setCookies = typeof sourceHeaders.getSetCookie === "function"
-      ? sourceHeaders.getSetCookie()
-      : [];
+    const __setCookies = sourceHeaders.getSetCookie();
     for (const [key, value] of sourceHeaders) {
       if (key.toLowerCase() === "set-cookie") {
         // entries() flattens Set-Cookie into a single comma-joined value.
-        // If getSetCookie() is unavailable, drop cookies rather than corrupt them.
         continue;
       }
       __mergeResponseHeaderValues(targetHeaders, key, value, mode);
@@ -13039,7 +13068,16 @@ function __validateDevRequestOrigin(request) {
   }
 
   const origin = request.headers.get("origin");
-  if (!origin || origin === "null") return null;
+  if (!origin) return null;
+
+  // Origin "null" is sent by opaque/sandboxed contexts. Block unless explicitly allowed.
+  if (origin === "null") {
+    if (!__allowedDevOrigins.includes("null")) {
+      console.warn("[vinext] Blocked request with Origin: null. Add \\"null\\" to allowedDevOrigins to allow sandboxed contexts.");
+      return new Response("Forbidden", { status: 403, headers: { "Content-Type": "text/plain" } });
+    }
+    return null;
+  }
 
   let originHostname;
   try {
@@ -14022,6 +14060,8 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
                     const __revalSsrEntry = await import.meta.viteRsc.loadModule("ssr", "index");
                     const __revalHtmlStream = await __revalSsrEntry.handleSsr(__revalRscForSsr, _getNavigationContext(), __revalFontData);
                     const __freshRscData = await __rscDataPromise;
+                    // RSC data must be fully consumed before headers are finalized,
+                    // since async server components may append headers while streaming.
                     const __renderHeaders = consumeRenderResponseHeaders();
                     setHeadersContext(null);
                     setNavigationContext(null);
@@ -14417,13 +14457,13 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
       const compileMs = __compileEnd !== undefined ? Math.round(__compileEnd - __reqStart) : -1;
       responseHeaders["x-vinext-timing"] = handlerStart + "," + compileMs + ",-1";
     }
+    const __responseRenderHeaders = peekRenderResponseHeaders();
     // For ISR-eligible RSC requests in production: write rscData to its own key.
     // HTML is stored under a separate key (written by the HTML path below) so
     // these writes never race or clobber each other.
     if (process.env.NODE_ENV === "production" && __isrRscDataPromise) {
       const __isrKeyRsc = __isrRscKey(cleanPathname);
       const __revalSecsRsc = revalidateSeconds;
-      const __responseRenderHeaders = peekRenderResponseHeaders();
       if (peekDynamicUsage()) {
         responseHeaders["Cache-Control"] = "no-store, must-revalidate";
       } else {
@@ -14458,7 +14498,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     }
     return __responseWithMiddlewareContext(new Response(__rscForResponse, {
       status: 200,
-      headers: responseHeaders,
+      headers: __headersWithRenderResponseHeaders(responseHeaders, __responseRenderHeaders),
     }), _mwCtx);
   }
 
@@ -14873,13 +14913,10 @@ function __mergeResponseHeaderValues(targetHeaders, key, value, mode) {
 function __mergeResponseHeaders(targetHeaders, sourceHeaders, mode) {
   if (!sourceHeaders) return;
   if (sourceHeaders instanceof Headers) {
-    const __setCookies = typeof sourceHeaders.getSetCookie === "function"
-      ? sourceHeaders.getSetCookie()
-      : [];
+    const __setCookies = sourceHeaders.getSetCookie();
     for (const [key, value] of sourceHeaders) {
       if (key.toLowerCase() === "set-cookie") {
         // entries() flattens Set-Cookie into a single comma-joined value.
-        // If getSetCookie() is unavailable, drop cookies rather than corrupt them.
         continue;
       }
       __mergeResponseHeaderValues(targetHeaders, key, value, mode);
@@ -15877,17 +15914,50 @@ async function buildPageElement(route, params, opts, searchParams) {
 
 
 const __mwPatternCache = new Map();
+function __extractConstraint(str, re) {
+  if (str[re.lastIndex] !== "(") return null;
+  const start = re.lastIndex + 1;
+  let depth = 1;
+  let i = start;
+  while (i < str.length && depth > 0) {
+    if (str[i] === "(") depth++;
+    else if (str[i] === ")") depth--;
+    i++;
+  }
+  if (depth !== 0) return null;
+  re.lastIndex = i;
+  return str.slice(start, i - 1);
+}
 function __compileMwPattern(pattern) {
-  if (pattern.includes("(") || pattern.includes("\\\\")) {
+  const hasConstraints = /:[\\w-]+[*+]?\\(/.test(pattern);
+  if (!hasConstraints && (pattern.includes("(") || pattern.includes("\\\\"))) {
     return __safeRegExp("^" + pattern + "$");
   }
   let regexStr = "";
   const tokenRe = /\\/:([\\w-]+)\\*|\\/:([\\w-]+)\\+|:([\\w-]+)|[.]|[^/:.]+|./g;
   let tok;
   while ((tok = tokenRe.exec(pattern)) !== null) {
-    if (tok[1] !== undefined) { regexStr += "(?:/.*)?"; }
-    else if (tok[2] !== undefined) { regexStr += "(?:/.+)"; }
-    else if (tok[3] !== undefined) { regexStr += "([^/]+)"; }
+    if (tok[1] !== undefined) {
+      const c1 = hasConstraints ? __extractConstraint(pattern, tokenRe) : null;
+      regexStr += c1 !== null ? "(?:/(" + c1 + "))?" : "(?:/.*)?";
+    }
+    else if (tok[2] !== undefined) {
+      const c2 = hasConstraints ? __extractConstraint(pattern, tokenRe) : null;
+      regexStr += c2 !== null ? "(?:/(" + c2 + "))" : "(?:/.+)";
+    }
+    else if (tok[3] !== undefined) {
+      const constraint = hasConstraints ? __extractConstraint(pattern, tokenRe) : null;
+      const isOptional = pattern[tokenRe.lastIndex] === "?";
+      if (isOptional) tokenRe.lastIndex += 1;
+      const group = constraint !== null ? "(" + constraint + ")" : "([^/]+)";
+      if (isOptional && regexStr.endsWith("/")) {
+        regexStr = regexStr.slice(0, -1) + "(?:/" + group + ")?";
+      } else if (isOptional) {
+        regexStr += group + "?";
+      } else {
+        regexStr += group;
+      }
+    }
     else if (tok[0] === ".") { regexStr += "\\\\."; }
     else { regexStr += tok[0]; }
   }
@@ -16096,7 +16166,16 @@ function __validateDevRequestOrigin(request) {
   }
 
   const origin = request.headers.get("origin");
-  if (!origin || origin === "null") return null;
+  if (!origin) return null;
+
+  // Origin "null" is sent by opaque/sandboxed contexts. Block unless explicitly allowed.
+  if (origin === "null") {
+    if (!__allowedDevOrigins.includes("null")) {
+      console.warn("[vinext] Blocked request with Origin: null. Add \\"null\\" to allowedDevOrigins to allow sandboxed contexts.");
+      return new Response("Forbidden", { status: 403, headers: { "Content-Type": "text/plain" } });
+    }
+    return null;
+  }
 
   let originHostname;
   try {
@@ -17161,6 +17240,8 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
                     const __revalSsrEntry = await import.meta.viteRsc.loadModule("ssr", "index");
                     const __revalHtmlStream = await __revalSsrEntry.handleSsr(__revalRscForSsr, _getNavigationContext(), __revalFontData);
                     const __freshRscData = await __rscDataPromise;
+                    // RSC data must be fully consumed before headers are finalized,
+                    // since async server components may append headers while streaming.
                     const __renderHeaders = consumeRenderResponseHeaders();
                     setHeadersContext(null);
                     setNavigationContext(null);
@@ -17556,13 +17637,13 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
       const compileMs = __compileEnd !== undefined ? Math.round(__compileEnd - __reqStart) : -1;
       responseHeaders["x-vinext-timing"] = handlerStart + "," + compileMs + ",-1";
     }
+    const __responseRenderHeaders = peekRenderResponseHeaders();
     // For ISR-eligible RSC requests in production: write rscData to its own key.
     // HTML is stored under a separate key (written by the HTML path below) so
     // these writes never race or clobber each other.
     if (process.env.NODE_ENV === "production" && __isrRscDataPromise) {
       const __isrKeyRsc = __isrRscKey(cleanPathname);
       const __revalSecsRsc = revalidateSeconds;
-      const __responseRenderHeaders = peekRenderResponseHeaders();
       if (peekDynamicUsage()) {
         responseHeaders["Cache-Control"] = "no-store, must-revalidate";
       } else {
@@ -17597,7 +17678,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     }
     return __responseWithMiddlewareContext(new Response(__rscForResponse, {
       status: 200,
-      headers: responseHeaders,
+      headers: __headersWithRenderResponseHeaders(responseHeaders, __responseRenderHeaders),
     }), _mwCtx);
   }
 
@@ -17872,6 +17953,9 @@ import { setNavigationContext, ServerInsertedHTMLContext } from "next/navigation
 import { runWithNavigationContext as _runWithNavCtx } from "vinext/navigation-state";
 import { safeJsonStringify } from "vinext/html";
 import { createElement as _ssrCE } from "react";
+import * as _clientRefs from "virtual:vite-rsc/client-references";
+
+let _clientRefsPreloaded = false;
 
 /**
  * Collect all chunks from a ReadableStream into an array of text strings.
@@ -18003,6 +18087,29 @@ function createRscEmbedTransform(embedStream) {
  *   and the data needs to be passed to SSR since they're separate module instances.
  */
 export async function handleSsr(rscStream, navContext, fontData) {
+  // Eagerly preload all client reference modules before SSR rendering.
+  // On the first request after server start, client component modules are
+  // loaded lazily via async import(). Without this preload, React's
+  // renderToReadableStream rejects because the shell can't resolve client
+  // components synchronously (there is no Suspense boundary wrapping the
+  // root). The memoized require cache ensures this is only async on the
+  // very first call; subsequent requests resolve from cache immediately.
+  // See: https://github.com/cloudflare/vinext/issues/256
+  // _clientRefs.default is the default export from the virtual:vite-rsc/client-references
+  // namespace import — a map of client component IDs to their async import functions.
+  if (!_clientRefsPreloaded && _clientRefs.default && globalThis.__vite_rsc_client_require__) {
+    await Promise.all(
+      Object.keys(_clientRefs.default).map((id) =>
+        globalThis.__vite_rsc_client_require__(id).catch((err) => {
+          if (process.env.NODE_ENV !== "production") {
+            console.warn("[vinext] failed to preload client ref:", id, err);
+          }
+        })
+      )
+    );
+    _clientRefsPreloaded = true;
+  }
+
   // Wrap in a navigation ALS scope for per-request isolation in the SSR
   // environment. The SSR environment has separate module instances from RSC,
   // so it needs its own ALS scope.
@@ -18317,11 +18424,14 @@ const pageLoaders = {
   "/before-pop-state-test": () => import("<ROOT>/tests/fixtures/pages-basic/pages/before-pop-state-test.tsx"),
   "/cjs/basic": () => import("<ROOT>/tests/fixtures/pages-basic/pages/cjs/basic.tsx"),
   "/cjs/random": () => import("<ROOT>/tests/fixtures/pages-basic/pages/cjs/random.ts"),
+  "/concurrent-head": () => import("<ROOT>/tests/fixtures/pages-basic/pages/concurrent-head.tsx"),
+  "/concurrent-router": () => import("<ROOT>/tests/fixtures/pages-basic/pages/concurrent-router.tsx"),
   "/config-test": () => import("<ROOT>/tests/fixtures/pages-basic/pages/config-test.tsx"),
   "/counter": () => import("<ROOT>/tests/fixtures/pages-basic/pages/counter.tsx"),
   "/dynamic-page": () => import("<ROOT>/tests/fixtures/pages-basic/pages/dynamic-page.tsx"),
   "/dynamic-ssr-false": () => import("<ROOT>/tests/fixtures/pages-basic/pages/dynamic-ssr-false.tsx"),
   "/header-override-delete": () => import("<ROOT>/tests/fixtures/pages-basic/pages/header-override-delete.tsx"),
+  "/isr-second-render-state": () => import("<ROOT>/tests/fixtures/pages-basic/pages/isr-second-render-state.tsx"),
   "/isr-test": () => import("<ROOT>/tests/fixtures/pages-basic/pages/isr-test.tsx"),
   "/link-test": () => import("<ROOT>/tests/fixtures/pages-basic/pages/link-test.tsx"),
   "/mw-object-gated": () => import("<ROOT>/tests/fixtures/pages-basic/pages/mw-object-gated.tsx"),
@@ -18401,19 +18511,24 @@ import { renderToReadableStream } from "react-dom/server.edge";
 import { resetSSRHead, getSSRHeadHTML } from "next/head";
 import { flushPreloads } from "next/dynamic";
 import { setSSRContext, wrapWithRouterContext } from "next/router";
-import { getCacheHandler } from "next/cache";
-import { runWithFetchCache } from "vinext/fetch-cache";
-import { _runWithCacheState } from "next/cache";
+import { getCacheHandler, _runWithCacheState } from "next/cache";
 import { runWithPrivateCache } from "vinext/cache-runtime";
-import { runWithRouterState } from "vinext/router-state";
+import { ensureFetchPatch, runWithFetchCache } from "vinext/fetch-cache";
+import { runWithRequestContext as _runWithUnifiedCtx, createRequestContext as _createUnifiedCtx } from "vinext/unified-request-context";
+import "vinext/router-state";
+import { runWithServerInsertedHTMLState } from "vinext/navigation-state";
 import { runWithHeadState } from "vinext/head-state";
+import "vinext/i18n-state";
+import { setI18nContext } from "vinext/i18n-context";
 import { safeJsonStringify } from "vinext/html";
 import { decode as decodeQueryString } from "node:querystring";
 import { getSSRFontLinks as _getSSRFontLinks, getSSRFontStyles as _getSSRFontStylesGoogle, getSSRFontPreloads as _getSSRFontPreloadsGoogle } from "next/font/google";
 import { getSSRFontStyles as _getSSRFontStylesLocal, getSSRFontPreloads as _getSSRFontPreloadsLocal } from "next/font/local";
-import { parseCookies } from "<ROOT>/packages/vinext/src/config/config-matchers.js";
+import { parseCookies, sanitizeDestination as sanitizeDestinationLocal } from "<ROOT>/packages/vinext/src/config/config-matchers.js";
 import { runWithExecutionContext as _runWithExecutionContext, getRequestExecutionContext as _getRequestExecutionContext } from "<ROOT>/packages/vinext/src/shims/request-context.js";
 import { buildRouteTrie as _buildRouteTrie, trieMatch as _trieMatch } from "<ROOT>/packages/vinext/src/routing/route-trie.js";
+import { reportRequestError as _reportRequestError } from "vinext/instrumentation";
+import { resolvePagesI18nRequest } from "<ROOT>/packages/vinext/src/server/pages-i18n.js";
 import * as _instrumentation from "<ROOT>/tests/fixtures/pages-basic/instrumentation.ts";
 import * as middlewareModule from "<ROOT>/tests/fixtures/pages-basic/middleware.ts";
 import { NextRequest, NextFetchEvent } from "next/server";
@@ -18510,6 +18625,21 @@ async function renderToStringAsync(element) {
   return new Response(stream).text();
 }
 
+async function renderIsrPassToStringAsync(element) {
+  // The cache-fill render is a second render pass for the same request.
+  // Reset render-scoped state so it cannot leak from the streamed response
+  // render or affect async work that is still draining from that stream.
+  // Keep request identity state (pathname/query/locale/executionContext)
+  // intact: this second pass still belongs to the same request.
+  return await runWithServerInsertedHTMLState(() =>
+    runWithHeadState(() =>
+      _runWithCacheState(() =>
+        runWithPrivateCache(() => runWithFetchCache(async () => renderToStringAsync(element))),
+      ),
+    ),
+  );
+}
+
 import * as page_0 from "<ROOT>/tests/fixtures/pages-basic/pages/index.tsx";
 import * as page_1 from "<ROOT>/tests/fixtures/pages-basic/pages/404.tsx";
 import * as page_2 from "<ROOT>/tests/fixtures/pages-basic/pages/about.tsx";
@@ -18518,30 +18648,33 @@ import * as page_4 from "<ROOT>/tests/fixtures/pages-basic/pages/before-pop-stat
 import * as page_5 from "<ROOT>/tests/fixtures/pages-basic/pages/before-pop-state-test.tsx";
 import * as page_6 from "<ROOT>/tests/fixtures/pages-basic/pages/cjs/basic.tsx";
 import * as page_7 from "<ROOT>/tests/fixtures/pages-basic/pages/cjs/random.ts";
-import * as page_8 from "<ROOT>/tests/fixtures/pages-basic/pages/config-test.tsx";
-import * as page_9 from "<ROOT>/tests/fixtures/pages-basic/pages/counter.tsx";
-import * as page_10 from "<ROOT>/tests/fixtures/pages-basic/pages/dynamic-page.tsx";
-import * as page_11 from "<ROOT>/tests/fixtures/pages-basic/pages/dynamic-ssr-false.tsx";
-import * as page_12 from "<ROOT>/tests/fixtures/pages-basic/pages/header-override-delete.tsx";
-import * as page_13 from "<ROOT>/tests/fixtures/pages-basic/pages/isr-test.tsx";
-import * as page_14 from "<ROOT>/tests/fixtures/pages-basic/pages/link-test.tsx";
-import * as page_15 from "<ROOT>/tests/fixtures/pages-basic/pages/mw-object-gated.tsx";
-import * as page_16 from "<ROOT>/tests/fixtures/pages-basic/pages/nav-test.tsx";
-import * as page_17 from "<ROOT>/tests/fixtures/pages-basic/pages/posts/missing.tsx";
-import * as page_18 from "<ROOT>/tests/fixtures/pages-basic/pages/redirect-xss.tsx";
-import * as page_19 from "<ROOT>/tests/fixtures/pages-basic/pages/router-events-test.tsx";
-import * as page_20 from "<ROOT>/tests/fixtures/pages-basic/pages/script-test.tsx";
-import * as page_21 from "<ROOT>/tests/fixtures/pages-basic/pages/shallow-test.tsx";
-import * as page_22 from "<ROOT>/tests/fixtures/pages-basic/pages/ssr.tsx";
-import * as page_23 from "<ROOT>/tests/fixtures/pages-basic/pages/ssr-headers.tsx";
-import * as page_24 from "<ROOT>/tests/fixtures/pages-basic/pages/ssr-res-end.tsx";
-import * as page_25 from "<ROOT>/tests/fixtures/pages-basic/pages/suspense-test.tsx";
-import * as page_26 from "<ROOT>/tests/fixtures/pages-basic/pages/articles/[id].tsx";
-import * as page_27 from "<ROOT>/tests/fixtures/pages-basic/pages/blog/[slug].tsx";
-import * as page_28 from "<ROOT>/tests/fixtures/pages-basic/pages/posts/[id].tsx";
-import * as page_29 from "<ROOT>/tests/fixtures/pages-basic/pages/products/[pid].tsx";
-import * as page_30 from "<ROOT>/tests/fixtures/pages-basic/pages/docs/[...slug].tsx";
-import * as page_31 from "<ROOT>/tests/fixtures/pages-basic/pages/sign-up/[[...sign-up]]/index.tsx";
+import * as page_8 from "<ROOT>/tests/fixtures/pages-basic/pages/concurrent-head.tsx";
+import * as page_9 from "<ROOT>/tests/fixtures/pages-basic/pages/concurrent-router.tsx";
+import * as page_10 from "<ROOT>/tests/fixtures/pages-basic/pages/config-test.tsx";
+import * as page_11 from "<ROOT>/tests/fixtures/pages-basic/pages/counter.tsx";
+import * as page_12 from "<ROOT>/tests/fixtures/pages-basic/pages/dynamic-page.tsx";
+import * as page_13 from "<ROOT>/tests/fixtures/pages-basic/pages/dynamic-ssr-false.tsx";
+import * as page_14 from "<ROOT>/tests/fixtures/pages-basic/pages/header-override-delete.tsx";
+import * as page_15 from "<ROOT>/tests/fixtures/pages-basic/pages/isr-second-render-state.tsx";
+import * as page_16 from "<ROOT>/tests/fixtures/pages-basic/pages/isr-test.tsx";
+import * as page_17 from "<ROOT>/tests/fixtures/pages-basic/pages/link-test.tsx";
+import * as page_18 from "<ROOT>/tests/fixtures/pages-basic/pages/mw-object-gated.tsx";
+import * as page_19 from "<ROOT>/tests/fixtures/pages-basic/pages/nav-test.tsx";
+import * as page_20 from "<ROOT>/tests/fixtures/pages-basic/pages/posts/missing.tsx";
+import * as page_21 from "<ROOT>/tests/fixtures/pages-basic/pages/redirect-xss.tsx";
+import * as page_22 from "<ROOT>/tests/fixtures/pages-basic/pages/router-events-test.tsx";
+import * as page_23 from "<ROOT>/tests/fixtures/pages-basic/pages/script-test.tsx";
+import * as page_24 from "<ROOT>/tests/fixtures/pages-basic/pages/shallow-test.tsx";
+import * as page_25 from "<ROOT>/tests/fixtures/pages-basic/pages/ssr.tsx";
+import * as page_26 from "<ROOT>/tests/fixtures/pages-basic/pages/ssr-headers.tsx";
+import * as page_27 from "<ROOT>/tests/fixtures/pages-basic/pages/ssr-res-end.tsx";
+import * as page_28 from "<ROOT>/tests/fixtures/pages-basic/pages/suspense-test.tsx";
+import * as page_29 from "<ROOT>/tests/fixtures/pages-basic/pages/articles/[id].tsx";
+import * as page_30 from "<ROOT>/tests/fixtures/pages-basic/pages/blog/[slug].tsx";
+import * as page_31 from "<ROOT>/tests/fixtures/pages-basic/pages/posts/[id].tsx";
+import * as page_32 from "<ROOT>/tests/fixtures/pages-basic/pages/products/[pid].tsx";
+import * as page_33 from "<ROOT>/tests/fixtures/pages-basic/pages/docs/[...slug].tsx";
+import * as page_34 from "<ROOT>/tests/fixtures/pages-basic/pages/sign-up/[[...sign-up]]/index.tsx";
 import * as api_0 from "<ROOT>/tests/fixtures/pages-basic/pages/api/binary.ts";
 import * as api_1 from "<ROOT>/tests/fixtures/pages-basic/pages/api/echo-body.ts";
 import * as api_2 from "<ROOT>/tests/fixtures/pages-basic/pages/api/error-route.ts";
@@ -18556,7 +18689,7 @@ import * as api_9 from "<ROOT>/tests/fixtures/pages-basic/pages/api/users/[id].t
 import { default as AppComponent } from "<ROOT>/tests/fixtures/pages-basic/pages/_app.tsx";
 import { default as DocumentComponent } from "<ROOT>/tests/fixtures/pages-basic/pages/_document.tsx";
 
-const pageRoutes = [
+export const pageRoutes = [
   { pattern: "/", patternParts: [], isDynamic: false, params: [], module: page_0, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/index.tsx" },
   { pattern: "/404", patternParts: ["404"], isDynamic: false, params: [], module: page_1, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/404.tsx" },
   { pattern: "/about", patternParts: ["about"], isDynamic: false, params: [], module: page_2, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/about.tsx" },
@@ -18565,30 +18698,33 @@ const pageRoutes = [
   { pattern: "/before-pop-state-test", patternParts: ["before-pop-state-test"], isDynamic: false, params: [], module: page_5, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/before-pop-state-test.tsx" },
   { pattern: "/cjs/basic", patternParts: ["cjs","basic"], isDynamic: false, params: [], module: page_6, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/cjs/basic.tsx" },
   { pattern: "/cjs/random", patternParts: ["cjs","random"], isDynamic: false, params: [], module: page_7, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/cjs/random.ts" },
-  { pattern: "/config-test", patternParts: ["config-test"], isDynamic: false, params: [], module: page_8, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/config-test.tsx" },
-  { pattern: "/counter", patternParts: ["counter"], isDynamic: false, params: [], module: page_9, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/counter.tsx" },
-  { pattern: "/dynamic-page", patternParts: ["dynamic-page"], isDynamic: false, params: [], module: page_10, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/dynamic-page.tsx" },
-  { pattern: "/dynamic-ssr-false", patternParts: ["dynamic-ssr-false"], isDynamic: false, params: [], module: page_11, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/dynamic-ssr-false.tsx" },
-  { pattern: "/header-override-delete", patternParts: ["header-override-delete"], isDynamic: false, params: [], module: page_12, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/header-override-delete.tsx" },
-  { pattern: "/isr-test", patternParts: ["isr-test"], isDynamic: false, params: [], module: page_13, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/isr-test.tsx" },
-  { pattern: "/link-test", patternParts: ["link-test"], isDynamic: false, params: [], module: page_14, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/link-test.tsx" },
-  { pattern: "/mw-object-gated", patternParts: ["mw-object-gated"], isDynamic: false, params: [], module: page_15, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/mw-object-gated.tsx" },
-  { pattern: "/nav-test", patternParts: ["nav-test"], isDynamic: false, params: [], module: page_16, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/nav-test.tsx" },
-  { pattern: "/posts/missing", patternParts: ["posts","missing"], isDynamic: false, params: [], module: page_17, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/posts/missing.tsx" },
-  { pattern: "/redirect-xss", patternParts: ["redirect-xss"], isDynamic: false, params: [], module: page_18, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/redirect-xss.tsx" },
-  { pattern: "/router-events-test", patternParts: ["router-events-test"], isDynamic: false, params: [], module: page_19, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/router-events-test.tsx" },
-  { pattern: "/script-test", patternParts: ["script-test"], isDynamic: false, params: [], module: page_20, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/script-test.tsx" },
-  { pattern: "/shallow-test", patternParts: ["shallow-test"], isDynamic: false, params: [], module: page_21, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/shallow-test.tsx" },
-  { pattern: "/ssr", patternParts: ["ssr"], isDynamic: false, params: [], module: page_22, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/ssr.tsx" },
-  { pattern: "/ssr-headers", patternParts: ["ssr-headers"], isDynamic: false, params: [], module: page_23, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/ssr-headers.tsx" },
-  { pattern: "/ssr-res-end", patternParts: ["ssr-res-end"], isDynamic: false, params: [], module: page_24, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/ssr-res-end.tsx" },
-  { pattern: "/suspense-test", patternParts: ["suspense-test"], isDynamic: false, params: [], module: page_25, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/suspense-test.tsx" },
-  { pattern: "/articles/:id", patternParts: ["articles",":id"], isDynamic: true, params: ["id"], module: page_26, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/articles/[id].tsx" },
-  { pattern: "/blog/:slug", patternParts: ["blog",":slug"], isDynamic: true, params: ["slug"], module: page_27, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/blog/[slug].tsx" },
-  { pattern: "/posts/:id", patternParts: ["posts",":id"], isDynamic: true, params: ["id"], module: page_28, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/posts/[id].tsx" },
-  { pattern: "/products/:pid", patternParts: ["products",":pid"], isDynamic: true, params: ["pid"], module: page_29, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/products/[pid].tsx" },
-  { pattern: "/docs/:slug+", patternParts: ["docs",":slug+"], isDynamic: true, params: ["slug"], module: page_30, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/docs/[...slug].tsx" },
-  { pattern: "/sign-up/:sign-up*", patternParts: ["sign-up",":sign-up*"], isDynamic: true, params: ["sign-up"], module: page_31, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/sign-up/[[...sign-up]]/index.tsx" }
+  { pattern: "/concurrent-head", patternParts: ["concurrent-head"], isDynamic: false, params: [], module: page_8, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/concurrent-head.tsx" },
+  { pattern: "/concurrent-router", patternParts: ["concurrent-router"], isDynamic: false, params: [], module: page_9, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/concurrent-router.tsx" },
+  { pattern: "/config-test", patternParts: ["config-test"], isDynamic: false, params: [], module: page_10, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/config-test.tsx" },
+  { pattern: "/counter", patternParts: ["counter"], isDynamic: false, params: [], module: page_11, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/counter.tsx" },
+  { pattern: "/dynamic-page", patternParts: ["dynamic-page"], isDynamic: false, params: [], module: page_12, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/dynamic-page.tsx" },
+  { pattern: "/dynamic-ssr-false", patternParts: ["dynamic-ssr-false"], isDynamic: false, params: [], module: page_13, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/dynamic-ssr-false.tsx" },
+  { pattern: "/header-override-delete", patternParts: ["header-override-delete"], isDynamic: false, params: [], module: page_14, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/header-override-delete.tsx" },
+  { pattern: "/isr-second-render-state", patternParts: ["isr-second-render-state"], isDynamic: false, params: [], module: page_15, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/isr-second-render-state.tsx" },
+  { pattern: "/isr-test", patternParts: ["isr-test"], isDynamic: false, params: [], module: page_16, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/isr-test.tsx" },
+  { pattern: "/link-test", patternParts: ["link-test"], isDynamic: false, params: [], module: page_17, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/link-test.tsx" },
+  { pattern: "/mw-object-gated", patternParts: ["mw-object-gated"], isDynamic: false, params: [], module: page_18, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/mw-object-gated.tsx" },
+  { pattern: "/nav-test", patternParts: ["nav-test"], isDynamic: false, params: [], module: page_19, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/nav-test.tsx" },
+  { pattern: "/posts/missing", patternParts: ["posts","missing"], isDynamic: false, params: [], module: page_20, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/posts/missing.tsx" },
+  { pattern: "/redirect-xss", patternParts: ["redirect-xss"], isDynamic: false, params: [], module: page_21, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/redirect-xss.tsx" },
+  { pattern: "/router-events-test", patternParts: ["router-events-test"], isDynamic: false, params: [], module: page_22, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/router-events-test.tsx" },
+  { pattern: "/script-test", patternParts: ["script-test"], isDynamic: false, params: [], module: page_23, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/script-test.tsx" },
+  { pattern: "/shallow-test", patternParts: ["shallow-test"], isDynamic: false, params: [], module: page_24, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/shallow-test.tsx" },
+  { pattern: "/ssr", patternParts: ["ssr"], isDynamic: false, params: [], module: page_25, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/ssr.tsx" },
+  { pattern: "/ssr-headers", patternParts: ["ssr-headers"], isDynamic: false, params: [], module: page_26, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/ssr-headers.tsx" },
+  { pattern: "/ssr-res-end", patternParts: ["ssr-res-end"], isDynamic: false, params: [], module: page_27, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/ssr-res-end.tsx" },
+  { pattern: "/suspense-test", patternParts: ["suspense-test"], isDynamic: false, params: [], module: page_28, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/suspense-test.tsx" },
+  { pattern: "/articles/:id", patternParts: ["articles",":id"], isDynamic: true, params: ["id"], module: page_29, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/articles/[id].tsx" },
+  { pattern: "/blog/:slug", patternParts: ["blog",":slug"], isDynamic: true, params: ["slug"], module: page_30, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/blog/[slug].tsx" },
+  { pattern: "/posts/:id", patternParts: ["posts",":id"], isDynamic: true, params: ["id"], module: page_31, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/posts/[id].tsx" },
+  { pattern: "/products/:pid", patternParts: ["products",":pid"], isDynamic: true, params: ["pid"], module: page_32, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/products/[pid].tsx" },
+  { pattern: "/docs/:slug+", patternParts: ["docs",":slug+"], isDynamic: true, params: ["slug"], module: page_33, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/docs/[...slug].tsx" },
+  { pattern: "/sign-up/:sign-up*", patternParts: ["sign-up",":sign-up*"], isDynamic: true, params: ["sign-up"], module: page_34, filePath: "<ROOT>/tests/fixtures/pages-basic/pages/sign-up/[[...sign-up]]/index.tsx" }
 ];
 const _pageRouteTrie = _buildRouteTrie(pageRoutes);
 
@@ -18919,23 +19055,25 @@ export async function renderPage(request, url, manifest, ctx) {
 }
 
 async function _renderPage(request, url, manifest) {
-  const localeInfo = extractLocale(url);
+  const localeInfo = i18nConfig
+    ? resolvePagesI18nRequest(
+        url,
+        i18nConfig,
+        request.headers,
+        new URL(request.url).hostname,
+        vinextConfig.basePath,
+        vinextConfig.trailingSlash,
+      )
+    : { locale: undefined, url, hadPrefix: false, domainLocale: undefined, redirectUrl: undefined };
   const locale = localeInfo.locale;
   const routeUrl = localeInfo.url;
-  const cookieHeader = request.headers.get("cookie") || "";
+  const currentDefaultLocale = i18nConfig
+    ? (localeInfo.domainLocale ? localeInfo.domainLocale.defaultLocale : i18nConfig.defaultLocale)
+    : undefined;
+  const domainLocales = i18nConfig ? i18nConfig.domains : undefined;
 
-  // i18n redirect: check NEXT_LOCALE cookie first, then Accept-Language
-  if (i18nConfig && !localeInfo.hadPrefix) {
-    const cookieLocale = parseCookieLocaleFromHeader(cookieHeader);
-    if (cookieLocale && cookieLocale !== i18nConfig.defaultLocale) {
-      return new Response(null, { status: 307, headers: { Location: "/" + cookieLocale + routeUrl } });
-    }
-    if (!cookieLocale && i18nConfig.localeDetection !== false) {
-      const detected = detectLocaleFromHeaders(request.headers);
-      if (detected && detected !== i18nConfig.defaultLocale) {
-        return new Response(null, { status: 307, headers: { Location: "/" + detected + routeUrl } });
-      }
-    }
+  if (localeInfo.redirectUrl) {
+    return new Response(null, { status: 307, headers: { Location: localeInfo.redirectUrl } });
   }
 
   const match = matchRoute(routeUrl, pageRoutes);
@@ -18945,12 +19083,12 @@ async function _renderPage(request, url, manifest) {
   }
 
   const { route, params } = match;
-  return runWithRouterState(() =>
-    runWithHeadState(() =>
-      _runWithCacheState(() =>
-        runWithPrivateCache(() =>
-          runWithFetchCache(async () => {
-  try {
+  const __uCtx = _createUnifiedCtx({
+    executionContext: _getRequestExecutionContext(),
+  });
+  return _runWithUnifiedCtx(__uCtx, async () => {
+    ensureFetchPatch();
+    try {
     if (typeof setSSRContext === "function") {
       setSSRContext({
         pathname: patternToNextFormat(route.pattern),
@@ -18958,14 +19096,19 @@ async function _renderPage(request, url, manifest) {
         asPath: routeUrl,
         locale: locale,
         locales: i18nConfig ? i18nConfig.locales : undefined,
-        defaultLocale: i18nConfig ? i18nConfig.defaultLocale : undefined,
+        defaultLocale: currentDefaultLocale,
+        domainLocales: domainLocales,
       });
     }
 
     if (i18nConfig) {
-      globalThis.__VINEXT_LOCALE__ = locale;
-      globalThis.__VINEXT_LOCALES__ = i18nConfig.locales;
-      globalThis.__VINEXT_DEFAULT_LOCALE__ = i18nConfig.defaultLocale;
+      setI18nContext({
+        locale: locale,
+        locales: i18nConfig.locales,
+        defaultLocale: currentDefaultLocale,
+        domainLocales: domainLocales,
+        hostname: new URL(request.url).hostname,
+      });
     }
 
     const pageModule = route.module;
@@ -18978,7 +19121,7 @@ async function _renderPage(request, url, manifest) {
     if (typeof pageModule.getStaticPaths === "function" && route.isDynamic) {
       const pathsResult = await pageModule.getStaticPaths({
         locales: i18nConfig ? i18nConfig.locales : [],
-        defaultLocale: i18nConfig ? i18nConfig.defaultLocale : "",
+        defaultLocale: currentDefaultLocale || "",
       });
       const fallback = pathsResult && pathsResult.fallback !== undefined ? pathsResult.fallback : false;
 
@@ -19011,7 +19154,7 @@ async function _renderPage(request, url, manifest) {
         resolvedUrl: routeUrl,
         locale: locale,
         locales: i18nConfig ? i18nConfig.locales : undefined,
-        defaultLocale: i18nConfig ? i18nConfig.defaultLocale : undefined,
+        defaultLocale: currentDefaultLocale,
       };
       const result = await pageModule.getServerSideProps(ctx);
       // If gSSP called res.end() directly (short-circuit), return that response.
@@ -19060,10 +19203,89 @@ async function _renderPage(request, url, manifest) {
 
       if (cached && cached.isStale && cached.value.value && cached.value.value.kind === "PAGES") {
         triggerBackgroundRegeneration(cacheKey, async function() {
-          const freshResult = await pageModule.getStaticProps({ params });
-          if (freshResult && freshResult.props && typeof freshResult.revalidate === "number" && freshResult.revalidate > 0) {
-            await isrSet(cacheKey, { kind: "PAGES", html: cached.value.value.html, pageData: freshResult.props, headers: undefined, status: undefined }, freshResult.revalidate);
-          }
+          var revalCtx = _createUnifiedCtx({
+            executionContext: _getRequestExecutionContext(),
+          });
+          return _runWithUnifiedCtx(revalCtx, async () => {
+            ensureFetchPatch();
+              var freshResult = await pageModule.getStaticProps({
+                params: params,
+                locale: locale,
+                locales: i18nConfig ? i18nConfig.locales : undefined,
+                defaultLocale: currentDefaultLocale,
+              });
+              if (freshResult && freshResult.props && typeof freshResult.revalidate === "number" && freshResult.revalidate > 0) {
+                var _fp = freshResult.props;
+                if (typeof setSSRContext === "function") {
+                  setSSRContext({
+                    pathname: patternToNextFormat(route.pattern),
+                    query: { ...params, ...parseQuery(routeUrl) },
+                    asPath: routeUrl,
+                    locale: locale,
+                    locales: i18nConfig ? i18nConfig.locales : undefined,
+                    defaultLocale: currentDefaultLocale,
+                    domainLocales: domainLocales,
+                  });
+                }
+                if (i18nConfig) {
+                  setI18nContext({
+                    locale: locale,
+                    locales: i18nConfig.locales,
+                    defaultLocale: currentDefaultLocale,
+                    domainLocales: domainLocales,
+                    hostname: new URL(request.url).hostname,
+                  });
+                }
+                // Re-render the page with fresh props inside fresh render sub-scopes
+                // so head/cache state cannot leak across passes.
+                var _el = AppComponent
+                  ? React.createElement(AppComponent, { Component: PageComponent, pageProps: _fp })
+                  : React.createElement(PageComponent, _fp);
+                _el = wrapWithRouterContext(_el);
+                var _freshBody = await renderIsrPassToStringAsync(_el);
+                // Rebuild __NEXT_DATA__ with fresh props
+                var _regenPayload = {
+                  props: { pageProps: _fp }, page: patternToNextFormat(route.pattern),
+                  query: params, buildId: buildId, isFallback: false,
+                };
+                if (i18nConfig) {
+                  _regenPayload.locale = locale;
+                  _regenPayload.locales = i18nConfig.locales;
+                  _regenPayload.defaultLocale = currentDefaultLocale;
+                  _regenPayload.domainLocales = domainLocales;
+                }
+                var _lGlobals = i18nConfig
+                  ? ";window.__VINEXT_LOCALE__=" + safeJsonStringify(locale) +
+                    ";window.__VINEXT_LOCALES__=" + safeJsonStringify(i18nConfig.locales) +
+                    ";window.__VINEXT_DEFAULT_LOCALE__=" + safeJsonStringify(currentDefaultLocale)
+                  : "";
+                var _freshNDS = "<script>window.__NEXT_DATA__ = " + safeJsonStringify(_regenPayload) + _lGlobals + "</script>";
+                // Reconstruct ISR HTML preserving the document shell from the
+                // cached entry (head, fonts, assets, custom _document markup).
+                var _cachedStr = cached.value.value.html;
+                var _btag = '<div id="__next">';
+                var _bstart = _cachedStr.indexOf(_btag);
+                var _bodyStart = _bstart >= 0 ? _bstart + _btag.length : -1;
+                // Locate __NEXT_DATA__ script to split body from suffix
+                var _ndMarker = '<script>window.__NEXT_DATA__';
+                var _ndStart = _cachedStr.indexOf(_ndMarker);
+                var _freshHtml;
+                if (_bodyStart >= 0 && _ndStart >= 0) {
+                  // Region between body start and __NEXT_DATA__ contains:
+                  // BODY_HTML + </div> + optional gap (custom _document content)
+                  var _region = _cachedStr.slice(_bodyStart, _ndStart);
+                  var _lastClose = _region.lastIndexOf('</div>');
+                  var _gap = _lastClose >= 0 ? _region.slice(_lastClose + 6) : '';
+                  // Tail: everything after the old __NEXT_DATA__ </script>
+                  var _ndEnd = _cachedStr.indexOf('</script>', _ndStart) + 9;
+                  var _tail = _cachedStr.slice(_ndEnd);
+                  _freshHtml = _cachedStr.slice(0, _bodyStart) + _freshBody + '</div>' + _gap + _freshNDS + _tail;
+                } else {
+                  _freshHtml = '<!DOCTYPE html>\\n<html>\\n<head>\\n</head>\\n<body>\\n  <div id="__next">' + _freshBody + '</div>\\n  ' + _freshNDS + '\\n</body>\\n</html>';
+                }
+                await isrSet(cacheKey, { kind: "PAGES", html: _freshHtml, pageData: _fp, headers: undefined, status: undefined }, freshResult.revalidate);
+              }
+            });
         });
         var _staleHeaders = {
           "Content-Type": "text/html", "X-Vinext-Cache": "STALE",
@@ -19077,7 +19299,7 @@ async function _renderPage(request, url, manifest) {
         params,
         locale: locale,
         locales: i18nConfig ? i18nConfig.locales : undefined,
-        defaultLocale: i18nConfig ? i18nConfig.defaultLocale : undefined,
+        defaultLocale: currentDefaultLocale,
       };
       const result = await pageModule.getStaticProps(ctx);
       if (result && result.props) pageProps = result.props;
@@ -19130,12 +19352,13 @@ async function _renderPage(request, url, manifest) {
     if (i18nConfig) {
       nextDataPayload.locale = locale;
       nextDataPayload.locales = i18nConfig.locales;
-      nextDataPayload.defaultLocale = i18nConfig.defaultLocale;
+      nextDataPayload.defaultLocale = currentDefaultLocale;
+      nextDataPayload.domainLocales = domainLocales;
     }
     const localeGlobals = i18nConfig
       ? ";window.__VINEXT_LOCALE__=" + safeJsonStringify(locale) +
         ";window.__VINEXT_LOCALES__=" + safeJsonStringify(i18nConfig.locales) +
-        ";window.__VINEXT_DEFAULT_LOCALE__=" + safeJsonStringify(i18nConfig.defaultLocale)
+        ";window.__VINEXT_DEFAULT_LOCALE__=" + safeJsonStringify(currentDefaultLocale)
       : "";
     const nextDataScript = "<script>window.__NEXT_DATA__ = " + safeJsonStringify(nextDataPayload) + localeGlobals + "</script>";
 
@@ -19198,7 +19421,7 @@ async function _renderPage(request, url, manifest) {
         isrElement = React.createElement(PageComponent, pageProps);
       }
       isrElement = wrapWithRouterContext(isrElement);
-      var isrHtml = await renderToStringAsync(isrElement);
+      var isrHtml = await renderIsrPassToStringAsync(isrElement);
       var fullHtml = shellPrefix + isrHtml + shellSuffix;
       var isrPathname = url.split("?")[0];
       var _cacheKey = isrCacheKey("pages", isrPathname);
@@ -19232,15 +19455,16 @@ async function _renderPage(request, url, manifest) {
       responseHeaders.set("Link", _fontLinkHeader);
     }
     return new Response(compositeStream, { status: finalStatus, headers: responseHeaders });
-  } catch (e) {
+    } catch (e) {
     console.error("[vinext] SSR error:", e);
+    _reportRequestError(
+      e instanceof Error ? e : new Error(String(e)),
+      { path: url, method: request.method, headers: Object.fromEntries(request.headers.entries()) },
+      { routerKind: "Pages Router", routePath: route.pattern, routeType: "render" },
+    ).catch(() => { /* ignore reporting errors */ });
     return new Response("Internal Server Error", { status: 500 });
-  }
-          }) // end runWithFetchCache
-        ) // end runWithPrivateCache
-      ) // end _runWithCacheState
-    ) // end runWithHeadState
-  ); // end runWithRouterState
+    }
+  });
 }
 
 export async function handleApiRoute(request, url) {
@@ -19308,6 +19532,11 @@ export async function handleApiRoute(request, url) {
       return new Response(e.message, { status: e.statusCode, statusText: e.message });
     }
     console.error("[vinext] API error:", e);
+    _reportRequestError(
+      e instanceof Error ? e : new Error(String(e)),
+      { path: url, method: request.method, headers: Object.fromEntries(request.headers.entries()) },
+      { routerKind: "Pages Router", routePath: route.pattern, routeType: "route" },
+    );
     return new Response("Internal Server Error", { status: 500 });
   }
 }
@@ -19434,17 +19663,50 @@ function __safeRegExp(pattern, flags) {
 }
 
 var __mwPatternCache = new Map();
+function __extractConstraint(str, re) {
+  if (str[re.lastIndex] !== "(") return null;
+  var start = re.lastIndex + 1;
+  var depth = 1;
+  var i = start;
+  while (i < str.length && depth > 0) {
+    if (str[i] === "(") depth++;
+    else if (str[i] === ")") depth--;
+    i++;
+  }
+  if (depth !== 0) return null;
+  re.lastIndex = i;
+  return str.slice(start, i - 1);
+}
 function __compileMwPattern(pattern) {
-  if (pattern.includes("(") || pattern.includes("\\\\")) {
+  var hasConstraints = /:[\\w-]+[*+]?\\(/.test(pattern);
+  if (!hasConstraints && (pattern.includes("(") || pattern.includes("\\\\"))) {
     return __safeRegExp("^" + pattern + "$");
   }
   var regexStr = "";
   var tokenRe = /\\/:([\\w-]+)\\*|\\/:([\\w-]+)\\+|:([\\w-]+)|[.]|[^/:.]+|./g;
   var tok;
   while ((tok = tokenRe.exec(pattern)) !== null) {
-    if (tok[1] !== undefined) { regexStr += "(?:/.*)?"; }
-    else if (tok[2] !== undefined) { regexStr += "(?:/.+)"; }
-    else if (tok[3] !== undefined) { regexStr += "([^/]+)"; }
+    if (tok[1] !== undefined) {
+      var c1 = hasConstraints ? __extractConstraint(pattern, tokenRe) : null;
+      regexStr += c1 !== null ? "(?:/(" + c1 + "))?" : "(?:/.*)?";
+    }
+    else if (tok[2] !== undefined) {
+      var c2 = hasConstraints ? __extractConstraint(pattern, tokenRe) : null;
+      regexStr += c2 !== null ? "(?:/(" + c2 + "))" : "(?:/.+)";
+    }
+    else if (tok[3] !== undefined) {
+      var constraint = hasConstraints ? __extractConstraint(pattern, tokenRe) : null;
+      var isOptional = pattern[tokenRe.lastIndex] === "?";
+      if (isOptional) tokenRe.lastIndex += 1;
+      var group = constraint !== null ? "(" + constraint + ")" : "([^/]+)";
+      if (isOptional && regexStr.endsWith("/")) {
+        regexStr = regexStr.slice(0, -1) + "(?:/" + group + ")?";
+      } else if (isOptional) {
+        regexStr += group + "?";
+      } else {
+        regexStr += group;
+      }
+    }
     else if (tok[0] === ".") { regexStr += "\\\\."; }
     else { regexStr += tok[0]; }
   }

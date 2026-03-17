@@ -389,13 +389,10 @@ function __mergeResponseHeaderValues(targetHeaders, key, value, mode) {
 function __mergeResponseHeaders(targetHeaders, sourceHeaders, mode) {
   if (!sourceHeaders) return;
   if (sourceHeaders instanceof Headers) {
-    const __setCookies = typeof sourceHeaders.getSetCookie === "function"
-      ? sourceHeaders.getSetCookie()
-      : [];
+    const __setCookies = sourceHeaders.getSetCookie();
     for (const [key, value] of sourceHeaders) {
       if (key.toLowerCase() === "set-cookie") {
         // entries() flattens Set-Cookie into a single comma-joined value.
-        // If getSetCookie() is unavailable, drop cookies rather than corrupt them.
         continue;
       }
       __mergeResponseHeaderValues(targetHeaders, key, value, mode);
@@ -2318,6 +2315,8 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
                     const __revalSsrEntry = await import.meta.viteRsc.loadModule("ssr", "index");
                     const __revalHtmlStream = await __revalSsrEntry.handleSsr(__revalRscForSsr, _getNavigationContext(), __revalFontData);
                     const __freshRscData = await __rscDataPromise;
+                    // RSC data must be fully consumed before headers are finalized,
+                    // since async server components may append headers while streaming.
                     const __renderHeaders = consumeRenderResponseHeaders();
                     setHeadersContext(null);
                     setNavigationContext(null);
@@ -2713,13 +2712,13 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
       const compileMs = __compileEnd !== undefined ? Math.round(__compileEnd - __reqStart) : -1;
       responseHeaders["x-vinext-timing"] = handlerStart + "," + compileMs + ",-1";
     }
+    const __responseRenderHeaders = peekRenderResponseHeaders();
     // For ISR-eligible RSC requests in production: write rscData to its own key.
     // HTML is stored under a separate key (written by the HTML path below) so
     // these writes never race or clobber each other.
     if (process.env.NODE_ENV === "production" && __isrRscDataPromise) {
       const __isrKeyRsc = __isrRscKey(cleanPathname);
       const __revalSecsRsc = revalidateSeconds;
-      const __responseRenderHeaders = peekRenderResponseHeaders();
       if (peekDynamicUsage()) {
         responseHeaders["Cache-Control"] = "no-store, must-revalidate";
       } else {
@@ -2754,7 +2753,7 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     }
     return __responseWithMiddlewareContext(new Response(__rscForResponse, {
       status: 200,
-      headers: responseHeaders,
+      headers: __headersWithRenderResponseHeaders(responseHeaders, __responseRenderHeaders),
     }), _mwCtx);
   }
 

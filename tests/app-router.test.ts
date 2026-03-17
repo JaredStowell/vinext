@@ -657,6 +657,17 @@ describe("App Router integration", () => {
     expect(html).toContain("metadata normal route");
   });
 
+  it("preserves build-time render headers on direct non-ISR RSC responses", async () => {
+    const res = await fetch(`${baseUrl}/nextjs-compat/render-headers-metadata-normal.rsc`, {
+      headers: { Accept: "text/x-component" },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-metadata-normal")).toBe("yes");
+    expect(res.headers.getSetCookie()).toContain("metadata-normal=1; Path=/; HttpOnly");
+    expect((await res.text()).length).toBeGreaterThan(0);
+  });
+
   it("permanentRedirect() returns 308 status code", async () => {
     const res = await fetch(`${baseUrl}/permanent-redirect-test`, { redirect: "manual" });
     expect(res.status).toBe(308);
@@ -4105,6 +4116,15 @@ describe("generateRscEntry ISR code generation", () => {
     expect(code).toContain(": consumeRenderResponseHeaders();");
     expect(code).toContain("headers: __renderHeadersForCache");
     expect(code).toContain("headers: __revalResult.headers");
+    const rscResponseBlock = code.slice(
+      code.indexOf('if (process.env.NODE_ENV === "production" && __isrRscDataPromise)'),
+      code.indexOf("// Collect font data from RSC environment before passing to SSR"),
+    );
+    expect(
+      rscResponseBlock.match(
+        /headers: __headersWithRenderResponseHeaders\(responseHeaders, __responseRenderHeaders\)/g,
+      ),
+    ).toHaveLength(2);
   });
 
   it("generated code replays cached render-time response headers on HIT and STALE", () => {
