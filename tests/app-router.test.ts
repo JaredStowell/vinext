@@ -1829,9 +1829,7 @@ describe("App Router Production server (startProdServer)", () => {
     const { startProdServer } = await import("../packages/vinext/src/server/prod-server.js");
     const streamServer = await startProdServer({ port: 0, outDir, noCompression: true });
     try {
-      const addr = streamServer.address();
-      const port = typeof addr === "object" && addr ? addr.port : 4210;
-      const streamBaseUrl = `http://localhost:${port}`;
+      const streamBaseUrl = `http://localhost:${streamServer.port}`;
 
       const start = performance.now();
       const res = await fetch(`${streamBaseUrl}/nextjs-compat/cached-render-headers-stream`);
@@ -1853,7 +1851,7 @@ describe("App Router Production server (startProdServer)", () => {
       expect(fetchResolvedAt - start).toBeLessThan(doneAt - start);
       expect(doneAt - firstAt).toBeGreaterThan(15);
     } finally {
-      await new Promise<void>((resolve) => streamServer.close(() => resolve()));
+      await new Promise<void>((resolve) => streamServer.server.close(() => resolve()));
     }
   });
 
@@ -1865,9 +1863,7 @@ describe("App Router Production server (startProdServer)", () => {
     const { startProdServer } = await import("../packages/vinext/src/server/prod-server.js");
     const streamServer = await startProdServer({ port: 0, outDir, noCompression: true });
     try {
-      const addr = streamServer.address();
-      const port = typeof addr === "object" && addr ? addr.port : 4210;
-      const streamBaseUrl = `http://localhost:${port}`;
+      const streamBaseUrl = `http://localhost:${streamServer.port}`;
 
       const start = performance.now();
       const res = await fetch(
@@ -1898,7 +1894,7 @@ describe("App Router Production server (startProdServer)", () => {
       expect(fetchResolvedAt - start).toBeLessThan(doneAt - start);
       expect(doneAt - firstAt).toBeGreaterThan(15);
     } finally {
-      await new Promise<void>((resolve) => streamServer.close(() => resolve()));
+      await new Promise<void>((resolve) => streamServer.server.close(() => resolve()));
     }
   });
 
@@ -1948,9 +1944,7 @@ describe("App Router Production server (startProdServer)", () => {
     };
 
     try {
-      const addr = rscServer.address();
-      const port = typeof addr === "object" && addr ? addr.port : 4210;
-      const rscBaseUrl = `http://localhost:${port}`;
+      const rscBaseUrl = `http://localhost:${rscServer.port}`;
 
       const rscMiss = await fetch(
         `${rscBaseUrl}/nextjs-compat/cached-render-headers-rsc-parity.rsc`,
@@ -1995,7 +1989,7 @@ describe("App Router Production server (startProdServer)", () => {
       expect(rscHit.headers.get("www-authenticate")).toBe(expectedWwwAuthenticate);
       expect(rscHit.headers.getSetCookie()).toEqual(expectedHitSetCookies);
     } finally {
-      await new Promise<void>((resolve) => rscServer.close(() => resolve()));
+      await new Promise<void>((resolve) => rscServer.server.close(() => resolve()));
     }
   });
 
