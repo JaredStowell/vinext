@@ -1690,6 +1690,41 @@ describe("App Router Production server (startProdServer)", () => {
     expect(res3.headers.get("x-vinext-cache")).toBe("MISS");
   });
 
+  it("page ISR + searchParams: RSC requests stay dynamic instead of serving cached query data", async () => {
+    const res1 = await fetch(`${baseUrl}/isr-dynamic-search?filter=crimson`, {
+      headers: { Accept: "text/x-component" },
+    });
+    expect(res1.status).toBe(200);
+    expect(res1.headers.get("content-type")).toContain("text/x-component");
+    expect(res1.headers.get("x-vinext-cache")).toBeNull();
+    const rsc1 = await res1.text();
+    expect(rsc1).toContain("crimson");
+
+    const res2 = await fetch(`${baseUrl}/isr-dynamic-search?filter=indigo`, {
+      headers: { Accept: "text/x-component" },
+    });
+    expect(res2.status).toBe(200);
+    expect(res2.headers.get("x-vinext-cache")).toBeNull();
+    const rsc2 = await res2.text();
+    expect(rsc2).toContain("indigo");
+    expect(rsc2).not.toContain("crimson");
+  });
+
+  it("page ISR + searchParams: HTML requests also skip ISR caching", async () => {
+    const res1 = await fetch(`${baseUrl}/isr-dynamic-search?filter=alpha`);
+    expect(res1.status).toBe(200);
+    expect(res1.headers.get("x-vinext-cache")).toBeNull();
+    const html1 = await res1.text();
+    expect(html1).toContain("alpha");
+
+    const res2 = await fetch(`${baseUrl}/isr-dynamic-search?filter=beta`);
+    expect(res2.status).toBe(200);
+    expect(res2.headers.get("x-vinext-cache")).toBeNull();
+    const html2 = await res2.text();
+    expect(html2).toContain("beta");
+    expect(html2).not.toContain('"filter">alpha<');
+  });
+
   // Route handler ISR caching tests
   // These tests are ORDER-DEPENDENT: they share a single production server and
   // /api/static-data cache state persists across tests. HIT depends on MISS
@@ -1732,6 +1767,30 @@ describe("App Router Production server (startProdServer)", () => {
       headers: { "x-test-ping": "b" },
     });
     // Dynamic usage should prevent ISR caching
+    expect(res1.headers.get("x-vinext-cache")).toBeNull();
+    expect(res2.headers.get("x-vinext-cache")).toBeNull();
+  });
+
+  it("route handler ISR: direct request.headers access is not cached", async () => {
+    const res1 = await fetch(`${baseUrl}/api/dynamic-request-headers`, {
+      headers: { "x-test-ping": "a" },
+    });
+    const res2 = await fetch(`${baseUrl}/api/dynamic-request-headers`, {
+      headers: { "x-test-ping": "b" },
+    });
+
+    expect(await res1.json()).toEqual({ ping: "a" });
+    expect(await res2.json()).toEqual({ ping: "b" });
+    expect(res1.headers.get("x-vinext-cache")).toBeNull();
+    expect(res2.headers.get("x-vinext-cache")).toBeNull();
+  });
+
+  it("route handler ISR: request.url query access is not cached", async () => {
+    const res1 = await fetch(`${baseUrl}/api/dynamic-request-url?ping=a`);
+    const res2 = await fetch(`${baseUrl}/api/dynamic-request-url?ping=b`);
+
+    expect(await res1.json()).toEqual({ ping: "a" });
+    expect(await res2.json()).toEqual({ ping: "b" });
     expect(res1.headers.get("x-vinext-cache")).toBeNull();
     expect(res2.headers.get("x-vinext-cache")).toBeNull();
   });
@@ -3139,14 +3198,7 @@ describe("App Router middleware with NextRequest", () => {
   });
 });
 
-describe("SSR entry CSS preload fix", () => {
-  it("generateSsrEntry includes fixPreloadAs function", async () => {
-    const { generateSsrEntry } = await import("../packages/vinext/src/entries/app-ssr-entry.js");
-    const code = generateSsrEntry();
-    expect(code).toContain("fixPreloadAs");
-    expect(code).toContain('as="style"');
-  });
-
+describe("RSC Flight hint fix", () => {
   it("generateRscEntry wraps renderToReadableStream with HL hint fix", () => {
     // The RSC entry should shadow renderToReadableStream with a wrapper that
     // rewrites Flight HL hint "stylesheet" → "style" at the stream source,
@@ -3174,47 +3226,6 @@ describe("SSR entry CSS preload fix", () => {
     const code = generateRscEntry("/tmp/test/app", [route]);
     expect(code).toContain("_renderToReadableStream");
     expect(code).toContain('"style"$2');
-  });
-
-  it('fixPreloadAs regex correctly replaces as="stylesheet" with as="style"', () => {
-    // Replicate the fixPreloadAs function from the generated SSR entry
-    function fixPreloadAs(html: string): string {
-      return html.replace(/<link(?=[^>]*\srel="preload")[^>]*>/g, function (tag) {
-        return tag.replace(' as="stylesheet"', ' as="style"');
-      });
-    }
-
-    // Test: basic case from the issue
-    expect(
-      fixPreloadAs('<link rel="preload" href="/assets/index-hG1v95Xi.css" as="stylesheet"/>'),
-    ).toBe('<link rel="preload" href="/assets/index-hG1v95Xi.css" as="style"/>');
-
-    // Test: as attribute before rel
-    expect(fixPreloadAs('<link as="stylesheet" rel="preload" href="/file.css"/>')).toBe(
-      '<link as="style" rel="preload" href="/file.css"/>',
-    );
-
-    // Test: should NOT modify <link rel="stylesheet"> (no preload)
-    expect(fixPreloadAs('<link rel="stylesheet" href="/file.css" as="stylesheet"/>')).toBe(
-      '<link rel="stylesheet" href="/file.css" as="stylesheet"/>',
-    );
-
-    // Test: should NOT modify other preload types
-    expect(fixPreloadAs('<link rel="preload" href="/font.woff2" as="font"/>')).toBe(
-      '<link rel="preload" href="/font.woff2" as="font"/>',
-    );
-
-    // Test: multiple link tags in one chunk
-    const multi =
-      '<link rel="preload" href="/a.css" as="stylesheet"/><link rel="preload" href="/b.css" as="stylesheet"/>';
-    expect(fixPreloadAs(multi)).toBe(
-      '<link rel="preload" href="/a.css" as="style"/><link rel="preload" href="/b.css" as="style"/>',
-    );
-
-    // Test: no change needed
-    expect(fixPreloadAs('<link rel="preload" href="/a.css" as="style"/>')).toBe(
-      '<link rel="preload" href="/a.css" as="style"/>',
-    );
   });
 
   it('fixFlightHints regex correctly replaces "stylesheet" with "style" in RSC Flight HL hints', () => {
@@ -3261,40 +3272,6 @@ describe("SSR entry CSS preload fix", () => {
     ).toBe('0:D{"name":"page"}\n2:HL["/app.css","style"]\n3:["$","div",null,{}]');
   });
 });
-
-describe("Tick-buffered RSC delivery", () => {
-  it("generateSsrEntry uses setTimeout-based tick buffering for RSC scripts", async () => {
-    const { generateSsrEntry } = await import("../packages/vinext/src/entries/app-ssr-entry.js");
-    const code = generateSsrEntry();
-    // Should use setTimeout(0) for tick buffering instead of emitting
-    // RSC scripts synchronously between HTML chunks
-    expect(code).toContain("setTimeout");
-    expect(code).toContain("buffered");
-    expect(code).toContain("timeoutId");
-    // Should cancel pending timeout in flush() to avoid race condition
-    expect(code).toContain("clearTimeout");
-    // Should still call rscEmbed.flush() for progressive delivery
-    expect(code).toContain("rscEmbed.flush()");
-    // Should call rscEmbed.finalize() in the TransformStream flush handler
-    expect(code).toContain("rscEmbed.finalize()");
-  });
-
-  it("generateBrowserEntry uses monkey-patched push() instead of polling", async () => {
-    const { generateBrowserEntry } =
-      await import("../packages/vinext/src/entries/app-browser-entry.js");
-    const code = generateBrowserEntry();
-    // Should override push() for immediate chunk delivery
-    expect(code).toContain("arr.push = function");
-    expect(code).toContain("Array.prototype.push.call");
-    // Should guard against double-close
-    expect(code).toContain("closeOnce");
-    // Should have DOMContentLoaded safety net for truncated responses
-    expect(code).toContain("DOMContentLoaded");
-    // Should NOT use setTimeout-based polling
-    expect(code).not.toContain("setTimeout(resolve, 1)");
-  });
-});
-
 // ── Client reference preloading (Issue #256) ─────────────────────────────────
 //
 // On the first SSR request after server start, client reference modules are
@@ -3364,7 +3341,6 @@ describe("Client reference preloading (Issue #256)", () => {
     expect(loadCounts.get("comp-c")).toBe(1);
   });
 });
-
 // ── Auto-registration of @vitejs/plugin-rsc ─────────────────────────────────
 
 describe("RSC plugin auto-registration", () => {
@@ -3688,19 +3664,27 @@ describe("generateRscEntry ISR code generation", () => {
     expect(code).toContain('"next/cache"');
   });
 
-  it("generated code emits X-Vinext-Cache: MISS header on first render", () => {
+  it("generated code delegates page response policy to typed helpers", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    expect(code).toContain('"X-Vinext-Cache": "MISS"');
+    expect(code).toContain("buildAppPageHtmlResponse as __buildAppPageHtmlResponse");
+    expect(code).toContain("buildAppPageRscResponse as __buildAppPageRscResponse");
+    expect(code).toContain(
+      "resolveAppPageHtmlResponsePolicy as __resolveAppPageHtmlResponsePolicy",
+    );
+    expect(code).toContain("resolveAppPageRscResponsePolicy as __resolveAppPageRscResponsePolicy");
   });
 
-  it("generated code emits X-Vinext-Cache: HIT header on cache hits", () => {
+  it("generated code delegates page cache HIT handling to a typed helper", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    expect(code).toContain('"X-Vinext-Cache": "HIT"');
+    expect(code).toContain("readAppPageCacheResponse as __readAppPageCacheResponse");
+    expect(code).toContain("await __readAppPageCacheResponse({");
   });
 
-  it("generated code emits X-Vinext-Cache: STALE header on stale hits", () => {
+  it("generated code delegates page cache STALE handling to the same helper", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    expect(code).toContain('"X-Vinext-Cache": "STALE"');
+    expect(code).toContain("readAppPageCacheResponse as __readAppPageCacheResponse");
+    expect(code).toContain("scheduleBackgroundRegeneration: __triggerBackgroundRegeneration");
+    expect(code).toContain("renderFreshPageForCache: async function()");
   });
 
   it("generated code uses request execution context for background cache write", () => {
@@ -3719,64 +3703,47 @@ describe("generateRscEntry ISR code generation", () => {
 
   it("generated code stores rscData in the ISR cache entry", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    // The HTML-path cache write must include rscData (not always undefined)
-    expect(code).toContain("rscData: __rscData");
-    // Background regen must also store rscData
+    // The HTML-path cache write now delegates to the typed cache helper, which
+    // receives the captured RSC payload promise so it can persist the paired
+    // RSC entry alongside the streamed HTML response.
+    expect(code).toContain(
+      "finalizeAppPageHtmlCacheResponse as __finalizeAppPageHtmlCacheResponse",
+    );
+    expect(code).toContain("capturedRscDataPromise: __isrRscDataPromise");
+    // Background regen still writes fresh RSC bytes directly.
     expect(code).toContain("rscData: __freshRscData");
   });
 
   it("generated code writes RSC-first partial cache entry on RSC MISS", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    // The RSC-path cache write must store rscData with html:"" as a partial entry.
-    // This lets subsequent RSC requests hit cache immediately without waiting
-    // for an HTML request to come in and populate a complete entry.
-    expect(code).toContain('html: ""');
-    // The RSC write must use __isrKeyRsc / __rscDataForCache variable names
-    expect(code).toContain("__rscDataForCache");
-    expect(code).toContain("__isrKeyRsc");
+    // The RSC-path cache write now delegates to a typed helper instead of
+    // embedding the partial APP_PAGE cache value inline in generated code.
+    expect(code).toContain("scheduleAppPageRscCacheWrite as __scheduleAppPageRscCacheWrite");
+    expect(code).toContain("__scheduleAppPageRscCacheWrite({");
+    expect(code).toContain("capturedRscDataPromise:");
+    expect(code).toContain("isrRscKey: __isrRscKey");
   });
 
   it("generated code treats html:'' partial entries as MISS for HTML requests", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    // The ISR read block must check __hasHtml before returning an HTML HIT,
-    // so that a partial entry (html:"") falls through to render.
-    expect(code).toContain("__hasHtml");
-    // Must also check __hasRsc before returning an RSC HIT
-    expect(code).toContain("__hasRsc");
-    // HTML requests must only return HIT when __hasHtml is true.
-    // Slice from the ISR cache read comment to the main render call.
-    // Use "element = await buildPageElement" (the main page render, not the fn def or regen call).
-    const isrReadBlock = code.slice(
-      code.indexOf("ISR cache read"),
-      code.indexOf("element = await buildPageElement"),
-    );
-    expect(isrReadBlock.length).toBeGreaterThan(0);
-    expect(isrReadBlock).toContain("if (isRscRequest && __hasRsc)");
-    expect(isrReadBlock).toContain("if (!isRscRequest && __hasHtml)");
+    // APP_PAGE ISR reads now flow through the typed page-cache helper.
+    expect(code).toContain("readAppPageCacheResponse as __readAppPageCacheResponse");
+    expect(code).toContain("await __readAppPageCacheResponse({");
+    expect(code).toContain("isrHtmlKey: __isrHtmlKey");
+    expect(code).toContain("isrRscKey: __isrRscKey");
   });
 
   it("generated code serves cached rscData for RSC requests on HIT", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    // ISR read block must return rscData for RSC requests
-    expect(code).toContain("rscData");
-    expect(code).toContain("text/x-component");
-    // The ISR read block must have an explicit RSC hit path (not just an HTML path)
-    const isrReadBlock = code.slice(
-      code.indexOf("ISR cache read"),
-      code.indexOf("element = await buildPageElement"),
-    );
-    expect(isrReadBlock.length).toBeGreaterThan(0);
-    // Must serve RSC from cache using isRscRequest guard
-    expect(isrReadBlock).toContain("if (isRscRequest && __hasRsc)");
-    // Must NOT use the old bare !isRscRequest guard (HTML-only serving without data check)
-    expect(isrReadBlock).not.toContain("if (!isRscRequest) {");
+    // The helper receives the request type so it can serve cached RSC responses.
+    expect(code).toContain("readAppPageCacheResponse as __readAppPageCacheResponse");
+    expect(code).toContain("isRscRequest,");
   });
 
   it("ISR cache read fires before buildPageElement (early return on HIT)", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    // The ISR read block must appear before the main 'buildPageElement' render call.
-    // Use "element = await buildPageElement" to target the main call, not the fn definition.
-    const isrReadIdx = code.indexOf("__isrGet(");
+    // The page-cache helper call must appear before the main buildPageElement render call.
+    const isrReadIdx = code.indexOf("await __readAppPageCacheResponse(");
     const buildPageIdx = code.indexOf("element = await buildPageElement");
     expect(isrReadIdx).toBeGreaterThan(-1);
     expect(buildPageIdx).toBeGreaterThan(-1);
@@ -3785,9 +3752,9 @@ describe("generateRscEntry ISR code generation", () => {
 
   it("ISR cache read fires before generateStaticParams (skips expensive work on HIT)", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    // The ISR read block must appear before the generateStaticParams call so that
-    // a cache hit skips the potentially-expensive static params validation entirely.
-    const isrReadIdx = code.indexOf("__isrGet(");
+    // The page-cache helper call must appear before generateStaticParams so cache hits
+    // skip the static params validation entirely.
+    const isrReadIdx = code.indexOf("await __readAppPageCacheResponse(");
     const gspIdx = code.indexOf("generateStaticParams(");
     expect(isrReadIdx).toBeGreaterThan(-1);
     expect(gspIdx).toBeGreaterThan(-1);
@@ -3798,12 +3765,21 @@ describe("generateRscEntry ISR code generation", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
     // __rscForResponse must be assigned before the RSC response is returned so
     // the tee branch (__rscB) is also consumed (populating the ISR cache).
-    // The RSC response is: new Response(__rscForResponse, ...)
+    // The RSC response is now built via the typed page-response helper.
     const teeAssignIdx = code.indexOf("let __rscForResponse");
-    const rscResponseIdx = code.indexOf("return new Response(__rscForResponse");
+    const rscResponseIdx = code.indexOf("const __rscResponse = __buildAppPageRscResponse(");
     expect(teeAssignIdx).toBeGreaterThan(-1);
     expect(rscResponseIdx).toBeGreaterThan(-1);
     expect(teeAssignIdx).toBeLessThan(rscResponseIdx);
+  });
+
+  it("generated code applies two-phase dynamic checks before page RSC cache writes", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    expect(code).toContain("const __dynamicUsedInRsc = consumeDynamicUsage()");
+    expect(code).toContain("dynamicUsedDuringBuild: __dynamicUsedInRsc");
+    expect(code).toContain("scheduleAppPageRscCacheWrite as __scheduleAppPageRscCacheWrite");
+    expect(code).toContain("__scheduleAppPageRscCacheWrite({");
+    expect(code).toContain("consumeDynamicUsage,");
   });
 
   // Route handler ISR code generation tests
@@ -3814,16 +3790,21 @@ describe("generateRscEntry ISR code generation", () => {
 
   it("generated code contains APP_ROUTE ISR cache read for route handlers", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    expect(code).toContain('"APP_ROUTE"');
-    // Route handler ISR uses __isrRouteKey to build the cache key, then reads via __isrGet
-    expect(code).toContain("__isrRouteKey(cleanPathname)");
-    expect(code).toContain("__isrGet(__routeKey)");
+    // Route handler ISR reads now flow through the typed cache helper.
+    expect(code).toContain(
+      "readAppRouteHandlerCacheResponse as __readAppRouteHandlerCacheResponse",
+    );
+    expect(code).toContain("await __readAppRouteHandlerCacheResponse({");
+    expect(code).toContain("isrGet: __isrGet");
+    expect(code).toContain("scheduleBackgroundRegeneration: __triggerBackgroundRegeneration");
   });
 
   it("generated code contains APP_ROUTE ISR cache write for route handlers", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    // Route handler ISR writes use __isrSet with __routeKey and APP_ROUTE kind
-    expect(code).toContain("__isrSet(__routeKey,");
-    expect(code).toContain('kind: "APP_ROUTE"');
+    // Route handler ISR writes now flow through the typed execution helper.
+    expect(code).toContain("executeAppRouteHandler as __executeAppRouteHandler");
+    expect(code).toContain("return __executeAppRouteHandler({");
+    expect(code).toContain("isrRouteKey: __isrRouteKey");
+    expect(code).toContain("isrSet: __isrSet");
   });
 });
