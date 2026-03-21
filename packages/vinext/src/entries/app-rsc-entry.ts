@@ -2267,23 +2267,11 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     const exportedMethods = collectRouteHandlerMethods(handler);
     const allowHeaderForOptions = buildRouteHandlerAllowHeader(exportedMethods);
 
-    // Route handlers need the same middleware header/status merge behavior as
-    // page responses. This keeps middleware response headers visible on API
-    // routes in Workers/dev, and preserves custom rewrite status overrides.
-    function attachRouteHandlerMiddlewareContext(response) {
-      // _mwCtx.headers is only set (non-null) when middleware actually ran and
-      // produced a continue/rewrite response. An empty Headers object (middleware
-      // ran but produced no response headers) is a harmless edge case: the early
-      // return is skipped, but the copy loop below is a no-op, so no incorrect
-      // headers are added. The allocation cost in that case is acceptable.
-      if (!_mwCtx.headers && _mwCtx.status == null) return response;
-      const responseHeaders = __headersWithRenderResponseHeaders(response.headers);
-      __applyMiddlewareResponseHeaders(responseHeaders, _mwCtx.headers);
-      return new Response(response.body, {
-        status: _mwCtx.status ?? response.status,
-        statusText: response.statusText,
-        headers: responseHeaders,
-      });
+    // Route handlers share the same final response semantics as page renders:
+    // queued render headers replay first, middleware headers merge after that,
+    // and rewrite status only applies when explicitly allowed.
+    function attachRouteHandlerMiddlewareContext(response, renderHeaders, options) {
+      return __responseWithMiddlewareContext(response, _mwCtx, renderHeaders, options);
     }
 
     // OPTIONS auto-implementation: respond with Allow header and 204
@@ -2436,38 +2424,16 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
         const renderResponseHeaders = consumeRenderResponseHeaders();
         setHeadersContext(null);
         setNavigationContext(null);
-
-        if (renderResponseHeaders) {
-          const newHeaders = __headersWithRenderResponseHeaders(
-            response.headers,
-            renderResponseHeaders,
-          );
-
-          if (isAutoHead) {
-            return attachRouteHandlerMiddlewareContext(new Response(null, {
+        const baseResponse = isAutoHead
+          ? new Response(null, {
               status: response.status,
               statusText: response.statusText,
-              headers: newHeaders,
-            }));
-          }
-          return attachRouteHandlerMiddlewareContext(new Response(response.body, {
-            status: response.status,
-            statusText: response.statusText,
-            headers: newHeaders,
-          }));
-        }
-
-        if (isAutoHead) {
-          // Strip body for auto-HEAD, preserve headers and status
-          return attachRouteHandlerMiddlewareContext(new Response(null, {
-            status: response.status,
-            statusText: response.statusText,
-            headers: response.headers,
-          }));
-        }
-        return attachRouteHandlerMiddlewareContext(response);
+              headers: response.headers,
+            })
+          : response;
+        return attachRouteHandlerMiddlewareContext(baseResponse, renderResponseHeaders);
       } catch (err) {
-        consumeRenderResponseHeaders(); // Clear any pending render-time response headers on error
+        const renderResponseHeaders = consumeRenderResponseHeaders();
         // Catch redirect() / notFound() thrown from route handlers
         if (err && typeof err === "object" && "digest" in err) {
           const digest = String(err.digest);
@@ -2480,13 +2446,17 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
             return attachRouteHandlerMiddlewareContext(new Response(null, {
               status: statusCode,
               headers: { Location: new URL(redirectUrl, request.url).toString() },
-            }));
+            }), renderResponseHeaders, { applyRewriteStatus: false });
           }
           if (digest === "NEXT_NOT_FOUND" || digest.startsWith("NEXT_HTTP_ERROR_FALLBACK;")) {
             const statusCode = digest === "NEXT_NOT_FOUND" ? 404 : parseInt(digest.split(";")[1], 10);
             setHeadersContext(null);
             setNavigationContext(null);
-            return attachRouteHandlerMiddlewareContext(new Response(null, { status: statusCode }));
+            return attachRouteHandlerMiddlewareContext(
+              new Response(null, { status: statusCode }),
+              renderResponseHeaders,
+              { applyRewriteStatus: false },
+            );
           }
         }
         setHeadersContext(null);

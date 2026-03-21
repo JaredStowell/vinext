@@ -629,6 +629,42 @@ describe("App Router integration", () => {
     expect(html).toContain("does not exist");
   });
 
+  it("middleware rewrite status does not reuse a route handler's stale statusText", async () => {
+    const directRes = await fetch(`${baseUrl}/api/custom-status-text`);
+    expect(directRes.status).toBe(201);
+    expect(directRes.statusText).toBe("Created");
+    expect(await directRes.text()).toBe("custom status text route");
+
+    const res = await fetch(`${baseUrl}/middleware-rewrite-status-route-status-text`);
+    expect(res.status).toBe(403);
+    expect(res.statusText).not.toBe("Created");
+    expect(await res.text()).toBe("custom status text route");
+  });
+
+  it("middleware rewrite status does not override route-handler redirects with queued cookies", async () => {
+    const res = await fetch(`${baseUrl}/middleware-rewrite-status-route-redirect-with-cookie`, {
+      redirect: "manual",
+    });
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toContain("/about");
+    expect(res.headers.getSetCookie()).toContain("route-special=redirect; Path=/; HttpOnly");
+    expect(await res.text()).toBe("");
+  });
+
+  it("middleware rewrite status does not override route-handler notFound() with queued cookies", async () => {
+    const res = await fetch(`${baseUrl}/middleware-rewrite-status-route-not-found-with-cookie`);
+    expect(res.status).toBe(404);
+    expect(res.headers.getSetCookie()).toContain("route-special=not-found; Path=/; HttpOnly");
+    expect(await res.text()).toBe("");
+  });
+
+  it("middleware rewrite status does not override route-handler unauthorized() with queued cookies", async () => {
+    const res = await fetch(`${baseUrl}/middleware-rewrite-status-route-unauthorized-with-cookie`);
+    expect(res.status).toBe(401);
+    expect(res.headers.getSetCookie()).toContain("route-special=unauthorized; Path=/; HttpOnly");
+    expect(await res.text()).toBe("");
+  });
+
   it("preserves render-time headers and middleware context for redirects thrown during metadata resolution", async () => {
     const res = await fetch(`${baseUrl}/nextjs-compat/render-headers-metadata-redirect`, {
       redirect: "manual",
@@ -3425,6 +3461,42 @@ describe("App Router middleware with NextRequest", () => {
     expect(html).toContain("does not exist");
   });
 
+  it("middleware rewrite status does not reuse a route handler's stale statusText in production", async () => {
+    const directRes = await fetch(`${baseUrl}/api/custom-status-text`);
+    expect(directRes.status).toBe(201);
+    expect(directRes.statusText).toBe("Created");
+    expect(await directRes.text()).toBe("custom status text route");
+
+    const res = await fetch(`${baseUrl}/middleware-rewrite-status-route-status-text`);
+    expect(res.status).toBe(403);
+    expect(res.statusText).not.toBe("Created");
+    expect(await res.text()).toBe("custom status text route");
+  });
+
+  it("middleware rewrite status does not override route-handler redirects with queued cookies in production", async () => {
+    const res = await fetch(`${baseUrl}/middleware-rewrite-status-route-redirect-with-cookie`, {
+      redirect: "manual",
+    });
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toContain("/about");
+    expect(res.headers.getSetCookie()).toContain("route-special=redirect; Path=/; HttpOnly");
+    expect(await res.text()).toBe("");
+  });
+
+  it("middleware rewrite status does not override route-handler notFound() with queued cookies in production", async () => {
+    const res = await fetch(`${baseUrl}/middleware-rewrite-status-route-not-found-with-cookie`);
+    expect(res.status).toBe(404);
+    expect(res.headers.getSetCookie()).toContain("route-special=not-found; Path=/; HttpOnly");
+    expect(await res.text()).toBe("");
+  });
+
+  it("middleware rewrite status does not override route-handler unauthorized() with queued cookies in production", async () => {
+    const res = await fetch(`${baseUrl}/middleware-rewrite-status-route-unauthorized-with-cookie`);
+    expect(res.status).toBe(401);
+    expect(res.headers.getSetCookie()).toContain("route-special=unauthorized; Path=/; HttpOnly");
+    expect(await res.text()).toBe("");
+  });
+
   it("middleware can return custom response", async () => {
     const res = await fetch(`${baseUrl}/middleware-blocked`);
     expect(res.status).toBe(403);
@@ -4141,6 +4213,34 @@ describe("generateRscEntry ISR code generation", () => {
     expect(helperBlock).toContain("const status = rewriteStatus ?? response.status;");
     expect(helperBlock).toContain("if (status === response.status && response.statusText)");
     expect(helperBlock).not.toContain("statusText: response.statusText");
+  });
+
+  it("generated route handler helper delegates finalization to the shared middleware helper", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    const helperBlock = code.slice(
+      code.indexOf("function attachRouteHandlerMiddlewareContext"),
+      code.indexOf("// OPTIONS auto-implementation"),
+    );
+    expect(helperBlock).toContain(
+      "return __responseWithMiddlewareContext(response, _mwCtx, renderHeaders, options);",
+    );
+    expect(helperBlock).not.toContain("statusText: response.statusText");
+  });
+
+  it("generated route handler special responses preserve render headers and ignore rewrite status", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    const routeHandlerBlock = code.slice(
+      code.indexOf('if (typeof handlerFn === "function") {'),
+      code.indexOf("// Build the component tree: layouts wrapping the page"),
+    );
+    expect(routeHandlerBlock).toContain(
+      "const renderResponseHeaders = consumeRenderResponseHeaders();",
+    );
+    expect(routeHandlerBlock).toContain("const baseResponse = isAutoHead");
+    expect(routeHandlerBlock).toContain(
+      "return attachRouteHandlerMiddlewareContext(baseResponse, renderResponseHeaders);",
+    );
+    expect(routeHandlerBlock).toContain("{ applyRewriteStatus: false }");
   });
 
   it("generated code writes RSC-first partial cache entry on RSC MISS", () => {

@@ -100,6 +100,30 @@ export function middleware(request: NextRequest) {
     });
   }
 
+  if (pathname === "/middleware-rewrite-status-route-status-text") {
+    return NextResponse.rewrite(new URL("/api/custom-status-text", request.url), {
+      status: 403,
+    });
+  }
+
+  if (pathname === "/middleware-rewrite-status-route-redirect-with-cookie") {
+    return NextResponse.rewrite(new URL("/api/redirect-with-cookie", request.url), {
+      status: 403,
+    });
+  }
+
+  if (pathname === "/middleware-rewrite-status-route-not-found-with-cookie") {
+    return NextResponse.rewrite(new URL("/api/not-found-with-cookie", request.url), {
+      status: 403,
+    });
+  }
+
+  if (pathname === "/middleware-rewrite-status-route-unauthorized-with-cookie") {
+    return NextResponse.rewrite(new URL("/api/unauthorized-with-cookie", request.url), {
+      status: 403,
+    });
+  }
+
   // Block /middleware-blocked with custom response
   if (pathname === "/middleware-blocked") {
     return new Response("Blocked by middleware", { status: 403 });
@@ -216,6 +240,10 @@ export const config = {
     "/middleware-rewrite-status",
     "/middleware-rewrite-status-redirect",
     "/middleware-rewrite-status-not-found",
+    "/middleware-rewrite-status-route-status-text",
+    "/middleware-rewrite-status-route-redirect-with-cookie",
+    "/middleware-rewrite-status-route-not-found-with-cookie",
+    "/middleware-rewrite-status-route-unauthorized-with-cookie",
     "/middleware-blocked",
     "/middleware-throw",
     "/search-query",
