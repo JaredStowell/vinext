@@ -1779,9 +1779,6 @@ describe("App Router Production server (startProdServer)", () => {
   });
 
   it("replays render-time response headers across HTML MISS/HIT/STALE and regeneration", async () => {
-    // Next.js preserves duplicate response headers instead of overwriting them.
-    // Ref: packages/next/src/server/send-response.ts
-    // Ref: test/e2e/app-dir/no-duplicate-headers-middleware/no-duplicate-headers-middleware.test.ts
     const expectedVaryPrefix = [
       "x-render-one",
       "x-render-two",
@@ -1931,9 +1928,11 @@ describe("App Router Production server (startProdServer)", () => {
     }
   });
 
-  it("returns snapshot render-time headers on direct RSC MISSes and replays final headers on HITs", async () => {
-    const expectedVary = "x-render-one, x-render-two, RSC, Accept, x-middleware-test";
-    const expectedWwwAuthenticate =
+  it("replays final render-time headers on direct RSC HITs after streamed MISSes", async () => {
+    const expectedMissVary = "RSC, Accept, x-middleware-test";
+    const expectedHitVary = "x-render-one, x-render-two, RSC, Accept, x-middleware-test";
+    const expectedMissWwwAuthenticate = 'Digest realm="middleware"';
+    const expectedHitWwwAuthenticate =
       'Basic realm="render", Bearer realm="render", Digest realm="middleware"';
     const expectedMiddlewareSetCookies = [
       "middleware-render=1; Path=/; HttpOnly",
@@ -1977,53 +1976,87 @@ describe("App Router Production server (startProdServer)", () => {
     };
 
     try {
-      const rscBaseUrl = `http://localhost:${rscServer.port}`;
+      const localBaseUrl = `http://localhost:${rscServer.port}`;
 
-      const rscMiss = await fetch(
-        `${rscBaseUrl}/nextjs-compat/cached-render-headers-rsc-parity.rsc`,
+      const missRes = await fetch(
+        `${localBaseUrl}/nextjs-compat/cached-render-headers-rsc-parity.rsc`,
         {
           headers: { Accept: "text/x-component" },
         },
       );
-      expect(rscMiss.status).toBe(200);
-      expect(rscMiss.headers.get("x-vinext-cache")).toBe("MISS");
-      expect(rscMiss.headers.get("x-rendered-late")).toBeNull();
-      expect(rscMiss.headers.get("x-mw-conflict")).toBe("middleware");
-      expect(rscMiss.headers.get("x-mw-ran")).toBe("true");
-      expect(rscMiss.headers.get("x-mw-pathname")).toBe(
-        "/nextjs-compat/cached-render-headers-rsc-parity",
-      );
-      expect(rscMiss.headers.get("vary")).toContain("RSC");
-      expect(rscMiss.headers.get("vary")).toContain("Accept");
-      expect(rscMiss.headers.get("vary")).toContain("x-middleware-test");
-      expect(rscMiss.headers.get("www-authenticate")).toContain('Digest realm="middleware"');
-      expect(rscMiss.headers.getSetCookie()).toEqual(
+      expect(missRes.status).toBe(200);
+      expect(missRes.headers.get("x-vinext-cache")).toBe("MISS");
+      expect(missRes.headers.get("x-rendered-in-page")).toBeNull();
+      expect(missRes.headers.get("x-rendered-late")).toBeNull();
+      expect(missRes.headers.get("x-mw-conflict")).toBe("middleware");
+      expect(missRes.headers.get("x-mw-ran")).toBe("true");
+      expect(missRes.headers.get("vary")).toBe(expectedMissVary);
+      expect(missRes.headers.get("www-authenticate")).toBe(expectedMissWwwAuthenticate);
+      expect(missRes.headers.getSetCookie()).toEqual(
         expect.arrayContaining(expectedMiddlewareSetCookies),
       );
-      expect(rscMiss.headers.getSetCookie()).not.toContain("rendered-late=1; Path=/; HttpOnly");
-      expect((await rscMiss.text()).length).toBeGreaterThan(0);
+      expect(missRes.headers.getSetCookie()).not.toContain("rendered-late=1; Path=/; HttpOnly");
+      const missBody = await missRes.text();
+      expect(missBody.length).toBeGreaterThan(0);
 
-      const rscHit = await fetchUntilLocalCacheState(
-        rscBaseUrl,
+      const hitRes = await fetchUntilLocalCacheState(
+        localBaseUrl,
         "/nextjs-compat/cached-render-headers-rsc-parity.rsc",
         "HIT",
-        { headers: { Accept: "text/x-component" } },
+        {
+          headers: { Accept: "text/x-component" },
+        },
       );
-      expect(rscHit.status).toBe(200);
-      expect(rscHit.headers.get("x-vinext-cache")).toBe("HIT");
-      expect(rscHit.headers.get("x-rendered-in-page")).toBe("yes");
-      expect(rscHit.headers.get("x-rendered-late")).toBe("yes");
-      expect(rscHit.headers.get("x-mw-conflict")).toBe("middleware");
-      expect(rscHit.headers.get("x-mw-ran")).toBe("true");
-      expect(rscHit.headers.get("x-mw-pathname")).toBe(
-        "/nextjs-compat/cached-render-headers-rsc-parity",
-      );
-      expect(rscHit.headers.get("vary")).toBe(expectedVary);
-      expect(rscHit.headers.get("www-authenticate")).toBe(expectedWwwAuthenticate);
-      expect(rscHit.headers.getSetCookie()).toEqual(expectedHitSetCookies);
+      expect(hitRes.status).toBe(200);
+      expect(hitRes.headers.get("x-vinext-cache")).toBe("HIT");
+      expect(hitRes.headers.get("x-rendered-in-page")).toBe("yes");
+      expect(hitRes.headers.get("x-rendered-late")).toBe("yes");
+      expect(hitRes.headers.get("x-mw-conflict")).toBe("middleware");
+      expect(hitRes.headers.get("x-mw-ran")).toBe("true");
+      expect(hitRes.headers.get("vary")).toBe(expectedHitVary);
+      expect(hitRes.headers.get("www-authenticate")).toBe(expectedHitWwwAuthenticate);
+      expect(hitRes.headers.getSetCookie()).toEqual(expectedHitSetCookies);
+      const hitBody = await hitRes.text();
+      expect(hitBody.length).toBeGreaterThan(0);
     } finally {
       await new Promise<void>((resolve) => rscServer.server.close(() => resolve()));
     }
+  });
+
+  it("middleware rewrite status does not reuse a route handler's stale statusText in production", async () => {
+    const directRes = await fetch(`${baseUrl}/api/custom-status-text`);
+    expect(directRes.status).toBe(201);
+    expect(directRes.statusText).toBe("Created");
+    expect(await directRes.text()).toBe("custom status text route");
+
+    const res = await fetch(`${baseUrl}/middleware-rewrite-status-route-status-text`);
+    expect(res.status).toBe(403);
+    expect(res.statusText).not.toBe("Created");
+    expect(await res.text()).toBe("custom status text route");
+  });
+
+  it("middleware rewrite status does not override route-handler redirects with queued cookies in production", async () => {
+    const res = await fetch(`${baseUrl}/middleware-rewrite-status-route-redirect-with-cookie`, {
+      redirect: "manual",
+    });
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toContain("/about");
+    expect(res.headers.getSetCookie()).toContain("route-special=redirect; Path=/; HttpOnly");
+    expect(await res.text()).toBe("");
+  });
+
+  it("middleware rewrite status does not override route-handler notFound() with queued cookies in production", async () => {
+    const res = await fetch(`${baseUrl}/middleware-rewrite-status-route-not-found-with-cookie`);
+    expect(res.status).toBe(404);
+    expect(res.headers.getSetCookie()).toContain("route-special=not-found; Path=/; HttpOnly");
+    expect(await res.text()).toBe("");
+  });
+
+  it("middleware rewrite status does not override route-handler unauthorized() with queued cookies in production", async () => {
+    const res = await fetch(`${baseUrl}/middleware-rewrite-status-route-unauthorized-with-cookie`);
+    expect(res.status).toBe(401);
+    expect(res.headers.getSetCookie()).toContain("route-special=unauthorized; Path=/; HttpOnly");
+    expect(await res.text()).toBe("");
   });
 
   it("revalidateTag invalidates App Router ISR page entries by fetch tag", async () => {
@@ -2080,6 +2113,41 @@ describe("App Router Production server (startProdServer)", () => {
     expect(res3.headers.get("x-vinext-cache")).toBe("MISS");
   });
 
+  it("page ISR + searchParams: RSC requests stay dynamic instead of serving cached query data", async () => {
+    const res1 = await fetch(`${baseUrl}/isr-dynamic-search?filter=crimson`, {
+      headers: { Accept: "text/x-component" },
+    });
+    expect(res1.status).toBe(200);
+    expect(res1.headers.get("content-type")).toContain("text/x-component");
+    expect(res1.headers.get("x-vinext-cache")).toBeNull();
+    const rsc1 = await res1.text();
+    expect(rsc1).toContain("crimson");
+
+    const res2 = await fetch(`${baseUrl}/isr-dynamic-search?filter=indigo`, {
+      headers: { Accept: "text/x-component" },
+    });
+    expect(res2.status).toBe(200);
+    expect(res2.headers.get("x-vinext-cache")).toBeNull();
+    const rsc2 = await res2.text();
+    expect(rsc2).toContain("indigo");
+    expect(rsc2).not.toContain("crimson");
+  });
+
+  it("page ISR + searchParams: HTML requests also skip ISR caching", async () => {
+    const res1 = await fetch(`${baseUrl}/isr-dynamic-search?filter=alpha`);
+    expect(res1.status).toBe(200);
+    expect(res1.headers.get("x-vinext-cache")).toBeNull();
+    const html1 = await res1.text();
+    expect(html1).toContain("alpha");
+
+    const res2 = await fetch(`${baseUrl}/isr-dynamic-search?filter=beta`);
+    expect(res2.status).toBe(200);
+    expect(res2.headers.get("x-vinext-cache")).toBeNull();
+    const html2 = await res2.text();
+    expect(html2).toContain("beta");
+    expect(html2).not.toContain('"filter">alpha<');
+  });
+
   // Route handler ISR caching tests
   // These tests are ORDER-DEPENDENT: they share a single production server and
   // /api/static-data cache state persists across tests. HIT depends on MISS
@@ -2122,6 +2190,30 @@ describe("App Router Production server (startProdServer)", () => {
       headers: { "x-test-ping": "b" },
     });
     // Dynamic usage should prevent ISR caching
+    expect(res1.headers.get("x-vinext-cache")).toBeNull();
+    expect(res2.headers.get("x-vinext-cache")).toBeNull();
+  });
+
+  it("route handler ISR: direct request.headers access is not cached", async () => {
+    const res1 = await fetch(`${baseUrl}/api/dynamic-request-headers`, {
+      headers: { "x-test-ping": "a" },
+    });
+    const res2 = await fetch(`${baseUrl}/api/dynamic-request-headers`, {
+      headers: { "x-test-ping": "b" },
+    });
+
+    expect(await res1.json()).toEqual({ ping: "a" });
+    expect(await res2.json()).toEqual({ ping: "b" });
+    expect(res1.headers.get("x-vinext-cache")).toBeNull();
+    expect(res2.headers.get("x-vinext-cache")).toBeNull();
+  });
+
+  it("route handler ISR: request.url query access is not cached", async () => {
+    const res1 = await fetch(`${baseUrl}/api/dynamic-request-url?ping=a`);
+    const res2 = await fetch(`${baseUrl}/api/dynamic-request-url?ping=b`);
+
+    expect(await res1.json()).toEqual({ ping: "a" });
+    expect(await res2.json()).toEqual({ ping: "b" });
     expect(res1.headers.get("x-vinext-cache")).toBeNull();
     expect(res2.headers.get("x-vinext-cache")).toBeNull();
   });
@@ -3446,57 +3538,6 @@ describe("App Router middleware with NextRequest", () => {
     expect(html).toContain("Welcome to App Router");
   });
 
-  it("middleware rewrite status does not override redirect() or notFound() in production", async () => {
-    const redirectRes = await fetch(`${baseUrl}/middleware-rewrite-status-redirect`, {
-      redirect: "manual",
-    });
-    expect(redirectRes.status).toBe(307);
-    expect(redirectRes.headers.get("location")).toContain("/about");
-
-    const notFoundRes = await fetch(`${baseUrl}/middleware-rewrite-status-not-found`);
-    expect(notFoundRes.status).toBe(404);
-
-    const html = await notFoundRes.text();
-    expect(html).toContain("404 - Page Not Found");
-    expect(html).toContain("does not exist");
-  });
-
-  it("middleware rewrite status does not reuse a route handler's stale statusText in production", async () => {
-    const directRes = await fetch(`${baseUrl}/api/custom-status-text`);
-    expect(directRes.status).toBe(201);
-    expect(directRes.statusText).toBe("Created");
-    expect(await directRes.text()).toBe("custom status text route");
-
-    const res = await fetch(`${baseUrl}/middleware-rewrite-status-route-status-text`);
-    expect(res.status).toBe(403);
-    expect(res.statusText).not.toBe("Created");
-    expect(await res.text()).toBe("custom status text route");
-  });
-
-  it("middleware rewrite status does not override route-handler redirects with queued cookies in production", async () => {
-    const res = await fetch(`${baseUrl}/middleware-rewrite-status-route-redirect-with-cookie`, {
-      redirect: "manual",
-    });
-    expect(res.status).toBe(307);
-    expect(res.headers.get("location")).toContain("/about");
-    expect(res.headers.getSetCookie()).toContain("route-special=redirect; Path=/; HttpOnly");
-    expect(await res.text()).toBe("");
-  });
-
-  it("middleware rewrite status does not override route-handler notFound() with queued cookies in production", async () => {
-    const res = await fetch(`${baseUrl}/middleware-rewrite-status-route-not-found-with-cookie`);
-    expect(res.status).toBe(404);
-    expect(res.headers.getSetCookie()).toContain("route-special=not-found; Path=/; HttpOnly");
-    expect(await res.text()).toBe("");
-  });
-
-  it("middleware rewrite status does not override route-handler unauthorized() with queued cookies in production", async () => {
-    const res = await fetch(`${baseUrl}/middleware-rewrite-status-route-unauthorized-with-cookie`);
-    expect(res.status).toBe(401);
-    expect(res.headers.getSetCookie()).toContain("route-special=unauthorized; Path=/; HttpOnly");
-    expect(await res.text()).toBe("");
-  });
-
   it("middleware can return custom response", async () => {
     const res = await fetch(`${baseUrl}/middleware-blocked`);
     expect(res.status).toBe(403);
@@ -3580,14 +3621,7 @@ describe("App Router middleware with NextRequest", () => {
   });
 });
 
-describe("SSR entry CSS preload fix", () => {
-  it("generateSsrEntry includes fixPreloadAs function", async () => {
-    const { generateSsrEntry } = await import("../packages/vinext/src/entries/app-ssr-entry.js");
-    const code = generateSsrEntry();
-    expect(code).toContain("fixPreloadAs");
-    expect(code).toContain('as="style"');
-  });
-
+describe("RSC Flight hint fix", () => {
   it("generateRscEntry wraps renderToReadableStream with HL hint fix", () => {
     // The RSC entry should shadow renderToReadableStream with a wrapper that
     // rewrites Flight HL hint "stylesheet" → "style" at the stream source,
@@ -3615,47 +3649,6 @@ describe("SSR entry CSS preload fix", () => {
     const code = generateRscEntry("/tmp/test/app", [route]);
     expect(code).toContain("_renderToReadableStream");
     expect(code).toContain('"style"$2');
-  });
-
-  it('fixPreloadAs regex correctly replaces as="stylesheet" with as="style"', () => {
-    // Replicate the fixPreloadAs function from the generated SSR entry
-    function fixPreloadAs(html: string): string {
-      return html.replace(/<link(?=[^>]*\srel="preload")[^>]*>/g, function (tag) {
-        return tag.replace(' as="stylesheet"', ' as="style"');
-      });
-    }
-
-    // Test: basic case from the issue
-    expect(
-      fixPreloadAs('<link rel="preload" href="/assets/index-hG1v95Xi.css" as="stylesheet"/>'),
-    ).toBe('<link rel="preload" href="/assets/index-hG1v95Xi.css" as="style"/>');
-
-    // Test: as attribute before rel
-    expect(fixPreloadAs('<link as="stylesheet" rel="preload" href="/file.css"/>')).toBe(
-      '<link as="style" rel="preload" href="/file.css"/>',
-    );
-
-    // Test: should NOT modify <link rel="stylesheet"> (no preload)
-    expect(fixPreloadAs('<link rel="stylesheet" href="/file.css" as="stylesheet"/>')).toBe(
-      '<link rel="stylesheet" href="/file.css" as="stylesheet"/>',
-    );
-
-    // Test: should NOT modify other preload types
-    expect(fixPreloadAs('<link rel="preload" href="/font.woff2" as="font"/>')).toBe(
-      '<link rel="preload" href="/font.woff2" as="font"/>',
-    );
-
-    // Test: multiple link tags in one chunk
-    const multi =
-      '<link rel="preload" href="/a.css" as="stylesheet"/><link rel="preload" href="/b.css" as="stylesheet"/>';
-    expect(fixPreloadAs(multi)).toBe(
-      '<link rel="preload" href="/a.css" as="style"/><link rel="preload" href="/b.css" as="style"/>',
-    );
-
-    // Test: no change needed
-    expect(fixPreloadAs('<link rel="preload" href="/a.css" as="style"/>')).toBe(
-      '<link rel="preload" href="/a.css" as="style"/>',
-    );
   });
 
   it('fixFlightHints regex correctly replaces "stylesheet" with "style" in RSC Flight HL hints', () => {
@@ -3702,40 +3695,6 @@ describe("SSR entry CSS preload fix", () => {
     ).toBe('0:D{"name":"page"}\n2:HL["/app.css","style"]\n3:["$","div",null,{}]');
   });
 });
-
-describe("Tick-buffered RSC delivery", () => {
-  it("generateSsrEntry uses setTimeout-based tick buffering for RSC scripts", async () => {
-    const { generateSsrEntry } = await import("../packages/vinext/src/entries/app-ssr-entry.js");
-    const code = generateSsrEntry();
-    // Should use setTimeout(0) for tick buffering instead of emitting
-    // RSC scripts synchronously between HTML chunks
-    expect(code).toContain("setTimeout");
-    expect(code).toContain("buffered");
-    expect(code).toContain("timeoutId");
-    // Should cancel pending timeout in flush() to avoid race condition
-    expect(code).toContain("clearTimeout");
-    // Should still call rscEmbed.flush() for progressive delivery
-    expect(code).toContain("rscEmbed.flush()");
-    // Should call rscEmbed.finalize() in the TransformStream flush handler
-    expect(code).toContain("rscEmbed.finalize()");
-  });
-
-  it("generateBrowserEntry uses monkey-patched push() instead of polling", async () => {
-    const { generateBrowserEntry } =
-      await import("../packages/vinext/src/entries/app-browser-entry.js");
-    const code = generateBrowserEntry();
-    // Should override push() for immediate chunk delivery
-    expect(code).toContain("arr.push = function");
-    expect(code).toContain("Array.prototype.push.call");
-    // Should guard against double-close
-    expect(code).toContain("closeOnce");
-    // Should have DOMContentLoaded safety net for truncated responses
-    expect(code).toContain("DOMContentLoaded");
-    // Should NOT use setTimeout-based polling
-    expect(code).not.toContain("setTimeout(resolve, 1)");
-  });
-});
-
 // ── Client reference preloading (Issue #256) ─────────────────────────────────
 //
 // On the first SSR request after server start, client reference modules are
@@ -3805,7 +3764,6 @@ describe("Client reference preloading (Issue #256)", () => {
     expect(loadCounts.get("comp-c")).toBe(1);
   });
 });
-
 // ── Auto-registration of @vitejs/plugin-rsc ─────────────────────────────────
 
 describe("RSC plugin auto-registration", () => {
@@ -4129,19 +4087,27 @@ describe("generateRscEntry ISR code generation", () => {
     expect(code).toContain('"next/cache"');
   });
 
-  it("generated code emits X-Vinext-Cache: MISS header on first render", () => {
+  it("generated code delegates page response policy to typed helpers", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    expect(code).toContain('"X-Vinext-Cache": "MISS"');
+    expect(code).toContain("buildAppPageHtmlResponse as __buildAppPageHtmlResponse");
+    expect(code).toContain("buildAppPageRscResponse as __buildAppPageRscResponse");
+    expect(code).toContain(
+      "resolveAppPageHtmlResponsePolicy as __resolveAppPageHtmlResponsePolicy",
+    );
+    expect(code).toContain("resolveAppPageRscResponsePolicy as __resolveAppPageRscResponsePolicy");
   });
 
-  it("generated code emits X-Vinext-Cache: HIT header on cache hits", () => {
+  it("generated code delegates page cache HIT handling to a typed helper", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    expect(code).toContain('"X-Vinext-Cache": "HIT"');
+    expect(code).toContain("readAppPageCacheResponse as __readAppPageCacheResponse");
+    expect(code).toContain("await __readAppPageCacheResponse({");
   });
 
-  it("generated code emits X-Vinext-Cache: STALE header on stale hits", () => {
+  it("generated code delegates page cache STALE handling to the same helper", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    expect(code).toContain('"X-Vinext-Cache": "STALE"');
+    expect(code).toContain("readAppPageCacheResponse as __readAppPageCacheResponse");
+    expect(code).toContain("scheduleBackgroundRegeneration: __triggerBackgroundRegeneration");
+    expect(code).toContain("renderFreshPageForCache: async function()");
   });
 
   it("generated code uses request execution context for background cache write", () => {
@@ -4160,144 +4126,47 @@ describe("generateRscEntry ISR code generation", () => {
 
   it("generated code stores rscData in the ISR cache entry", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    // The HTML-path cache write must include rscData (not always undefined)
-    expect(code).toContain("rscData: __rscData");
-    // Background regen must also store rscData
-    expect(code).toContain("rscData: __freshRscData");
-  });
-
-  it("generated code persists render-time response headers in App Router ISR entries", () => {
-    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    expect(code).toContain("peekRenderResponseHeaders");
-    expect(code).toContain("consumeRenderResponseHeaders");
-    expect(code).toContain("const __responseRenderHeaders = peekRenderResponseHeaders()");
+    // The HTML-path cache write now delegates to the typed cache helper, which
+    // receives the captured RSC payload promise so it can persist the paired
+    // RSC entry alongside the streamed HTML response.
     expect(code).toContain(
-      "const __renderHeadersForCache = consumeRenderResponseHeaders() ?? __responseRenderHeaders;",
+      "finalizeAppPageHtmlCacheResponse as __finalizeAppPageHtmlCacheResponse",
     );
-    expect(code).toContain("const renderResponseHeaders = __isrRscDataPromise");
-    expect(code).toContain("? peekRenderResponseHeaders()");
-    expect(code).toContain(": consumeRenderResponseHeaders();");
-    expect(code).toContain("headers: __renderHeadersForCache");
-    expect(code).toContain("headers: __revalResult.headers");
-    const rscResponseBlock = code.slice(
-      code.indexOf('if (process.env.NODE_ENV === "production" && __isrRscDataPromise)'),
-      code.indexOf("// Collect font data from RSC environment before passing to SSR"),
-    );
-    expect(
-      rscResponseBlock.match(
-        /headers: __headersWithRenderResponseHeaders\(responseHeaders, __responseRenderHeaders\)/g,
-      ),
-    ).toHaveLength(2);
-  });
-
-  it("generated code replays cached render-time response headers on HIT and STALE", () => {
-    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    expect(code).toContain("function __mergeResponseHeaders(");
-    expect(code).toContain("function __headersWithRenderResponseHeaders(");
-    expect(code).toContain("sourceHeaders.getSetCookie()");
-    expect(code).not.toContain("if (__setCookies.length === 0)");
-    expect(code).toContain('lowerKey === "vary"');
-    expect(code).toContain('lowerKey === "www-authenticate"');
-    expect(code).toContain('lowerKey === "proxy-authenticate"');
-    expect(code).toContain("__headersWithRenderResponseHeaders({");
-    expect(code).toContain("}, __cachedValue.headers)");
-    expect(code).toContain("}, __staleValue.headers)");
-  });
-
-  it("generated code avoids reusing stale statusText when rewrite status overrides", () => {
-    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    const helperBlock = code.slice(
-      code.indexOf("function __responseWithMiddlewareContext"),
-      code.indexOf("const __pendingRegenerations"),
-    );
-    expect(helperBlock).toContain("const status = rewriteStatus ?? response.status;");
-    expect(helperBlock).toContain("if (status === response.status && response.statusText)");
-    expect(helperBlock).not.toContain("statusText: response.statusText");
-  });
-
-  it("generated route handler helper delegates finalization to the shared middleware helper", () => {
-    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    const helperBlock = code.slice(
-      code.indexOf("function attachRouteHandlerMiddlewareContext"),
-      code.indexOf("// OPTIONS auto-implementation"),
-    );
-    expect(helperBlock).toContain(
-      "return __responseWithMiddlewareContext(response, _mwCtx, renderHeaders, options);",
-    );
-    expect(helperBlock).not.toContain("statusText: response.statusText");
-  });
-
-  it("generated route handler special responses preserve render headers and ignore rewrite status", () => {
-    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    const routeHandlerBlock = code.slice(
-      code.indexOf('if (typeof handlerFn === "function") {'),
-      code.indexOf("// Build the component tree: layouts wrapping the page"),
-    );
-    expect(routeHandlerBlock).toContain(
-      "const renderResponseHeaders = consumeRenderResponseHeaders();",
-    );
-    expect(routeHandlerBlock).toContain("const baseResponse = isAutoHead");
-    expect(routeHandlerBlock).toContain(
-      "return attachRouteHandlerMiddlewareContext(baseResponse, renderResponseHeaders);",
-    );
-    expect(routeHandlerBlock).toContain("{ applyRewriteStatus: false }");
+    expect(code).toContain("capturedRscDataPromise: __isrRscDataPromise");
+    // Background regen still writes fresh RSC bytes directly.
+    expect(code).toContain("rscData: __freshRscData");
   });
 
   it("generated code writes RSC-first partial cache entry on RSC MISS", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    // The RSC-path cache write must store rscData with html:"" as a partial entry.
-    // This lets subsequent RSC requests hit cache immediately without waiting
-    // for an HTML request to come in and populate a complete entry.
-    expect(code).toContain('html: ""');
-    // The live RSC MISS response should keep streaming while the cache write
-    // runs in the background and consumes the final render-time headers.
-    expect(code).toContain("const __responseRenderHeaders = peekRenderResponseHeaders()");
-    expect(code).toContain("const __rscWritePromise = (async () => {");
-    expect(code).toContain("__isrKeyRsc");
-    expect(code).toContain("new Response(__rscForResponse");
+    // The RSC-path cache write now delegates to a typed helper instead of
+    // embedding the partial APP_PAGE cache value inline in generated code.
+    expect(code).toContain("scheduleAppPageRscCacheWrite as __scheduleAppPageRscCacheWrite");
+    expect(code).toContain("__scheduleAppPageRscCacheWrite({");
+    expect(code).toContain("capturedRscDataPromise:");
+    expect(code).toContain("isrRscKey: __isrRscKey");
   });
 
   it("generated code treats html:'' partial entries as MISS for HTML requests", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    // The ISR read block must check __hasHtml before returning an HTML HIT,
-    // so that a partial entry (html:"") falls through to render.
-    expect(code).toContain("__hasHtml");
-    // Must also check __hasRsc before returning an RSC HIT
-    expect(code).toContain("__hasRsc");
-    // HTML requests must only return HIT when __hasHtml is true.
-    // Slice from the ISR cache read comment to the main render call.
-    // Use "element = await buildPageElement" (the main page render, not the fn def or regen call).
-    const isrReadBlock = code.slice(
-      code.indexOf("ISR cache read"),
-      code.indexOf("element = await buildPageElement"),
-    );
-    expect(isrReadBlock.length).toBeGreaterThan(0);
-    expect(isrReadBlock).toContain("if (isRscRequest && __hasRsc)");
-    expect(isrReadBlock).toContain("if (!isRscRequest && __hasHtml)");
+    // APP_PAGE ISR reads now flow through the typed page-cache helper.
+    expect(code).toContain("readAppPageCacheResponse as __readAppPageCacheResponse");
+    expect(code).toContain("await __readAppPageCacheResponse({");
+    expect(code).toContain("isrHtmlKey: __isrHtmlKey");
+    expect(code).toContain("isrRscKey: __isrRscKey");
   });
 
   it("generated code serves cached rscData for RSC requests on HIT", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    // ISR read block must return rscData for RSC requests
-    expect(code).toContain("rscData");
-    expect(code).toContain("text/x-component");
-    // The ISR read block must have an explicit RSC hit path (not just an HTML path)
-    const isrReadBlock = code.slice(
-      code.indexOf("ISR cache read"),
-      code.indexOf("element = await buildPageElement"),
-    );
-    expect(isrReadBlock.length).toBeGreaterThan(0);
-    // Must serve RSC from cache using isRscRequest guard
-    expect(isrReadBlock).toContain("if (isRscRequest && __hasRsc)");
-    // Must NOT use the old bare !isRscRequest guard (HTML-only serving without data check)
-    expect(isrReadBlock).not.toContain("if (!isRscRequest) {");
+    // The helper receives the request type so it can serve cached RSC responses.
+    expect(code).toContain("readAppPageCacheResponse as __readAppPageCacheResponse");
+    expect(code).toContain("isRscRequest,");
   });
 
   it("ISR cache read fires before buildPageElement (early return on HIT)", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    // The ISR read block must appear before the main 'buildPageElement' render call.
-    // Use "element = await buildPageElement" to target the main call, not the fn definition.
-    const isrReadIdx = code.indexOf("__isrGet(");
+    // The page-cache helper call must appear before the main buildPageElement render call.
+    const isrReadIdx = code.indexOf("await __readAppPageCacheResponse(");
     const buildPageIdx = code.indexOf("element = await buildPageElement");
     expect(isrReadIdx).toBeGreaterThan(-1);
     expect(buildPageIdx).toBeGreaterThan(-1);
@@ -4306,9 +4175,9 @@ describe("generateRscEntry ISR code generation", () => {
 
   it("ISR cache read fires before generateStaticParams (skips expensive work on HIT)", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    // The ISR read block must appear before the generateStaticParams call so that
-    // a cache hit skips the potentially-expensive static params validation entirely.
-    const isrReadIdx = code.indexOf("__isrGet(");
+    // The page-cache helper call must appear before generateStaticParams so cache hits
+    // skip the static params validation entirely.
+    const isrReadIdx = code.indexOf("await __readAppPageCacheResponse(");
     const gspIdx = code.indexOf("generateStaticParams(");
     expect(isrReadIdx).toBeGreaterThan(-1);
     expect(gspIdx).toBeGreaterThan(-1);
@@ -4319,13 +4188,37 @@ describe("generateRscEntry ISR code generation", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
     // __rscForResponse must be assigned before the RSC response is returned so
     // the tee branch (__rscB) is also consumed (populating the ISR cache).
-    // The RSC response is wrapped in middleware handling but still originates
-    // from new Response(__rscForResponse, ...).
+    // The RSC response is now built via the typed page-response helper.
     const teeAssignIdx = code.indexOf("let __rscForResponse");
-    const rscResponseIdx = code.indexOf("new Response(__rscForResponse");
+    const rscResponseIdx = code.indexOf("const __rscResponse = __buildAppPageRscResponse(");
     expect(teeAssignIdx).toBeGreaterThan(-1);
     expect(rscResponseIdx).toBeGreaterThan(-1);
     expect(teeAssignIdx).toBeLessThan(rscResponseIdx);
+  });
+
+  it("generated code applies two-phase dynamic checks before page RSC cache writes", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    expect(code).toContain("const __dynamicUsedInRsc = consumeDynamicUsage()");
+    expect(code).toContain("dynamicUsedDuringBuild: __dynamicUsedInRsc");
+    expect(code).toContain("scheduleAppPageRscCacheWrite as __scheduleAppPageRscCacheWrite");
+    expect(code).toContain("__scheduleAppPageRscCacheWrite({");
+    expect(code).toContain("consumeDynamicUsage,");
+  });
+
+  it("generated code imports render-header helpers from next/headers", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    expect(code).toContain("peekRenderResponseHeaders");
+    expect(code).toContain("restoreRenderResponseHeaders");
+    expect(code).toContain("consumeRenderResponseHeaders");
+  });
+
+  it("generated code forwards render-header snapshots through page cache helpers", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    expect(code).toContain("renderHeaders: __rscResponseRenderHeaders");
+    expect(code).toContain("consumeRenderResponseHeaders,");
+    expect(code).toContain("initialRenderHeaders: __rscResponseRenderHeaders");
+    expect(code).toContain("renderHeaders: renderResponseHeaders");
+    expect(code).toContain("initialRenderHeaders: renderResponseHeaders");
   });
 
   // Route handler ISR code generation tests
@@ -4336,16 +4229,24 @@ describe("generateRscEntry ISR code generation", () => {
 
   it("generated code contains APP_ROUTE ISR cache read for route handlers", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    expect(code).toContain('"APP_ROUTE"');
-    // Route handler ISR uses __isrRouteKey to build the cache key, then reads via __isrGet
-    expect(code).toContain("__isrRouteKey(cleanPathname)");
-    expect(code).toContain("__isrGet(__routeKey)");
+    // Route handler ISR reads now flow through the typed cache helper.
+    expect(code).toContain(
+      "readAppRouteHandlerCacheResponse as __readAppRouteHandlerCacheResponse",
+    );
+    expect(code).toContain("await __readAppRouteHandlerCacheResponse({");
+    expect(code).toContain("isrGet: __isrGet");
+    expect(code).toContain("scheduleBackgroundRegeneration: __triggerBackgroundRegeneration");
   });
 
   it("generated code contains APP_ROUTE ISR cache write for route handlers", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    // Route handler ISR writes use __isrSet with __routeKey and APP_ROUTE kind
-    expect(code).toContain("__isrSet(__routeKey,");
-    expect(code).toContain('kind: "APP_ROUTE"');
+    // Route handler ISR writes now flow through the typed execution helper.
+    expect(code).toContain("executeAppRouteHandler as __executeAppRouteHandler");
+    expect(code).toContain("return __executeAppRouteHandler({");
+    expect(code).toContain("consumeRenderResponseHeaders,");
+    expect(code).toContain("isrRouteKey: __isrRouteKey");
+    expect(code).toContain("isrSet: __isrSet");
+    expect(code).not.toContain("getAndClearPendingCookies,");
+    expect(code).not.toContain("getDraftModeCookieHeader,");
   });
 });
