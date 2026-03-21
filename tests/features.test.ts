@@ -10,6 +10,9 @@ import {
 } from "vite-plus/test";
 import { createServer, type ViteDevServer } from "vite-plus";
 import path from "node:path";
+import { PassThrough, Writable } from "node:stream";
+import { finished } from "node:stream/promises";
+import zlib from "node:zlib";
 import vinext from "../packages/vinext/src/index.js";
 import {
   APP_FIXTURE_DIR,
@@ -22,6 +25,135 @@ import {
 } from "./helpers.js";
 
 const FIXTURE_DIR = PAGES_FIXTURE_DIR;
+
+class CapturingNodeResponse extends PassThrough {
+  statusCode = 0;
+  headers: Record<string, string | string[]> = {};
+
+  writeHead(
+    statusCode: number,
+    headersOrStatusText: string | Record<string, string | string[]>,
+    maybeHeaders?: Record<string, string | string[]>,
+  ): this {
+    this.statusCode = statusCode;
+    this.headers =
+      typeof headersOrStatusText === "string" ? (maybeHeaders ?? {}) : headersOrStatusText;
+    return this;
+  }
+}
+
+class DisconnectingNodeResponse extends Writable {
+  statusCode = 0;
+  headers: Record<string, string | string[]> = {};
+  writeCount = 0;
+
+  writeHead(
+    statusCode: number,
+    headersOrStatusText: string | Record<string, string | string[]>,
+    maybeHeaders?: Record<string, string | string[]>,
+  ): this {
+    this.statusCode = statusCode;
+    this.headers =
+      typeof headersOrStatusText === "string" ? (maybeHeaders ?? {}) : headersOrStatusText;
+    return this;
+  }
+
+  override _write(_chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error) => void) {
+    this.writeCount += 1;
+    const error = new Error("client disconnected");
+    callback(error);
+    this.destroy(error);
+  }
+}
+
+function createStreamingBody(
+  chunks: Array<{ text: string; delayMs?: number }>,
+  onCancel?: () => void,
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  let canceled = false;
+
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      for (const { text, delayMs } of chunks) {
+        if (delayMs) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+        if (canceled) return;
+        controller.enqueue(encoder.encode(text));
+      }
+      controller.close();
+    },
+    cancel() {
+      canceled = true;
+      onCancel?.();
+    },
+  });
+}
+
+async function captureCompressedWebResponse(encoding: "gzip" | "br"): Promise<{
+  body: string;
+  rawBody: Buffer;
+  headers: Record<string, string | string[]>;
+  statusCode: number;
+  firstDecodedMs: number;
+  endMs: number;
+}> {
+  const { sendWebResponse } = await import("../packages/vinext/src/server/prod-server.js");
+
+  const response = new Response(
+    createStreamingBody([
+      { text: "<h1>Streaming SSR Test</h1><p>Loading delayed chunk...</p>" },
+      { text: "<p>Delayed stream content loaded</p>", delayMs: 250 },
+    ]),
+    {
+      status: 200,
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+      },
+    },
+  );
+
+  const req = {
+    method: "GET",
+    headers: { "accept-encoding": encoding },
+  };
+  const res = new CapturingNodeResponse();
+  const decoder = encoding === "br" ? zlib.createBrotliDecompress() : zlib.createGunzip();
+  const rawChunks: Buffer[] = [];
+  const decodedChunks: Buffer[] = [];
+  const startedAt = Date.now();
+  let firstDecodedMs = -1;
+
+  res.on("data", (chunk: Buffer) => {
+    rawChunks.push(Buffer.from(chunk));
+  });
+  res.on("error", () => {
+    /* ignore closed test stream noise */
+  });
+  decoder.on("data", (chunk: Buffer) => {
+    decodedChunks.push(Buffer.from(chunk));
+    if (firstDecodedMs === -1) {
+      firstDecodedMs = Date.now() - startedAt;
+    }
+  });
+  decoder.on("error", () => {
+    /* surfaced through finished(decoder) */
+  });
+  res.pipe(decoder);
+
+  await sendWebResponse(response, req as any, res as any, true);
+  await Promise.all([finished(res), finished(decoder)]);
+
+  return {
+    body: Buffer.concat(decodedChunks).toString("utf8"),
+    rawBody: Buffer.concat(rawChunks),
+    headers: res.headers,
+    statusCode: res.statusCode,
+    firstDecodedMs,
+    endMs: Date.now() - startedAt,
+  };
+}
 
 describe("parameterized redirects and rewrites", () => {
   let prServer: ViteDevServer;
@@ -3290,6 +3422,43 @@ describe("Set-Cookie header preservation in prod-server", () => {
     expect(body.equals(Buffer.from([1, 2, 3]))).toBe(true);
   });
 
+  it("mergeWebResponse ignores middleware-only content-length overrides", async () => {
+    const { mergeWebResponse } = await import("../packages/vinext/src/server/prod-server.js");
+
+    const response = new Response(Buffer.from([1, 2, 3]), {
+      status: 200,
+      headers: {
+        "content-type": "application/octet-stream",
+        "content-length": "3",
+      },
+    });
+
+    const merged = mergeWebResponse({ "content-length": "1" }, response);
+
+    expect(merged).toBe(response);
+    expect(merged.headers.get("content-length")).toBe("3");
+    const body = Buffer.from(await merged.arrayBuffer());
+    expect(body.equals(Buffer.from([1, 2, 3]))).toBe(true);
+  });
+
+  for (const encoding of ["gzip", "br"] as const) {
+    it(`sendWebResponse streams ${encoding}-compressed HTML progressively`, async () => {
+      const result = await captureCompressedWebResponse(encoding);
+
+      expect(result.statusCode).toBe(200);
+      expect(result.headers["Content-Encoding"]).toBe(encoding);
+      expect(String(result.headers["Vary"])).toContain("Accept-Encoding");
+      expect(result.headers["content-length"]).toBeUndefined();
+      expect(result.firstDecodedMs).toBeGreaterThanOrEqual(0);
+      expect(result.firstDecodedMs).toBeLessThan(250);
+      expect(result.endMs).toBeGreaterThanOrEqual(250);
+      expect(result.rawBody.byteLength).toBeGreaterThan(0);
+      expect(result.body).toContain("Streaming SSR Test");
+      expect(result.body).toContain("Loading delayed chunk...");
+      expect(result.body).toContain("Delayed stream content loaded");
+    });
+  }
+
   it("sendWebResponse cancels streamed bodies for HEAD requests", async () => {
     const { sendWebResponse } = await import("../packages/vinext/src/server/prod-server.js");
 
@@ -3316,29 +3485,66 @@ describe("Set-Cookie header preservation in prod-server", () => {
     let ended = false;
     const req = {
       method: "HEAD",
-      headers: {},
+      headers: { "accept-encoding": "br" },
     };
-    const res = {
-      writeHead: (
-        writtenStatus: number,
-        headersOrStatusText: string | Record<string, string | string[]>,
-        maybeHeaders?: Record<string, string | string[]>,
-      ) => {
-        status = writtenStatus;
-        writtenHeaders =
-          typeof headersOrStatusText === "string" ? (maybeHeaders ?? {}) : headersOrStatusText;
-      },
-      end: () => {
-        ended = true;
-      },
-    };
+    const res = new CapturingNodeResponse();
+    const chunks: Buffer[] = [];
+    res.on("data", (chunk: Buffer) => {
+      chunks.push(Buffer.from(chunk));
+    });
 
-    await sendWebResponse(response, req as any, res as any, false);
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    await sendWebResponse(response, req as any, res as any, true);
+    await finished(res);
+    status = res.statusCode;
+    writtenHeaders = res.headers;
+    ended = res.writableEnded;
 
     expect(status).toBe(200);
     expect(writtenHeaders["content-type"]).toBe("text/html; charset=utf-8");
+    expect(writtenHeaders["Content-Encoding"]).toBe("br");
+    expect(writtenHeaders["Vary"]).toContain("Accept-Encoding");
     expect(ended).toBe(true);
+    expect(chunks).toEqual([]);
+    expect(canceled).toBe(true);
+  });
+
+  it("sendWebResponse cancels compressed streams on client disconnect", async () => {
+    const { sendWebResponse } = await import("../packages/vinext/src/server/prod-server.js");
+
+    let canceled = false;
+    const response = new Response(
+      createStreamingBody(
+        [
+          { text: "<h1>Streaming SSR Test</h1>" },
+          { text: "<p>Delayed stream content loaded</p>", delayMs: 150 },
+        ],
+        () => {
+          canceled = true;
+        },
+      ),
+      {
+        status: 200,
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+        },
+      },
+    );
+
+    const req = {
+      method: "GET",
+      headers: { "accept-encoding": "br" },
+    };
+    const res = new DisconnectingNodeResponse();
+    res.on("error", () => {
+      /* expected client disconnect */
+    });
+
+    await sendWebResponse(response, req as any, res as any, true);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["Content-Encoding"]).toBe("br");
+    expect(res.writeCount).toBeGreaterThan(0);
     expect(canceled).toBe(true);
   });
 

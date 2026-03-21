@@ -113,18 +113,26 @@ function negotiateEncoding(req: IncomingMessage): "br" | "gzip" | "deflate" | nu
  */
 function createCompressor(
   encoding: "br" | "gzip" | "deflate",
+  mode: "default" | "streaming" = "default",
 ): zlib.BrotliCompress | zlib.Gzip | zlib.Deflate {
   switch (encoding) {
     case "br":
       return zlib.createBrotliCompress({
+        ...(mode === "streaming" ? { flush: zlib.constants.BROTLI_OPERATION_FLUSH } : {}),
         params: {
           [zlib.constants.BROTLI_PARAM_QUALITY]: 4, // Fast compression (1-11, 4 is a good balance)
         },
       });
     case "gzip":
-      return zlib.createGzip({ level: 6 }); // Default level, good balance
+      return zlib.createGzip({
+        level: 6,
+        ...(mode === "streaming" ? { flush: zlib.constants.Z_SYNC_FLUSH } : {}),
+      }); // Default level, good balance
     case "deflate":
-      return zlib.createDeflate({ level: 6 });
+      return zlib.createDeflate({
+        level: 6,
+        ...(mode === "streaming" ? { flush: zlib.constants.Z_SYNC_FLUSH } : {}),
+      });
   }
 }
 
@@ -176,6 +184,19 @@ function hasHeader(headersRecord: Record<string, string | string[]>, name: strin
   return Object.keys(headersRecord).some((key) => key.toLowerCase() === target);
 }
 
+function omitHeadersCaseInsensitive(
+  headersRecord: Record<string, string | string[]>,
+  names: readonly string[],
+): Record<string, string | string[]> {
+  const targets = new Set(names.map((name) => name.toLowerCase()));
+  const filtered: Record<string, string | string[]> = {};
+  for (const [key, value] of Object.entries(headersRecord)) {
+    if (targets.has(key.toLowerCase())) continue;
+    filtered[key] = value;
+  }
+  return filtered;
+}
+
 function stripHeaders(
   headersRecord: Record<string, string | string[]>,
   names: readonly string[],
@@ -217,14 +238,17 @@ function mergeWebResponse(
   response: Response,
   statusOverride?: number,
 ): Response {
+  const filteredMiddlewareHeaders = omitHeadersCaseInsensitive(middlewareHeaders, [
+    "content-length",
+  ]);
   const status = statusOverride ?? response.status;
-  const mergedHeaders = mergeResponseHeaders(middlewareHeaders, response);
+  const mergedHeaders = mergeResponseHeaders(filteredMiddlewareHeaders, response);
   const shouldDropBody = isNoBodyResponseStatus(status);
   const shouldStripStreamLength =
     isVinextStreamedHtmlResponse(response) && hasHeader(mergedHeaders, "content-length");
 
   if (
-    !Object.keys(middlewareHeaders).length &&
+    !Object.keys(filteredMiddlewareHeaders).length &&
     statusOverride === undefined &&
     !shouldDropBody &&
     !shouldStripStreamLength
@@ -275,13 +299,10 @@ function sendCompressed(
   const buf = typeof body === "string" ? Buffer.from(body) : body;
   const baseType = contentType.split(";")[0].trim();
   const encoding = compress ? negotiateEncoding(req) : null;
-  const {
-    "content-length": _cl,
-    "Content-Length": _CL,
-    "content-type": _ct,
-    "Content-Type": _CT,
-    ...headersWithoutBodyHeaders
-  } = extraHeaders;
+  const headersWithoutBodyHeaders = omitHeadersCaseInsensitive(extraHeaders, [
+    "content-length",
+    "content-type",
+  ]);
 
   const writeHead = (headers: Record<string, string | string[]>) => {
     if (statusText) {
@@ -609,7 +630,9 @@ async function sendWebResponse(
   const nodeStream = Readable.fromWeb(webResponse.body as import("stream/web").ReadableStream);
 
   if (shouldCompress) {
-    const compressor = createCompressor(encoding!);
+    // Use streaming flush modes so progressive HTML remains decodable before the
+    // full response completes.
+    const compressor = createCompressor(encoding!, "streaming");
     pipeline(nodeStream, compressor, res, () => {
       /* ignore pipeline errors on closed connections */
     });
@@ -1361,6 +1384,7 @@ async function startPagesRouterServer(options: PagesRouterServerOptions) {
         return;
       }
 
+      // Capture the streaming marker before mergeWebResponse rebuilds the Response.
       const shouldStreamPagesResponse = isVinextStreamedHtmlResponse(response);
       const mergedResponse = mergeWebResponse(middlewareHeaders, response, middlewareRewriteStatus);
 

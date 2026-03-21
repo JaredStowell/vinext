@@ -7,6 +7,7 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
+import zlib from "node:zlib";
 import vinext from "../packages/vinext/src/index.js";
 import { PAGES_FIXTURE_DIR, buildPagesFixture, startFixtureServer } from "./helpers.js";
 
@@ -83,6 +84,24 @@ interface CapturedStreamResponse {
   firstChunkMs: number;
   endMs: number;
   snapshot: Buffer;
+  rawBody: Buffer;
+  rawSnapshot: Buffer;
+}
+
+function createResponseDecoder(
+  contentEncoding: string | string[] | undefined,
+): zlib.BrotliDecompress | zlib.Gunzip | zlib.Inflate | null {
+  const encoding = Array.isArray(contentEncoding) ? contentEncoding[0] : contentEncoding;
+  switch (encoding) {
+    case "br":
+      return zlib.createBrotliDecompress();
+    case "gzip":
+      return zlib.createGunzip();
+    case "deflate":
+      return zlib.createInflate();
+    default:
+      return null;
+  }
 }
 
 async function captureStreamedResponse(
@@ -94,39 +113,73 @@ async function captureStreamedResponse(
   return await new Promise<CapturedStreamResponse>((resolve, reject) => {
     const startedAt = Date.now();
     const req = httpRequest(url, { headers }, (res) => {
-      const chunks: Buffer[] = [];
+      const rawChunks: Buffer[] = [];
+      const decodedChunks: Buffer[] = [];
       let firstChunkMs = -1;
       let snapshot = Buffer.alloc(0);
+      let rawSnapshot = Buffer.alloc(0);
       let snapshotCaptured = false;
       let snapshotTimer: ReturnType<typeof setTimeout> | undefined;
+      const decoder = createResponseDecoder(res.headers["content-encoding"]);
 
       const captureSnapshot = () => {
         if (snapshotCaptured) return;
         snapshotCaptured = true;
-        snapshot = Buffer.concat(chunks);
+        rawSnapshot = Buffer.concat(rawChunks);
+        snapshot = Buffer.concat(decodedChunks);
       };
 
-      res.on("data", (chunk: Buffer) => {
-        chunks.push(chunk);
+      const observeDecodedChunk = (chunk: Buffer) => {
+        decodedChunks.push(Buffer.from(chunk));
         if (firstChunkMs !== -1) return;
         firstChunkMs = Date.now() - startedAt;
         snapshotTimer = setTimeout(captureSnapshot, snapshotDelayMs);
-      });
+      };
 
-      res.on("end", () => {
-        if (snapshotTimer) clearTimeout(snapshotTimer);
-        captureSnapshot();
-        resolve({
-          body: Buffer.concat(chunks),
-          headers: res.headers,
-          statusCode: res.statusCode ?? 0,
-          firstChunkMs,
-          endMs: Date.now() - startedAt,
-          snapshot,
-        });
+      res.on("data", (chunk: Buffer) => {
+        const rawChunk = Buffer.from(chunk);
+        rawChunks.push(rawChunk);
+        if (decoder) {
+          decoder.write(rawChunk);
+        } else {
+          observeDecodedChunk(rawChunk);
+        }
       });
 
       res.on("error", reject);
+
+      if (decoder) {
+        decoder.on("data", (chunk: Buffer) => {
+          observeDecodedChunk(Buffer.from(chunk));
+        });
+        decoder.on("error", reject);
+      }
+
+      res.on("end", async () => {
+        try {
+          if (decoder) {
+            decoder.end();
+            await new Promise<void>((resolveDecoder, rejectDecoder) => {
+              decoder.once("end", () => resolveDecoder());
+              decoder.once("error", rejectDecoder);
+            });
+          }
+          if (snapshotTimer) clearTimeout(snapshotTimer);
+          captureSnapshot();
+          resolve({
+            body: Buffer.concat(decodedChunks),
+            headers: res.headers,
+            statusCode: res.statusCode ?? 0,
+            firstChunkMs,
+            endMs: Date.now() - startedAt,
+            snapshot,
+            rawBody: Buffer.concat(rawChunks),
+            rawSnapshot,
+          });
+        } catch (error) {
+          reject(error);
+        }
+      });
     });
 
     req.on("error", reject);
@@ -2466,6 +2519,39 @@ describe("Production Pages Router SSR streaming", () => {
   let prodServer: import("node:http").Server;
   let prodUrl: string;
 
+  async function withFreshStreamingProdServer<T>(
+    run: (freshProdUrl: string) => Promise<T>,
+  ): Promise<T> {
+    const freshOutDir = await fsp.mkdtemp(path.join(os.tmpdir(), "vinext-pages-streaming-fresh-"));
+    let freshServer: import("node:http").Server | undefined;
+
+    try {
+      await fsp.symlink(
+        path.resolve(import.meta.dirname, "../node_modules"),
+        path.join(freshOutDir, "node_modules"),
+        "junction",
+      );
+      await buildPagesFixtureToOutDir(FIXTURE_DIR, freshOutDir);
+
+      const { startProdServer } = await import("../packages/vinext/src/server/prod-server.js");
+      freshServer = unwrapStartedProdServer(
+        await startProdServer({
+          port: 0,
+          host: "127.0.0.1",
+          outDir: freshOutDir,
+        }),
+      );
+      const addr = freshServer.address() as { port: number };
+      return await run(`http://127.0.0.1:${addr.port}`);
+    } finally {
+      const serverToClose = freshServer;
+      if (serverToClose) {
+        await new Promise<void>((resolve) => serverToClose.close(() => resolve()));
+      }
+      fs.rmSync(freshOutDir, { recursive: true, force: true });
+    }
+  }
+
   beforeAll(async () => {
     outDir = await fsp.mkdtemp(path.join(os.tmpdir(), "vinext-pages-streaming-prod-"));
     await fsp.symlink(
@@ -2481,7 +2567,6 @@ describe("Production Pages Router SSR streaming", () => {
         port: 0,
         host: "127.0.0.1",
         outDir,
-        noCompression: true,
       }),
     );
     const addr = prodServer.address() as { port: number };
@@ -2497,25 +2582,33 @@ describe("Production Pages Router SSR streaming", () => {
     }
   });
 
-  it("streams Pages SSR responses incrementally in production", async () => {
+  it("streams Pages SSR responses incrementally in production with br compression", async () => {
     // Parity target: Next.js streams Node responses via sendResponse() ->
-    // pipeToNodeResponse() instead of buffering the full HTML first.
+    // pipeToNodeResponse() instead of buffering the full HTML first, while
+    // still leaving compression enabled under next start.
     // https://raw.githubusercontent.com/vercel/next.js/canary/packages/next/src/server/send-response.ts
     // https://raw.githubusercontent.com/vercel/next.js/canary/packages/next/src/server/pipe-readable.ts
-    const response = await captureStreamedResponse(`${prodUrl}/streaming-ssr`);
+    const response = await captureStreamedResponse(`${prodUrl}/streaming-ssr`, {
+      headers: { "accept-encoding": "br" },
+    });
     const partialHtml = response.snapshot.toString("utf8");
     const finalHtml = response.body.toString("utf8");
     const contentType = response.headers["content-type"];
+    const contentEncoding = response.headers["content-encoding"];
     const middlewareHeader = response.headers["x-custom-middleware"];
     const transferEncoding = response.headers["transfer-encoding"];
 
     expect(response.statusCode).toBe(200);
     expect(String(contentType)).toContain("text/html");
+    expect(String(contentEncoding)).toBe("br");
     expect(String(middlewareHeader)).toBe("active");
     expect(response.headers["content-length"]).toBeUndefined();
     expect(String(transferEncoding)).toBe("chunked");
-    expect(response.endMs).toBeGreaterThanOrEqual(400);
     expect(response.firstChunkMs).toBeGreaterThanOrEqual(0);
+    expect(response.firstChunkMs).toBeLessThan(400);
+    expect(response.endMs).toBeGreaterThanOrEqual(400);
+    expect(response.rawBody.byteLength).toBeGreaterThan(0);
+    expect(response.rawSnapshot.byteLength).toBeGreaterThan(0);
 
     expect(partialHtml).toContain("Streaming SSR Test");
     expect(partialHtml).toContain("Loading delayed chunk...");
@@ -2524,6 +2617,27 @@ describe("Production Pages Router SSR streaming", () => {
     expect(finalHtml).toContain("Streaming SSR Test");
     expect(finalHtml).toContain("Delayed stream content loaded");
     expect(finalHtml).toContain("__NEXT_DATA__");
+  });
+
+  it("streams Pages SSR responses incrementally in production with gzip compression", async () => {
+    const response = await withFreshStreamingProdServer((freshProdUrl) =>
+      captureStreamedResponse(`${freshProdUrl}/streaming-ssr`, {
+        headers: { "accept-encoding": "gzip" },
+      }),
+    );
+    const partialHtml = response.snapshot.toString("utf8");
+    const finalHtml = response.body.toString("utf8");
+
+    expect(response.statusCode).toBe(200);
+    expect(String(response.headers["content-encoding"])).toBe("gzip");
+    expect(response.headers["content-length"]).toBeUndefined();
+    expect(String(response.headers["transfer-encoding"])).toBe("chunked");
+    expect(response.firstChunkMs).toBeGreaterThanOrEqual(0);
+    expect(response.firstChunkMs).toBeLessThan(400);
+    expect(response.endMs).toBeGreaterThanOrEqual(400);
+    expect(partialHtml).toContain("Loading delayed chunk...");
+    expect(partialHtml).not.toContain("Delayed stream content loaded");
+    expect(finalHtml).toContain("Delayed stream content loaded");
   });
 
   it("preserves streamed SSR bodies when middleware rewrites are merged into the response", async () => {
@@ -2536,27 +2650,35 @@ describe("Production Pages Router SSR streaming", () => {
   });
 
   it("serves streamed Pages SSR HEAD requests as headers-only responses in production", async () => {
+    const startedAt = Date.now();
     const res = await fetch(`${prodUrl}/streaming-ssr`, {
       method: "HEAD",
+      headers: { "accept-encoding": "br" },
     });
 
     expect(res.status).toBe(200);
     expect(res.headers.get("x-custom-middleware")).toBe("active");
     expect(res.headers.get("content-length")).toBeNull();
     expect(await res.text()).toBe("");
+    expect(Date.now() - startedAt).toBeLessThan(400);
   });
 
   it("strips stale content-length from streamed Pages SSR responses when gSSP sets one", async () => {
     // Parity target: Next.js only sets Content-Length for unchunked render
     // payloads; streamed HTML is sent without one.
     // https://raw.githubusercontent.com/vercel/next.js/canary/packages/next/src/server/send-payload.ts
-    const response = await captureStreamedResponse(`${prodUrl}/streaming-gssp-content-length`);
+    const response = await captureStreamedResponse(`${prodUrl}/streaming-gssp-content-length`, {
+      headers: { "accept-encoding": "br" },
+    });
     const partialHtml = response.snapshot.toString("utf8");
     const finalHtml = response.body.toString("utf8");
 
     expect(response.statusCode).toBe(200);
+    expect(String(response.headers["content-encoding"])).toBe("br");
     expect(response.headers["content-length"]).toBeUndefined();
     expect(String(response.headers["transfer-encoding"])).toBe("chunked");
+    expect(response.firstChunkMs).toBeGreaterThanOrEqual(0);
+    expect(response.firstChunkMs).toBeLessThan(400);
     expect(partialHtml).toContain("Loading delayed gSSP chunk...");
     expect(partialHtml).not.toContain("Delayed gSSP stream content loaded");
     expect(finalHtml).toContain("Streaming gSSP Content-Length Test");
@@ -2567,14 +2689,22 @@ describe("Production Pages Router SSR streaming", () => {
     // Parity target: Next.js route resolution explicitly skips forwarding
     // middleware content-length headers.
     // https://raw.githubusercontent.com/vercel/next.js/canary/packages/next/src/server/lib/router-utils/resolve-routes.ts
-    const response = await captureStreamedResponse(`${prodUrl}/middleware-bad-content-length`);
-    const html = response.body.toString("utf8");
+    const response = await withFreshStreamingProdServer((freshProdUrl) =>
+      captureStreamedResponse(`${freshProdUrl}/middleware-bad-content-length`, {
+        headers: { "accept-encoding": "br" },
+      }),
+    );
+    const partialHtml = response.snapshot.toString("utf8");
+    const finalHtml = response.body.toString("utf8");
 
     expect(response.statusCode).toBe(200);
+    expect(String(response.headers["content-encoding"])).toBe("br");
     expect(response.headers["content-length"]).toBeUndefined();
     expect(String(response.headers["transfer-encoding"])).toBe("chunked");
-    expect(html).toContain("Streaming SSR Test");
-    expect(html).toContain("Delayed stream content loaded");
+    expect(partialHtml).toContain("Loading delayed chunk...");
+    expect(partialHtml).not.toContain("Delayed stream content loaded");
+    expect(finalHtml).toContain("Streaming SSR Test");
+    expect(finalHtml).toContain("Delayed stream content loaded");
   });
 });
 
