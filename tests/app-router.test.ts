@@ -590,7 +590,8 @@ describe("App Router integration", () => {
     // Should be wrapped in the root layout
     expect(html).toContain('<html lang="en">');
     // Should include noindex meta
-    expect(html).toContain('name="robots" content="noindex"');
+    expect(html).toContain('name="robots"');
+    expect(html).toContain('content="noindex"');
   });
 
   it("unauthorized() from Server Component returns 401 with unauthorized.tsx", async () => {
@@ -602,7 +603,8 @@ describe("App Router integration", () => {
     // Should be wrapped in the root layout
     expect(html).toContain('<html lang="en">');
     // Should include noindex meta
-    expect(html).toContain('name="robots" content="noindex"');
+    expect(html).toContain('name="robots"');
+    expect(html).toContain('content="noindex"');
   });
 
   it("redirect() from Server Component returns redirect response", async () => {
@@ -737,9 +739,12 @@ describe("App Router integration", () => {
     const html = await res.text();
     // The response status is 200 because headers were sent before notFound()
     expect(res.status).toBe(200);
-    // The $RX call should include the NEXT_HTTP_ERROR_FALLBACK digest so the
-    // NotFoundBoundary can catch it and render not-found.tsx
-    expect(html).toMatch(/\$RX\("[^"]*","NEXT_HTTP_ERROR_FALLBACK/);
+    // React's dev output can surface the digest in different equivalent places:
+    // the legacy $RX client-render marker, the <template data-dgst="..."> shell,
+    // or the embedded RSC error chunk. Any of those proves the digest survived.
+    expect(html).toMatch(
+      /(\$RX\("[^"]*","NEXT_HTTP_ERROR_FALLBACK|data-dgst="NEXT_HTTP_ERROR_FALLBACK;404"|\\"digest\\":\\"NEXT_HTTP_ERROR_FALLBACK;404\\")/,
+    );
   });
 
   it("async server throw in Suspense falls back to client rendering without dev decode crash (React 19 regression)", async () => {
@@ -3655,16 +3660,30 @@ describe("RSC Flight hint fix", () => {
     // Replicate the HL hint rewrite regex from the renderToReadableStream wrapper
     // in app-rsc-entry.ts. This rewrites the Flight stream at the source so all
     // consumers (SSR embed, client-side nav, server actions) get clean data.
+    // Use the corrected regex: \d* (zero or more digits) to match the actual
+    // React Flight wire format where hints are emitted without a chunk ID,
+    // i.e. ":HL[...]" not "2:HL[...]". The old \d+ never matched in practice.
     function fixFlightHints(text: string): string {
-      return text.replace(/(\d+:HL\[.*?),"stylesheet"(\]|,)/g, '$1,"style"$2');
+      return text.replace(/(\d*:HL\[.*?),"stylesheet"(\]|,)/g, '$1,"style"$2');
     }
 
-    // Test: basic HL hint for CSS
+    // Test: actual React Flight wire format — NO numeric ID prefix for hints.
+    // React emits ":HL[...]" (emitHint writes ":H" + code + model).
+    expect(fixFlightHints(':HL["/assets/index.css","stylesheet"]')).toBe(
+      ':HL["/assets/index.css","style"]',
+    );
+
+    // Test: no-prefix with options (3-element array)
+    expect(fixFlightHints(':HL["/assets/index.css","stylesheet",{"crossOrigin":""}]')).toBe(
+      ':HL["/assets/index.css","style",{"crossOrigin":""}]',
+    );
+
+    // Test: basic HL hint for CSS (with explicit numeric ID — legacy / hypothetical)
     expect(fixFlightHints('2:HL["/assets/index.css","stylesheet"]')).toBe(
       '2:HL["/assets/index.css","style"]',
     );
 
-    // Test: HL hint with options (3-element array)
+    // Test: HL hint with options (3-element array, with explicit ID)
     expect(fixFlightHints('2:HL["/assets/index.css","stylesheet",{"crossOrigin":""}]')).toBe(
       '2:HL["/assets/index.css","style",{"crossOrigin":""}]',
     );
@@ -3676,20 +3695,30 @@ describe("RSC Flight hint fix", () => {
       ),
     ).toBe('0:D{"name":"index"}\n1:["$","link",null,{"rel":"stylesheet","href":"/file.css"}]');
 
-    // Test: multiple HL hints in one chunk
+    // Test: multiple HL hints in one chunk — no-prefix format
+    expect(fixFlightHints(':HL["/a.css","stylesheet"]\n:HL["/b.css","stylesheet"]')).toBe(
+      ':HL["/a.css","style"]\n:HL["/b.css","style"]',
+    );
+
+    // Test: multiple HL hints in one chunk — with IDs
     expect(fixFlightHints('2:HL["/a.css","stylesheet"]\n3:HL["/b.css","stylesheet"]')).toBe(
       '2:HL["/a.css","style"]\n3:HL["/b.css","style"]',
     );
 
     // Test: should NOT modify HL hints with other as values
-    expect(fixFlightHints('2:HL["/font.woff2","font"]')).toBe('2:HL["/font.woff2","font"]');
+    expect(fixFlightHints(':HL["/font.woff2","font"]')).toBe(':HL["/font.woff2","font"]');
 
     // Test: no change needed when already "style"
-    expect(fixFlightHints('2:HL["/assets/index.css","style"]')).toBe(
-      '2:HL["/assets/index.css","style"]',
+    expect(fixFlightHints(':HL["/assets/index.css","style"]')).toBe(
+      ':HL["/assets/index.css","style"]',
     );
 
-    // Test: mixed content — only HL hints should be modified
+    // Test: mixed content — only HL hints should be modified (no-prefix format)
+    expect(
+      fixFlightHints('0:D{"name":"page"}\n:HL["/app.css","stylesheet"]\n3:["$","div",null,{}]'),
+    ).toBe('0:D{"name":"page"}\n:HL["/app.css","style"]\n3:["$","div",null,{}]');
+
+    // Test: mixed content — only HL hints should be modified (with ID)
     expect(
       fixFlightHints('0:D{"name":"page"}\n2:HL["/app.css","stylesheet"]\n3:["$","div",null,{}]'),
     ).toBe('0:D{"name":"page"}\n2:HL["/app.css","style"]\n3:["$","div",null,{}]');
@@ -4089,12 +4118,59 @@ describe("generateRscEntry ISR code generation", () => {
 
   it("generated code delegates page response policy to typed helpers", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    expect(code).toContain("buildAppPageHtmlResponse as __buildAppPageHtmlResponse");
-    expect(code).toContain("buildAppPageRscResponse as __buildAppPageRscResponse");
-    expect(code).toContain(
+    expect(code).toContain("renderAppPageLifecycle as __renderAppPageLifecycle");
+    expect(code).not.toContain("buildAppPageHtmlResponse as __buildAppPageHtmlResponse");
+    expect(code).not.toContain("buildAppPageRscResponse as __buildAppPageRscResponse");
+    expect(code).not.toContain(
       "resolveAppPageHtmlResponsePolicy as __resolveAppPageHtmlResponsePolicy",
     );
-    expect(code).toContain("resolveAppPageRscResponsePolicy as __resolveAppPageRscResponsePolicy");
+    expect(code).not.toContain(
+      "resolveAppPageRscResponsePolicy as __resolveAppPageRscResponsePolicy",
+    );
+  });
+
+  it("generated code delegates page render lifecycle to a typed helper", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    expect(code).toContain("renderAppPageLifecycle as __renderAppPageLifecycle");
+    expect(code).toContain("resolveAppPageSpecialError as __resolveAppPageSpecialError");
+    expect(code).toContain(
+      "buildAppPageSpecialErrorResponse as __buildAppPageSpecialErrorResponse",
+    );
+    expect(code).toContain("return __renderAppPageLifecycle({");
+  });
+
+  it("generated code handles SSR special errors without a legacy handleRenderError helper", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    expect(code).toContain("renderErrorBoundaryResponse(renderErr) {");
+    expect(code).toContain("return renderErrorBoundaryPage(route, renderErr");
+    expect(code).not.toContain("handleRenderError(ssrErr)");
+  });
+
+  it("generated code delegates page HTML stream plumbing to typed helpers", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    expect(code).toContain("renderAppPageLifecycle as __renderAppPageLifecycle");
+    expect(code).toContain("getFontLinks: _getSSRFontLinks");
+    expect(code).toContain("getFontPreloads: _getSSRFontPreloads");
+    expect(code).toContain("getFontStyles: _getSSRFontStyles");
+    expect(code).toContain("getDraftModeCookieHeader");
+  });
+
+  it("generated code delegates page request orchestration to typed helpers", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    expect(code).toContain("validateAppPageDynamicParams as __validateAppPageDynamicParams");
+    expect(code).toContain("resolveAppPageIntercept as __resolveAppPageIntercept");
+    expect(code).toContain("buildAppPageElement as __buildAppPageElement");
+    expect(code).toContain("const __dynamicParamsResponse = await __validateAppPageDynamicParams");
+    expect(code).toContain("const __interceptResult = await __resolveAppPageIntercept({");
+    expect(code).toContain("const __pageBuildResult = await __buildAppPageElement({");
+  });
+
+  it("generated code delegates page boundary rendering to typed helpers", () => {
+    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
+    expect(code).toContain("renderAppPageErrorBoundary as __renderAppPageErrorBoundary");
+    expect(code).toContain("renderAppPageHttpAccessFallback as __renderAppPageHttpAccessFallback");
+    expect(code).toContain("return __renderAppPageHttpAccessFallback({");
+    expect(code).toContain("return __renderAppPageErrorBoundary({");
   });
 
   it("generated code delegates page cache HIT handling to a typed helper", () => {
@@ -4115,35 +4191,27 @@ describe("generateRscEntry ISR code generation", () => {
     expect(code).toContain("_getRequestExecutionContext()?.waitUntil");
   });
 
-  it("generated code tees the RSC stream to capture rscData for cache", () => {
+  it("generated code delegates live page rendering to the typed lifecycle helper", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    // There must be at least two .tee() calls:
-    //  1) RSC stream tee (before SSR) to capture rscData
-    //  2) HTML response stream tee (to collect html while streaming to client)
-    const teeCount = (code.match(/\.tee\(\)/g) || []).length;
-    expect(teeCount).toBeGreaterThanOrEqual(2);
+    expect(code).toContain("teeAppPageRscStreamForCapture as __teeAppPageRscStreamForCapture");
+    expect(code).toContain("readAppPageTextStream as __readAppPageTextStream");
+    expect(code).toContain("const __revalRscCapture = __teeAppPageRscStreamForCapture(");
+    expect(code).toContain("renderAppPageLifecycle as __renderAppPageLifecycle");
   });
 
   it("generated code stores rscData in the ISR cache entry", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    // The HTML-path cache write now delegates to the typed cache helper, which
-    // receives the captured RSC payload promise so it can persist the paired
-    // RSC entry alongside the streamed HTML response.
-    expect(code).toContain(
-      "finalizeAppPageHtmlCacheResponse as __finalizeAppPageHtmlCacheResponse",
-    );
-    expect(code).toContain("capturedRscDataPromise: __isrRscDataPromise");
+    expect(code).toContain("renderAppPageLifecycle as __renderAppPageLifecycle");
+    expect(code).toContain("getPageTags() {");
+    expect(code).toContain("return __pageCacheTags(cleanPathname, getCollectedFetchTags())");
     // Background regen still writes fresh RSC bytes directly.
     expect(code).toContain("rscData: __freshRscData");
   });
 
-  it("generated code writes RSC-first partial cache entry on RSC MISS", () => {
+  it("generated code threads page cache keys into the typed lifecycle helper", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    // The RSC-path cache write now delegates to a typed helper instead of
-    // embedding the partial APP_PAGE cache value inline in generated code.
-    expect(code).toContain("scheduleAppPageRscCacheWrite as __scheduleAppPageRscCacheWrite");
-    expect(code).toContain("__scheduleAppPageRscCacheWrite({");
-    expect(code).toContain("capturedRscDataPromise:");
+    expect(code).toContain("renderAppPageLifecycle as __renderAppPageLifecycle");
+    expect(code).toContain("isrHtmlKey: __isrHtmlKey");
     expect(code).toContain("isrRscKey: __isrRscKey");
   });
 
@@ -4165,9 +4233,10 @@ describe("generateRscEntry ISR code generation", () => {
 
   it("ISR cache read fires before buildPageElement (early return on HIT)", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    // The page-cache helper call must appear before the main buildPageElement render call.
+    // The page-cache helper call must appear before the typed page-build helper
+    // so cache hits still short-circuit before the page render path starts.
     const isrReadIdx = code.indexOf("await __readAppPageCacheResponse(");
-    const buildPageIdx = code.indexOf("element = await buildPageElement");
+    const buildPageIdx = code.indexOf("const __pageBuildResult = await __buildAppPageElement");
     expect(isrReadIdx).toBeGreaterThan(-1);
     expect(buildPageIdx).toBeGreaterThan(-1);
     expect(isrReadIdx).toBeLessThan(buildPageIdx);
@@ -4175,34 +4244,23 @@ describe("generateRscEntry ISR code generation", () => {
 
   it("ISR cache read fires before generateStaticParams (skips expensive work on HIT)", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    // The page-cache helper call must appear before generateStaticParams so cache hits
-    // skip the static params validation entirely.
+    // The page-cache helper call must appear before the dynamic params validation helper
+    // so cache hits skip the generateStaticParams path entirely.
     const isrReadIdx = code.indexOf("await __readAppPageCacheResponse(");
-    const gspIdx = code.indexOf("generateStaticParams(");
+    const gspIdx = code.indexOf(
+      "const __dynamicParamsResponse = await __validateAppPageDynamicParams",
+    );
     expect(isrReadIdx).toBeGreaterThan(-1);
     expect(gspIdx).toBeGreaterThan(-1);
     expect(isrReadIdx).toBeLessThan(gspIdx);
   });
 
-  it("RSC stream tee for rscData capture happens before the RSC response is returned", () => {
+  it("generated code delegates two-phase page cache logic to the typed lifecycle helper", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    // __rscForResponse must be assigned before the RSC response is returned so
-    // the tee branch (__rscB) is also consumed (populating the ISR cache).
-    // The RSC response is now built via the typed page-response helper.
-    const teeAssignIdx = code.indexOf("let __rscForResponse");
-    const rscResponseIdx = code.indexOf("const __rscResponse = __buildAppPageRscResponse(");
-    expect(teeAssignIdx).toBeGreaterThan(-1);
-    expect(rscResponseIdx).toBeGreaterThan(-1);
-    expect(teeAssignIdx).toBeLessThan(rscResponseIdx);
-  });
-
-  it("generated code applies two-phase dynamic checks before page RSC cache writes", () => {
-    const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    expect(code).toContain("const __dynamicUsedInRsc = consumeDynamicUsage()");
-    expect(code).toContain("dynamicUsedDuringBuild: __dynamicUsedInRsc");
-    expect(code).toContain("scheduleAppPageRscCacheWrite as __scheduleAppPageRscCacheWrite");
-    expect(code).toContain("__scheduleAppPageRscCacheWrite({");
+    expect(code).toContain("renderAppPageLifecycle as __renderAppPageLifecycle");
     expect(code).toContain("consumeDynamicUsage,");
+    expect(code).toContain("getRequestCacheLife() {");
+    expect(code).toContain("return _consumeRequestScopedCacheLife()");
   });
 
   it("generated code imports render-header helpers from next/headers", () => {

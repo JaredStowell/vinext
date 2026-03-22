@@ -38,8 +38,8 @@ describe("App SSR stream helpers", () => {
 
   describe("fixFlightHints", () => {
     it("rewrites stylesheet hints in Flight HL records", () => {
-      expect(fixFlightHints('2:HL["/assets/index.css","stylesheet"]')).toBe(
-        '2:HL["/assets/index.css","style"]',
+      expect(fixFlightHints(':HL["/assets/index.css","stylesheet"]')).toBe(
+        ':HL["/assets/index.css","style"]',
       );
 
       expect(fixFlightHints('2:HL["/assets/index.css","stylesheet",{"crossOrigin":""}]')).toBe(
@@ -55,11 +55,15 @@ describe("App SSR stream helpers", () => {
       ).toBe('0:D{"name":"index"}\n1:["$","link",null,{"rel":"stylesheet","href":"/file.css"}]');
 
       expect(fixFlightHints('2:HL["/font.woff2","font"]')).toBe('2:HL["/font.woff2","font"]');
+      expect(fixFlightHints(':HL["/font.woff2","font"]')).toBe(':HL["/font.woff2","font"]');
     });
 
     it("handles multiple hints in a single chunk", () => {
       expect(fixFlightHints('2:HL["/a.css","stylesheet"]\n3:HL["/b.css","stylesheet"]')).toBe(
         '2:HL["/a.css","style"]\n3:HL["/b.css","style"]',
+      );
+      expect(fixFlightHints(':HL["/a.css","stylesheet"]\n:HL["/b.css","stylesheet"]')).toBe(
+        ':HL["/a.css","style"]\n:HL["/b.css","style"]',
       );
     });
   });
