@@ -4142,7 +4142,8 @@ describe("generateRscEntry ISR code generation", () => {
   it("generated code handles SSR special errors without a legacy handleRenderError helper", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
     expect(code).toContain("renderErrorBoundaryResponse(renderErr) {");
-    expect(code).toContain("return renderErrorBoundaryPage(route, renderErr");
+    expect(code).toContain("async function __renderPageErrorBoundaryResponse(__error) {");
+    expect(code).toContain("return __renderPageErrorBoundaryResponse(renderErr);");
     expect(code).not.toContain("handleRenderError(ssrErr)");
   });
 
@@ -4272,11 +4273,12 @@ describe("generateRscEntry ISR code generation", () => {
 
   it("generated code forwards render-header snapshots through page cache helpers", () => {
     const code = generateRscEntry("/tmp/test/app", minimalRoutes);
-    expect(code).toContain("renderHeaders: __rscResponseRenderHeaders");
+    expect(code).toContain("const __buildRenderResponseHeaders = peekRenderResponseHeaders();");
+    expect(code).toContain("buildRenderHeaders: __buildRenderResponseHeaders");
     expect(code).toContain("consumeRenderResponseHeaders,");
-    expect(code).toContain("initialRenderHeaders: __rscResponseRenderHeaders");
-    expect(code).toContain("renderHeaders: renderResponseHeaders");
-    expect(code).toContain("initialRenderHeaders: renderResponseHeaders");
+    expect(code).toContain("peekRenderResponseHeaders");
+    expect(code).toContain("restoreRenderResponseHeaders");
+    expect(code).toContain("headers: __renderHeaders");
   });
 
   // Route handler ISR code generation tests
@@ -4305,6 +4307,5 @@ describe("generateRscEntry ISR code generation", () => {
     expect(code).toContain("isrRouteKey: __isrRouteKey");
     expect(code).toContain("isrSet: __isrSet");
     expect(code).not.toContain("getAndClearPendingCookies,");
-    expect(code).not.toContain("getDraftModeCookieHeader,");
   });
 });
