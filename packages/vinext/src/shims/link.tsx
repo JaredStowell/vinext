@@ -21,6 +21,7 @@ import React, {
 // Import shared RSC prefetch utilities from navigation shim (relative path
 // so this resolves both via the Vite plugin and in direct vitest imports)
 import { toRscUrl, getPrefetchedUrls, storePrefetchResponse } from "./navigation.js";
+import { notifyAppRouterTransitionStart } from "../client/instrumentation-client-state.js";
 import { isDangerousScheme } from "./url-safety.js";
 import {
   resolveRelativeHref,
@@ -470,6 +471,7 @@ const Link = forwardRef<HTMLAnchorElement, LinkProps>(function Link(
       // App Router: push/replace history state, then fetch RSC stream.
       // Await the RSC navigate so scroll-to-top happens after the new
       // content is committed to the DOM (prevents flash of old page at top).
+      notifyAppRouterTransitionStart(absoluteFullHref, replace ? "replace" : "push");
       if (replace) {
         window.history.replaceState(null, "", absoluteFullHref);
       } else {
@@ -482,6 +484,9 @@ const Link = forwardRef<HTMLAnchorElement, LinkProps>(function Link(
         if (mountedRef.current) setPending(false);
       }
     } else {
+      // Next.js only consumes onRouterTransitionStart in the App Router.
+      // Pages Router still executes instrumentation-client side effects
+      // during startup, but it does not invoke the named export on navigation.
       // Pages Router: use the Router singleton
       try {
         const routerModule = await import("next/router");
