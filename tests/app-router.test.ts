@@ -3207,6 +3207,13 @@ describe("App Router middleware with NextRequest", () => {
       expect(key.startsWith("x-middleware-")).toBe(false);
     }
   });
+
+  it("middleware receives event with waitUntil (for Clerk compat)", async () => {
+    const res = await fetch(`${baseUrl}/middleware-event`);
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toBe("Event OK");
+  });
 });
 
 describe("RSC Flight hint fix", () => {
