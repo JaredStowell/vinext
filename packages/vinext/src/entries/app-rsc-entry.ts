@@ -2162,7 +2162,31 @@ async function _handleRequest(request, __reqCtx, _mwCtx) {
     },
     isRscRequest,
     matchSourceRouteParams(pattern) {
-      return matchRoute(pattern)?.params ?? {};
+      // Extract actual URL param values by prefix-matching the request pathname
+      // against the source route's pattern. This handles all interception conventions:
+      // (.) same-level, (..) one-level-up, and (...) root — the source pattern's
+      // dynamic segments that align with the URL get their real values extracted.
+      // We must NOT use matchRoute(pattern) here: the trie would match the literal
+      // ":param" strings as dynamic segment values, returning e.g. {id: ":id"}.
+      const patternParts = pattern.split("/").filter(Boolean);
+      const urlParts = cleanPathname.split("/").filter(Boolean);
+      const params = Object.create(null);
+      for (let i = 0; i < patternParts.length; i++) {
+        const pp = patternParts[i];
+        if (pp.endsWith("+") || pp.endsWith("*")) {
+          // urlParts.slice(i) safely returns [] when i >= urlParts.length,
+          // which is the correct value for optional catch-all with zero segments.
+          params[pp.slice(1, -1)] = urlParts.slice(i);
+          break;
+        }
+        if (i >= urlParts.length) break;
+        if (pp.startsWith(":")) {
+          params[pp.slice(1)] = urlParts[i];
+        } else if (pp !== urlParts[i]) {
+          break;
+        }
+      }
+      return params;
     },
     renderInterceptResponse(sourceRoute, interceptElement) {
       const interceptOnError = createRscOnErrorHandler(
