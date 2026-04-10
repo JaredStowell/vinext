@@ -247,6 +247,7 @@ export const PREFETCH_CACHE_TTL = 30_000;
 export type CachedRscResponse = {
   buffer: ArrayBuffer;
   contentType: string;
+  mountedSlotsHeader?: string | null;
   paramsHeader: string | null;
   url: string;
 };
@@ -330,8 +331,11 @@ function evictPrefetchCacheIfNeeded(): void {
  * (the caller falls back to a fresh fetch, which is acceptable).
  *
  * Prefer prefetchRscResponse() for new call-sites — it handles the full
- * prefetch lifecycle including dedup.  storePrefetchResponse() is kept for
- * backward compatibility and test helpers.
+ * prefetch lifecycle including dedup and explicit slot context.
+ * storePrefetchResponse() is kept for backward compatibility and test
+ * helpers. It is slot-unaware: the snapshot's mountedSlotsHeader comes
+ * from the response headers, not the caller, so consumePrefetchResponse
+ * may reject the entry if the caller's slot context differs.
  *
  * NB: Caller is responsible for managing getPrefetchedUrls() — this
  * function only stores the response in the prefetch cache.
@@ -361,6 +365,7 @@ export async function snapshotRscResponse(response: Response): Promise<CachedRsc
   return {
     buffer,
     contentType: response.headers.get("content-type") ?? "text/x-component",
+    mountedSlotsHeader: response.headers.get("X-Vinext-Mounted-Slots"),
     paramsHeader: response.headers.get("X-Vinext-Params"),
     url: response.url,
   };
@@ -383,6 +388,9 @@ export async function snapshotRscResponse(response: Response): Promise<CachedRsc
  */
 export function restoreRscResponse(cached: CachedRscResponse, copy = true): Response {
   const headers = new Headers({ "content-type": cached.contentType });
+  if (cached.mountedSlotsHeader != null) {
+    headers.set("X-Vinext-Mounted-Slots", cached.mountedSlotsHeader);
+  }
   if (cached.paramsHeader != null) {
     headers.set("X-Vinext-Params", cached.paramsHeader);
   }
@@ -400,7 +408,11 @@ export function restoreRscResponse(cached: CachedRscResponse, copy = true): Resp
  * Enforces a maximum cache size to prevent unbounded memory growth on
  * link-heavy pages.
  */
-export function prefetchRscResponse(rscUrl: string, fetchPromise: Promise<Response>): void {
+export function prefetchRscResponse(
+  rscUrl: string,
+  fetchPromise: Promise<Response>,
+  mountedSlotsHeader: string | null = null,
+): void {
   const cache = getPrefetchCache();
   const prefetched = getPrefetchedUrls();
   const now = Date.now();
@@ -410,7 +422,12 @@ export function prefetchRscResponse(rscUrl: string, fetchPromise: Promise<Respon
   entry.pending = fetchPromise
     .then(async (response) => {
       if (response.ok) {
-        entry.snapshot = await snapshotRscResponse(response);
+        entry.snapshot = {
+          ...(await snapshotRscResponse(response)),
+          // Prefetch compatibility is defined by the slot context at fetch
+          // time, not by whatever header a reused response happens to carry.
+          mountedSlotsHeader,
+        };
       } else {
         prefetched.delete(rscUrl);
         cache.delete(rscUrl);
@@ -436,7 +453,10 @@ export function prefetchRscResponse(rscUrl: string, fetchPromise: Promise<Respon
  * Only returns settled (non-pending) snapshots synchronously.
  * Returns null if the entry is still in flight or doesn't exist.
  */
-export function consumePrefetchResponse(rscUrl: string): CachedRscResponse | null {
+export function consumePrefetchResponse(
+  rscUrl: string,
+  mountedSlotsHeader: string | null = null,
+): CachedRscResponse | null {
   const cache = getPrefetchCache();
   const entry = cache.get(rscUrl);
   if (!entry) return null;
@@ -448,6 +468,11 @@ export function consumePrefetchResponse(rscUrl: string): CachedRscResponse | nul
   getPrefetchedUrls().delete(rscUrl);
 
   if (entry.snapshot) {
+    if ((entry.snapshot.mountedSlotsHeader ?? null) !== mountedSlotsHeader) {
+      // Entry was already removed above. Slot mismatch means the prefetch
+      // used stale slot context and cannot be safely reused.
+      return null;
+    }
     if (Date.now() - entry.timestamp >= PREFETCH_CACHE_TTL) {
       return null;
     }
@@ -464,6 +489,7 @@ export function consumePrefetchResponse(rscUrl: string): CachedRscResponse | nul
 
 type NavigationListener = () => void;
 const _CLIENT_NAV_STATE_KEY = Symbol.for("vinext.clientNavigationState");
+const _MOUNTED_SLOTS_HEADER_KEY = Symbol.for("vinext.mountedSlotsHeader");
 
 type ClientNavigationState = {
   listeners: Set<NavigationListener>;
@@ -484,7 +510,20 @@ type ClientNavigationState = {
 
 type ClientNavigationGlobal = typeof globalThis & {
   [_CLIENT_NAV_STATE_KEY]?: ClientNavigationState;
+  [_MOUNTED_SLOTS_HEADER_KEY]?: string | null;
 };
+
+export function setMountedSlotsHeader(header: string | null): void {
+  if (isServer) return;
+  const globalState = window as ClientNavigationGlobal;
+  globalState[_MOUNTED_SLOTS_HEADER_KEY] = header;
+}
+
+export function getMountedSlotsHeader(): string | null {
+  if (isServer) return null;
+  const globalState = window as ClientNavigationGlobal;
+  return globalState[_MOUNTED_SLOTS_HEADER_KEY] ?? null;
+}
 
 function getClientNavigationState(): ClientNavigationState | null {
   if (isServer) return null;
@@ -1123,13 +1162,19 @@ const _appRouter = {
     const prefetched = getPrefetchedUrls();
     if (prefetched.has(rscUrl)) return;
     prefetched.add(rscUrl);
+    const mountedSlotsHeader = getMountedSlotsHeader();
+    const headers: Record<string, string> = { Accept: "text/x-component" };
+    if (mountedSlotsHeader) {
+      headers["X-Vinext-Mounted-Slots"] = mountedSlotsHeader;
+    }
     prefetchRscResponse(
       rscUrl,
       fetch(rscUrl, {
-        headers: { Accept: "text/x-component" },
+        headers,
         credentials: "include",
         priority: "low" as RequestInit["priority"],
       }),
+      mountedSlotsHeader,
     );
   },
 };
