@@ -898,6 +898,11 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
         defines["process.env.__VINEXT_IMAGE_DANGEROUSLY_ALLOW_SVG"] = JSON.stringify(
           String(nextConfig.images?.dangerouslyAllowSVG ?? false),
         );
+        // Expose dangerouslyAllowLocalIP flag for the image shim's private-IP guard.
+        // When false (default), remote image URLs with literal private-IP hostnames are blocked.
+        defines["process.env.__VINEXT_IMAGE_DANGEROUSLY_ALLOW_LOCAL_IP"] = JSON.stringify(
+          String(nextConfig.images?.dangerouslyAllowLocalIP ?? false),
+        );
         // Draft mode secret — generated once at build time so the
         // __prerender_bypass cookie is consistent across all server
         // instances (e.g. multiple Cloudflare Workers isolates).
@@ -1213,7 +1218,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
               ? { ssr: { external: true as const } }
               : {
                   ssr: {
-                    external: ["react", "react-dom", "react-dom/server"],
+                    external: ["react", "react-dom", "react-dom/server", "ipaddr.js"],
                     noExternal: true,
                   },
                 }),
@@ -1372,7 +1377,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
                 ? {}
                 : {
                     resolve: {
-                      external: userSsrExternal === true ? true : [...userSsrExternal],
+                      external: userSsrExternal === true ? true : [...userSsrExternal, "ipaddr.js"],
                       // Force all node_modules through Vite's transform pipeline
                       // so non-JS imports (CSS, images) don't hit Node's native
                       // ESM loader. Matches Next.js behavior of bundling everything.
@@ -1506,7 +1511,7 @@ export default function vinext(options: VinextOptions = {}): PluginOption[] {
             },
             ssr: {
               resolve: {
-                external: ["react", "react-dom", "react-dom/server"],
+                external: ["react", "react-dom", "react-dom/server", "ipaddr.js"],
                 noExternal: true as const,
               },
               build: {
