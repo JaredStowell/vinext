@@ -508,6 +508,7 @@ function BrowserRoot({
     renderId: 0,
     rootLayoutTreePath: initialMetadata.rootLayoutTreePath,
     routeId: initialMetadata.routeId,
+    slotBindings: initialMetadata.slotBindings,
     visibleCommitVersion: 0,
   });
   const treeState = isRouterStatePromise(treeStateValue) ? use(treeStateValue) : treeStateValue;
@@ -532,6 +533,11 @@ function BrowserRoot({
       stateRef,
     );
     browserRouterStateHasEverCommitted = true;
+    // App Router uses this timestamp as first committed tree readiness: the
+    // browser router state is attached and link/router interactions can safely
+    // observe the committed tree. It is intentionally later than hydrateRoot()
+    // returning.
+    window.__VINEXT_HYDRATED_AT = performance.now();
     return () => {
       detach();
       setMountedSlotsHeader(null);
@@ -1000,7 +1006,6 @@ function bootstrapHydration(rscStream: ReadableStream<Uint8Array>): void {
     options: hydrateRootOptions,
     startTransition,
   });
-  window.__VINEXT_HYDRATED_AT = performance.now();
 
   // Exposed so the navigation shim's `router.refresh()` can invalidate the
   // entire client navigation cache (visited-response + prefetch) before
