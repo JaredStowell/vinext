@@ -193,7 +193,7 @@ export function createOptimizedImportSourceMatcher(
   if (!pattern) return () => false;
 
   const importFromPattern = new RegExp(
-    String.raw`(?:^|[;\n\r])\s*import(?!\s*\()[^;]*?\bfrom\s*["'](?:${pattern})["']`,
+    String.raw`(?:^|[;}\n\r])\s*import(?!\s*\()[\s\S]*?\bfrom\s*["'](?:${pattern})["']`,
     "m",
   );
 

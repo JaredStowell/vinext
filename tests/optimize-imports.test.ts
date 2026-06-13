@@ -79,6 +79,8 @@ describe("vinext:optimize-imports plugin", () => {
     expect(hasOptimizedImport(`const source = 'import { Sun } from "lucide-react"';`)).toBe(false);
     expect(hasOptimizedImport(`// import { Slot } from "radix-ui";`)).toBe(false);
     expect(hasOptimizedImport(`import "lucide-react";`)).toBe(false);
+    expect(hasOptimizedImport(`import { Sun /*; */ } from "lucide-react";`)).toBe(true);
+    expect(hasOptimizedImport(`function f(){}import { Sun } from "lucide-react";`)).toBe(true);
   });
 
   it("returns null when barrel package mentioned but no resolvable entry", async () => {
