@@ -55,38 +55,53 @@ export function createRequireContextPlugin(): Plugin {
     // Run before TypeScript/JSX stripping so we still see the
     // `(require as any).context(...)` form (a TSAsExpression callee object).
     enforce: "pre",
-    transform(code, id) {
-      if (!mayContainRequireContext(code)) return null;
-      const lang = langForId(id);
-      if (!lang) return null;
+    transform: {
+      filter: {
+        id: /\.(tsx?|jsx?|mjs|cjs|mts|cts)(?:$|\?)/,
+        code: "context",
+      },
+      handler(code, id) {
+        if (!mayContainRequireContext(code)) return null;
+        const lang = langForId(id);
+        if (!lang) return null;
 
-      let ast: unknown;
-      try {
-        ast = parseAst(code, { lang });
-      } catch {
-        return null;
-      }
+        let ast: unknown;
+        try {
+          ast = parseAst(code, { lang });
+        } catch {
+          return null;
+        }
 
-      const calls = collectRequireContextCalls(ast);
-      if (calls.length === 0) return null;
+        const calls = collectRequireContextCalls(ast);
+        if (calls.length === 0) return null;
 
-      const output = new MagicString(code);
-      for (const call of calls) {
-        output.overwrite(call.range.start, call.range.end, buildReplacement(call));
-      }
+        const output = new MagicString(code);
+        for (const call of calls) {
+          output.overwrite(call.range.start, call.range.end, buildReplacement(call));
+        }
 
-      return {
-        code: output.toString(),
-        map: output.generateMap({ hires: "boundary" }),
-      };
+        return {
+          code: output.toString(),
+          map: output.generateMap({ hires: "boundary" }),
+        };
+      },
     },
   };
 }
 
-function mayContainRequireContext(code: string): boolean {
-  // Cheap substring gate: both the `require` token and a `.context` member
-  // access must be present for any genuine call.
-  return code.includes("require") && code.includes(".context");
+const REQUIRE_CONTEXT_MEMBER_PATTERN =
+  /\brequire\s*!?\s*\.\s*context\b|\(\s*require\b[\s\S]*?\)+\s*\.\s*context\b/;
+
+export function mayContainRequireContext(code: string): boolean {
+  // Cheap gate before parsing: require.context only needs the expensive AST
+  // walk when the `context` member is plausibly attached to the `require`
+  // expression itself. Large React/RSC dependency files often contain the
+  // separate words `require` and `.context` without using Webpack's API.
+  return (
+    code.includes("require") &&
+    code.includes("context") &&
+    REQUIRE_CONTEXT_MEMBER_PATTERN.test(code)
+  );
 }
 
 function langForId(id: string): "js" | "jsx" | "ts" | "tsx" | null {

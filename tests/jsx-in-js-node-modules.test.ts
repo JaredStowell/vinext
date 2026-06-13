@@ -29,6 +29,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { createBuilder } from "vite";
 import { describe, expect, it } from "vite-plus/test";
 import vinext from "../packages/vinext/src/index.js";
+import { shouldTransformJsxInJs } from "../packages/vinext/src/plugins/jsx-in-js.js";
 
 async function withTempDir<T>(prefix: string, run: (tmpDir: string) => Promise<T>): Promise<T> {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), prefix));
@@ -59,6 +60,47 @@ async function buildApp(root: string) {
 }
 
 describe("App Router: client modules with JSX in .js files inside node_modules", () => {
+  it("does not treat workspace-linked package internals as app source", () => {
+    const root = "/repo/apps/site";
+
+    expect(
+      shouldTransformJsxInJs("/repo/apps/site/app/page.js", "export default <main />", root),
+    ).toBe(true);
+    expect(
+      shouldTransformJsxInJs(
+        "/repo/packages/runtime/dist/index.js",
+        "export function helper() { return null }",
+        root,
+      ),
+    ).toBe(false);
+    expect(
+      shouldTransformJsxInJs(
+        "/repo/packages/client-lib/dist/index.js",
+        "'use client'; export function Hello() { return <p /> }",
+        root,
+      ),
+    ).toBe(true);
+  });
+
+  it("treats a configured source root outside Vite root as app source", () => {
+    expect(
+      shouldTransformJsxInJs(
+        "/repo/packages/site/app/page.js",
+        "export default <main />",
+        "/repo/apps/shell",
+        ["/repo/packages/site"],
+      ),
+    ).toBe(true);
+    expect(
+      shouldTransformJsxInJs(
+        "/repo/packages/runtime/dist/index.js",
+        "export function helper() { return null }",
+        "/repo/apps/shell",
+        ["/repo/packages/site"],
+      ),
+    ).toBe(false);
+  });
+
   it("builds a 'use client' .js module with JSX shipped from a node_modules dependency", async () => {
     await withTempDir("vinext-jsx-node-modules-", async (root) => {
       // Link top-level node_modules (react, react-dom, etc.) so vinext can resolve them.
